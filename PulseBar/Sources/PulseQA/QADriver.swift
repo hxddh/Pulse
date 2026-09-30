@@ -29,8 +29,8 @@ enum PulseQAMain {
 
 @MainActor
 enum QADriver {
-    /// Captures must show the first landed reads (the attention file, the
-    /// spool, the process table), not the launch state.
+    /// Captures must show the first landed reads (the event log replay,
+    /// the process table), not the launch state.
     static let captureDelay: TimeInterval = 3
 
     static func value(_ flag: String, in arguments: [String]) -> String? {

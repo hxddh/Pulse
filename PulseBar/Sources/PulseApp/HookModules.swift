@@ -142,7 +142,8 @@ enum HookModules {
                 const payload = context(ctx)
                 if (event && typeof event.kind === "string") payload.kind = event.kind
                 if (event && typeof event.title === "string") payload.title = event.title
-                if (event && typeof event.reason === "string") payload.reason = event.reason
+                // A reason is a shutdown's why; on a prompt it is not the ask.
+                if (name === "session_shutdown" && event && typeof event.reason === "string") payload.reason = event.reason
                 send(name, payload)
               } catch {}
             })

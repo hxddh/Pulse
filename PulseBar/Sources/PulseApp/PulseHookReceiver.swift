@@ -6,8 +6,7 @@ enum HookAction: Equatable {
     case start
     /// The user submitted a prompt: working, and nothing is owed any more.
     case prompt
-    /// The agent is working (a tool ran, a reply streamed): the activity
-    /// spool only — never an attention line.
+    /// The agent is working (a tool ran, a reply streamed): a `tool` line.
     case activity
     /// The agent cannot continue until the user acts.
     case blocked(AttentionKind)
@@ -31,31 +30,31 @@ struct HookReading: Equatable {
     var ask: String = ""
 }
 
-/// Native attention receiver for every supported agent's hook, plugin or
-/// extension, and for the public Attention bridge (`pulse-hook` /
-/// `PulseBar --hook`).
+/// Native receiver for every supported agent's hook, plugin or extension,
+/// and for the public Attention bridge (`pulse-hook` / `PulseBar --hook`).
 ///
 /// `pulse-hook <agent> <event>` with the vendor's JSON payload on stdin (or,
-/// for Codex `notify`, as the last argument). Each agent's adapter maps its
-/// own event names and payload onto a `HookAction`; anything else falls back
-/// to the protocol vocabulary (`permission`, `turn`, `done`, …). Writes one
-/// v4 attention line (or one activity event) and exits 0 at once. Unknown
-/// events soft-fail (exit 0, no write), and a blocked event from an agent
-/// whose hooks cannot report one (`waiting: .none`) is refused — no fake
-/// Waiting. Nothing is ever held: the vendor's own prompt is always in charge.
+/// for Codex `notify` and the two modules, as the last argument). Each
+/// agent's adapter maps its own event names and payload onto a
+/// `HookAction`; anything else falls back to the protocol vocabulary
+/// (`permission`, `turn`, `done`, …). Writes one v5 line to the event log
+/// (`EventLog` — the only file it writes) and exits 0 at once.
+/// Unknown events soft-fail (exit 0, no write), and a blocked event from an
+/// agent whose hooks cannot report one (`waiting: .none`) is refused — no
+/// fake Waiting. Nothing is ever held: the vendor's own prompt is always in
+/// charge.
 enum PulseHookReceiver {
     /// Always returns 0 — vendor hooks must never be broken by Pulse.
     ///
-    /// `attentionURL` nil writes the real attention file; a test passes a
-    /// temporary one (never a global override — a scan may be reading at
-    /// the same moment). `locate` finds the agent's pid and the landing
-    /// handles; tests pass a fixed answer.
+    /// `logURL` nil writes the real event log; a test passes a temporary one
+    /// (never a global override — suites run in parallel). `locate` finds
+    /// the agent's pid and the landing handles; tests pass a fixed answer.
     @discardableResult
     static func run(
         arguments: [String],
         stdin: String = "",
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        attentionURL: URL? = nil,
+        logURL: URL? = nil,
         nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
         locate: (AgentID, [String: String]) -> (pid: Int32, landing: String) = HookLanding.current
     ) -> Int32 {
@@ -80,57 +79,73 @@ enum PulseHookReceiver {
             DebugLog.write("attention reject blocked agent=\(agent.rawValue) waiting=none")
             return 0
         }
-        let context = HookContext(payload: payload)
-        switch reading.action {
-        case .ignore:
-            return 0
-        case .activity:
-            writeActivity(agent: agent.rawValue, kind: "activity", payload: payload, nowMs: nowMs)
-            return 0
-        case .prompt:
-            writeActivity(agent: agent.rawValue, kind: "prompt", payload: payload, nowMs: nowMs)
-            // Session-scoped only: an agent-wide clear from one terminal
-            // must not clear another's.
-            guard !context.session.isEmpty else { return 0 }
-        case .start, .blocked, .turn, .idle, .resolved, .end:
-            break
-        }
-        let kind: AttentionKind
-        switch reading.action {
-        case .start: kind = .start
-        case .prompt: kind = .working
-        case .blocked(let blocked): kind = blocked.isBlocking ? blocked : .waiting
-        case .turn: kind = .turn
-        case .idle: kind = .idle
-        case .resolved: kind = .done
-        case .end: kind = .end
-        case .activity, .ignore: return 0
-        }
-        let message: String
-        switch reading.action {
-        case .blocked: message = reading.ask.isEmpty ? genericMessage(from: payload) : reading.ask
-        case .turn: message = genericMessage(from: payload)
-        default: message = ""
-        }
+        guard let line = record(agent: agent, reading: reading, payload: payload, nowMs: nowMs) else { return 0 }
         // Was the prompt's own window in front as this was raised? A turn
         // the user watched finish is not owed to them, and a blocked prompt
         // already on screen needs no banner.
-        let front: Bool? = kind.isOpen ? PromptVisibility.promptIsFrontmost() : nil
+        var written = line
+        if let kind = AttentionProtocol.kind(line.kind), kind.isOpen {
+            written.front = PromptVisibility.promptIsFrontmost()
+        }
         let located = locate(agent, environment)
-        _ = appendEvent(
-            agent: agent.rawValue,
-            kind: kind.rawValue,
-            message: message,
-            session: context.session,
-            cwd: context.cwd,
-            front: front,
-            pid: located.pid,
-            transcript: context.transcript,
-            landing: located.landing,
-            nowMs: nowMs,
-            attentionURL: attentionURL
-        )
+        written.pid = located.pid > 1 ? located.pid : 0
+        written.landing = cleanField(located.landing, limit: 240)
+        EventLog.append(written.line, at: logURL, nowMs: nowMs)
         return 0
+    }
+
+    /// The v5 line one reading becomes, before the hook's own facts (front,
+    /// pid, landing) are added — nil when it writes nothing. Pure.
+    static func record(agent: AgentID, reading: HookReading, payload: [String: Any], nowMs: Int64) -> AttentionRecord? {
+        let context = HookContext(payload: payload)
+        let tool = cleanField(string(payload, keys: ["tool_name", "toolName"]), limit: 64)
+        let kind: AttentionKind
+        var message = ""
+        var toolColumn = ""
+        switch reading.action {
+        case .ignore:
+            return nil
+        case .activity:
+            // A tool with no session cannot be matched to anything, and
+            // would make a row of its own.
+            guard !context.session.isEmpty else { return nil }
+            kind = .tool
+            toolColumn = tool
+            let descriptor = toolDescriptor(from: payload)
+            if !tool.isEmpty, descriptor.hasPrefix(tool + ": ") {
+                message = String(descriptor.dropFirst(tool.count + 2))
+            }
+        case .prompt:
+            // Session-scoped only: an agent-wide clear from one terminal
+            // must not clear another's.
+            guard !context.session.isEmpty else { return nil }
+            kind = .working
+        case .start:
+            kind = .start
+        case .blocked(let blocked):
+            kind = blocked.isBlocking ? blocked : .waiting
+            message = reading.ask.isEmpty ? genericMessage(from: payload, blocked: true) : reading.ask
+            toolColumn = tool
+        case .turn:
+            kind = .turn
+            message = genericMessage(from: payload)
+        case .idle:
+            kind = .idle
+        case .resolved:
+            kind = .done
+        case .end:
+            kind = .end
+        }
+        return AttentionRecord(
+            agent: cleanField(agent.rawValue, limit: 48),
+            kind: kind.rawValue,
+            ms: nowMs,
+            message: cleanField(message, limit: 200),
+            session: cleanField(context.session, limit: 80),
+            cwd: cleanField(context.cwd, limit: 240),
+            transcript: cleanField(context.transcript, limit: 400),
+            tool: toolColumn
+        )
     }
 
     // MARK: - Adapters
@@ -166,7 +181,6 @@ enum PulseHookReceiver {
     /// event. Unknown and empty words are rejected — never Waiting.
     static func readBridge(_ word: String) -> HookReading? {
         let plain = word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if plain == "activity" { return HookReading(action: .activity) }
         guard let kind = AttentionProtocol.kind(plain) else { return nil }
         switch kind {
         case .permission, .question, .waiting: return HookReading(action: .blocked(kind))
@@ -176,6 +190,7 @@ enum PulseHookReceiver {
         case .start: return HookReading(action: .start)
         case .working: return HookReading(action: .prompt)
         case .end: return HookReading(action: .end)
+        case .tool: return HookReading(action: .activity)
         }
     }
 
@@ -191,7 +206,7 @@ enum PulseHookReceiver {
             // question — no allow/deny answers it.
             let tool = string(payload, keys: ["tool_name", "toolName"])
             let kind: AttentionKind = tool == "AskUserQuestion" ? .question : .permission
-            return HookReading(action: .blocked(kind), ask: toolDescriptor(from: payload))
+            return HookReading(action: .blocked(kind), ask: claudeAsk(payload))
         case "Notification":
             let ask = string(payload, keys: ["message", "title"])
             switch string(payload, keys: ["notification_type", "notificationType"]) {
@@ -320,6 +335,40 @@ enum PulseHookReceiver {
 
     // MARK: - Asks
 
+    /// What a Claude `PermissionRequest` asks: the question itself for
+    /// `AskUserQuestion` (`tool_input.questions[0].question`), the plan's
+    /// first line for `ExitPlanMode` (`tool_input.plan`), else the tool
+    /// call (`toolDescriptor`).
+    static func claudeAsk(_ payload: [String: Any]) -> String {
+        let tool = string(payload, keys: ["tool_name", "toolName"])
+        let input = payload["tool_input"] as? [String: Any] ?? [:]
+        switch tool {
+        case "AskUserQuestion":
+            if let questions = input["questions"] as? [[String: Any]], let first = questions.first {
+                let text = string(first, keys: ["question", "header"])
+                if !text.isEmpty { return condenseOneLine(text) }
+            }
+            let single = string(input, keys: ["question"])
+            if !single.isEmpty { return condenseOneLine(single) }
+        case "ExitPlanMode":
+            let summary = planSummary(string(input, keys: ["plan"]))
+            if !summary.isEmpty { return summary }
+        default:
+            break
+        }
+        return toolDescriptor(from: payload)
+    }
+
+    /// A plan's first line with words, without its Markdown marks.
+    static func planSummary(_ plan: String) -> String {
+        let marks = CharacterSet(charactersIn: "#*->`_ \t")
+        for line in plan.split(whereSeparator: \.isNewline) {
+            let text = String(line).trimmingCharacters(in: marks)
+            if !text.isEmpty { return condenseOneLine(text) }
+        }
+        return ""
+    }
+
     static func geminiAsk(_ payload: [String: Any]) -> String {
         let message = string(payload, keys: ["message"])
         if !message.isEmpty { return condenseOneLine(message) }
@@ -349,7 +398,8 @@ enum PulseHookReceiver {
 
     // MARK: - Write
 
-    /// In-process helper. Rejects unknown kinds the same way as `run`.
+    /// In-process helper for a bridge word (`permission`, `turn`, …): one
+    /// line in the event log. Rejects unknown kinds the same way as `run`.
     @discardableResult
     static func appendEvent(
         agent: String,
@@ -357,12 +407,8 @@ enum PulseHookReceiver {
         message: String,
         session: String = "",
         cwd: String = "",
-        front: Bool? = nil,
-        pid: Int32 = 0,
-        transcript: String = "",
-        landing: String = "",
         nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
-        attentionURL: URL? = nil
+        logURL: URL? = nil
     ) -> Bool {
         let normalized = AttentionProtocol.normalizeKind(kind)
         guard AttentionProtocol.acceptsWrite(kind: normalized) else { return false }
@@ -372,14 +418,9 @@ enum PulseHookReceiver {
             ms: nowMs,
             message: cleanField(message, limit: 200),
             session: cleanField(session, limit: 80),
-            cwd: cleanField(cwd, limit: 240),
-            front: front,
-            pid: max(0, pid),
-            transcript: cleanField(transcript, limit: 400),
-            landing: cleanField(landing, limit: 240)
+            cwd: cleanField(cwd, limit: 240)
         )
-        AttentionIO.appendRawLine(record.line, at: attentionURL)
-        return true
+        return EventLog.append(record.line, at: logURL, nowMs: nowMs)
     }
 
     // MARK: - stdin
@@ -420,45 +461,8 @@ enum PulseHookReceiver {
             finished.signal()
         }
         _ = finished.wait(timeout: .now() + timeout)
-        return AttentionIO.decode(box.snapshot)
-    }
-
-    // MARK: - Activity events
-
-    /// One state file per session, latest event wins. No identity, no file:
-    /// a session-less event cannot be matched to a row, and a guessed
-    /// filename would collide across sessions.
-    static func writeActivity(
-        agent: String,
-        kind: String,
-        payload: [String: Any],
-        nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
-    ) {
-        let context = HookContext(payload: payload)
-        guard !context.session.isEmpty else { return }
-        let tool = cleanField(string(payload, keys: ["tool_name", "toolName"]), limit: 64)
-        let descriptor = toolDescriptor(from: payload)
-        var target = ""
-        if !tool.isEmpty, descriptor.hasPrefix(tool + ": ") {
-            target = cleanField(String(descriptor.dropFirst(tool.count + 2)), limit: 160)
-        }
-        var prompt = ""
-        if kind == "prompt" {
-            prompt = cleanField(
-                condenseOneLine(string(payload, keys: ["prompt"]), limit: 160),
-                limit: 160
-            )
-        }
-        _ = ActivitySpool.write(ActivitySpool.Event(
-            agent: agent,
-            session: context.session,
-            event: kind == "prompt" ? "prompt" : "tool",
-            tool: tool,
-            target: target,
-            prompt: prompt,
-            cwd: context.cwd,
-            tsMs: nowMs
-        ))
+        // Lossy: one invalid byte never loses the whole payload.
+        return String(decoding: box.snapshot, as: UTF8.self)
     }
 
     // MARK: - Attribution
@@ -499,8 +503,12 @@ enum PulseHookReceiver {
     }
 
     /// What a turn or a block says, when its adapter found no specific ask.
-    static func genericMessage(from payload: [String: Any]) -> String {
-        for key in ["last_assistant_message", "last-assistant-message", "message", "prompt_response", "body", "reason", "title"] {
+    /// A block never takes `reason`: it is an event's why (Pi's
+    /// `ui_prompt`, a shutdown's `exit`), not what is asked.
+    static func genericMessage(from payload: [String: Any], blocked: Bool = false) -> String {
+        let keys = ["last_assistant_message", "last-assistant-message", "message", "prompt_response", "body"]
+            + (blocked ? [] : ["reason"]) + ["title"]
+        for key in keys {
             if let value = payload[key] as? String {
                 let folded = condenseOneLine(value, limit: 200)
                 if !folded.isEmpty { return folded }
@@ -549,7 +557,7 @@ enum PulseHookReceiver {
         return ""
     }
 
-    private static func cleanField(_ value: String, limit: Int) -> String {
+    static func cleanField(_ value: String, limit: Int) -> String {
         let redacted = ContentSanitizer.redact(value)
             .replacingOccurrences(of: "\t", with: " ")
             .replacingOccurrences(of: "\n", with: " ")

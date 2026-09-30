@@ -8,7 +8,7 @@ harvest layer and its coverage matrix went).
 
 | Source | How | Answers |
 | --- | --- | --- |
-| **Events** | `pulse-hook` / plugin / extension → `attention.tsv` (v4) and `activity.d/` | working, blocked (needs you), your turn, ended |
+| **Events** | `pulse-hook` / plugin / extension → the event log `events.tsv` (v5, append-only, one line per hook event) | working, blocked (needs you), your turn, ended |
 | **Processes** | libproc at launch / wake / an unknown hook pid, and on a timer backing off 30 s → 5 min; a `DispatchSource` exit source per session pid | is an agent running; is a session's process still alive |
 | **Transcript** | one bounded read (64 KB head + 256 KB tail) at a turn, a wait, or when the detail opens; cached per (path, size, mtime) | title, last message, model, last error |
 

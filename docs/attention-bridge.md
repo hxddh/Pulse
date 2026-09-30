@@ -24,7 +24,11 @@
 - **逐字节可逆。** 第一次写某个文件前，Pulse 把它原来的字节（或「原本不存在」）记进
   `~/Library/Application Support/Pulse/hook-installs.json`。移除时若文件仍是 Pulse 写下的样子，
   就原样还原（原本不存在的文件和目录一并删掉）；若你之后改过它，只删带 Pulse 标记的条目，其余保留。
-  不合法的 JSON 不改；不是 Pulse 写的同名插件文件不覆盖。
+  「Pulse 标记」只认完整的 `pulse-hook` 命令（路径以 `/pulse-hook` 结尾或单独这个词），
+  你自己的 `impulse-hook.sh` 不算。不合法的 JSON、带注释的 JSONC、`hooks` 结构不是「事件 → 数组」
+  的文件都不改，并说明原因；CRLF 换行与 UTF-8 BOM 原样保留；你留着的空事件 `[]` 也留着。
+  Codex 的 `notify` 按整条 TOML 语句处理，被改成多行也能认出、整条移除。不是 Pulse 写的同名插件
+  文件不覆盖。
 - **只装在这台 Mac 上有的 Agent。** 厂商目录（`~/.claude`、`~/.gemini`…）不存在就不装。
 - **不假装等待。** Codex 与 Cursor 只显示「运行中」与「轮到你」，设置里明说「不会报告它在等你」；
   有人经 `pulse-hook` 或脚本替它们写阻塞行，接收器直接拒收。
@@ -43,12 +47,19 @@ echo '{"session_id":"s1","message":"Approve deploy?"}' | "$HOOK" claude permissi
 echo '{"session_id":"s1"}' | "$HOOK" claude done
 ```
 
-退路是按 v4（十列）直接往 `attention.tsv` 追加一行，见
+所有事件都写进**同一个事件日志** `~/Library/Application Support/Pulse/events.tsv`：只追加、
+每个 hook 事件一行（开始、提交、工具、阻塞、空闲、回合结束、解决、结束），按写入顺序；文件 0600，
+超过 1 MiB 时压缩并换一代表头——每个会话留最近的行和两小时内的全部行，开着的阻塞连同它之后的行
+一行不丢。Pulse 启动时先把整份日志重放一遍，再画第一次托盘；之后只读新写的字节。
+
+退路是按 v5（十一列）直接往 `events.tsv` 追加一行，见
 [`samples/attention-bridge/raise.sh`](samples/attention-bridge/raise.sh)。
 
-hook 自己会记下 Agent 的进程号（沿父进程链找到第一个符合目录进程规则的祖先，找不到就用直接父进程）、
-会话 transcript 路径，以及落地句柄：`tmux:%3`、`iterm:<ITERM_SESSION_ID>`、`tty:/dev/ttys004`、
-`term:<TERM_PROGRAM>`。不 fork、不跑 `ps`，只用 `sysctl` 与环境变量。
+hook 自己会记下 Agent 的进程号（沿父进程链找到第一个符合目录进程规则的祖先，找不到就用直接父进程；
+父进程已经退出、被 launchd 收养时不写）、会话 transcript 路径，以及落地句柄：`tmux:%3`、
+`iterm:<ITERM_SESSION_ID>`、`tty:/dev/ttys004`、`term:<TERM_PROGRAM>`。不 fork、不跑 `ps`，只用
+`sysctl` 与环境变量。Pulse 之后若发现这个进程号已经换成了别的程序（或是在会话之后才启动的进程），
+就当会话已结束。
 
 ## 界面上会怎样
 

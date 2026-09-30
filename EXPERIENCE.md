@@ -120,7 +120,11 @@ VoiceOver 读同一句（空闲时读「空闲」）。
 **Pulse 启动前就在跑的会话**先显示为「检测到进程」（灰色虚线圈），直到它报出下一个事件；
 进程在启动、唤醒、hook 报出没见过的进程时查看，平时 30 秒起、没有变化就逐步放慢到 5 分钟。
 **知道进程的会话只在进程活着时算在跑**；不知道进程的会话 30 分钟没有新事件就转为「最近」，
-「为什么」照实说「30 分钟没有消息」。
+「为什么」照实说「30 分钟没有消息」。工作中的会话（中途被打断的回合不会报 Stop）先按停滞变橙，
+两小时仍没有任何消息就转为「最近」，「为什么」说「已经 N 没有任何消息」—— 永远不会一直橙着。
+**活着的进程只留住工作中与需要你的会话**：空闲、「轮到你」过期、已是「最近」的会话照常在 45 分钟后
+离开列表 —— 一个 Cursor 或 OpenCode 进程一整天跑着很多会话，它们不该一直挂着。会话记下的进程号
+若已换成别的程序（或是之后才启动的进程），就当会话已结束。
 
 面板宽度固定，高度**由内容决定**（测量后封顶，并且不超出屏幕可见区域）。
 **帧动画只在行数变化时发生**：普通扫描、进出详情页都不让面板边缘动（详情页自己有
@@ -383,15 +387,15 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 
 常驻菜单栏工具被系统标记为耗电大户等于定位破产。
 
-**没有固定的探测间隔（事件驱动）。** attention.tsv 与 `activity.d/` 一变就处理
-（`DispatchSource`）；会话进程退出由每个 pid 的退出源报告。除此之外只有：
+**没有固定的探测间隔（事件驱动）。** 事件日志 `events.tsv` 一变就只读新写的那几行
+（一个 `DispatchSource`）；启动时先把整份日志重放一遍再画第一次托盘；会话进程退出由每个 pid 的退出源报告。除此之外只有：
 
 | 定时 | 间隔 |
 | --- | --- |
 | 便宜的时钟（推进「最近」「停滞」与相对时间） | 托盘打开或刚出现等待 5s，否则 60s；没有会话时停表 |
 | 进程查看（libproc，不起子进程） | 启动 / 唤醒 / hook 报出未知进程时；平时 30s 起，没有变化就加倍到 5 分钟 |
 
-低电量模式 ×2；**息屏 / 锁屏停表**（托盘打开除外；attention 文件变化仍唤醒）。
+低电量模式 ×2；**息屏 / 锁屏停表**（托盘打开除外；事件日志变化仍唤醒）。
 会话文件只在轮到你、需要你或打开详情时读一次（有界、后台、按大小与修改时间缓存）。
 
 **扫描不重绘**（场景 BY）：一轮扫描发现的世界与上一轮相同时，store 不发布任何变更，
@@ -401,7 +405,8 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 ### 通知
 
 - 触发：新 Waiting（边沿）。边沿是上一轮没在等的行，或同一行上的新一次提问（会话在旧提问之后动过，
-  或隔了 20 秒以上）；同一次提问报两次不是新边沿。启动时 attention 文件里已经在等的是基线，不发。
+  或隔了 20 秒以上）；同一次提问报两次不是新边沿。启动时事件日志里已经在等的是基线（重放完才画第一次托盘），不发。
+  重启不会让已经回答过的等待重新变红：日志按顺序记下了回答它的那次工具运行。
 - 内容：标题 `{Agent} · {项目}`，正文 `{原因} · {消息}`。
   只说「需要你处理」而不说要什么，用户仍得切过去才知道 —— 不算闭环。
 - **`{消息}` 必须说出被请求的那件事本身。** 厂商的权限事件常常不带任何散文
@@ -439,14 +444,18 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 - **照厂商源码读（场景 CG）。** 每个 Agent 的 hook 契约都写明对照的是厂商哪个仓库哪个
   提交或哪份文档；每周哨兵在这些文件变动时提醒。按需读取的六种会话文件方言各有按厂商格式造的夹具。
 - **跟上厂商（场景 CE）。** Claude hooks 接住提问（elicitation）与因接口错误结束的回合
-  （StopFailure → 轮到你）；经权限请求到来的 AskUserQuestion 是提问。Codex 分页会话格式
+  （StopFailure → 轮到你）；经权限请求到来的 AskUserQuestion 是提问，问题就是它自己的第一个问题
+  （不是工具名），ExitPlanMode 显示计划的第一行；失败的工具（PostToolUseFailure）也算回答了它的
+  权限请求。同一次提问先到一句泛泛的通知、后到具体的请求时，显示具体的那句。Pi 的提示没有标题时
+  什么都不写，不把事件的 reason（`ui_prompt`）当问题。Codex 分页会话格式
   （`item_completed`）照样读出标题与最后一句话；Codex 的 hooks 从不接 PermissionRequest ——
   它在自动审查之前就触发，接了就是伪造等待。
 - **工具名同理。** 只认结构化的 `tool_use` 记录和已知工具名白名单，
   绝不从「任意 `"name": "..."`」里猜。宁可空着。
 - **数量不估算。** 会话文件只读头尾，记录数不展示；被上限压下的会话精确计数。
-- **写到磁盘上的东西要说清楚。** Pulse 只写 `settings.json`、hook 安装账本与 `debug.log`；
-  hook 写 attention 与活动文件。更早版本留下的会话记录文件在启动时删掉，不读、不迁移。
+- **写到磁盘上的东西要说清楚。** Pulse 只写 `settings.json`、hook 安装账本与 `debug.log`，
+  以及往事件日志里追加忽略时的 `done`；hook 往事件日志 `events.tsv` 追加（只追加、0600、
+  超过 1 MiB 压缩，开着的等待与回答它的行不丢）。更早版本留下的会话记录文件在启动时删掉，不读、不迁移。
   诊断日志不落项目名。
 - **主行按来源选，不按长度。** 用户句压过厂商标题，与字数无关；占位词和纯文件名
   永远不是目标。
@@ -504,7 +513,7 @@ fail-open —— 句子里就说清楚它回落到哪儿。
 | 节奏（事件驱动 + 便宜的时钟） | `PulseCore/ProbeSchedule.swift` + `PulseApp/PowerMonitor.swift` |
 | 文案 | `PulseApp/L10n.swift` |
 | 版本 / 构建指纹 | `PulseApp/Models.swift` → `PulseVersion` |
-| Attention 协议 | `PulseCore/AttentionProtocol.swift`、`PulseHarvest/AttentionIO.swift`、`PulseApp/PulseHookReceiver.swift`；契约 [`docs/attention-protocol.md`](docs/attention-protocol.md) |
+| Attention 协议（v5 事件日志） | `PulseCore/AttentionProtocol.swift`、`PulseHarvest/EventLog.swift`、`PulseApp/PulseHookReceiver.swift`；契约 [`docs/attention-protocol.md`](docs/attention-protocol.md) |
 | 验收场景 → 测试 | [`docs/scenarios.md`](docs/scenarios.md)，`scripts/scenario_map.py` 核对 |
 
 数据流详见 [`docs/architecture.md`](docs/architecture.md)。

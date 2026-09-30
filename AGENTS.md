@@ -15,7 +15,7 @@ says what is true now; CHANGELOG says when and why it became true.
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the behaviour spec |
 | [`docs/scenarios.md`](docs/scenarios.md) | You add or change an acceptance scenario — each row names the tests that pin it |
 | [`docs/vendor-formats.md`](docs/vendor-formats.md) | You touch a hook receiver or a transcript dialect — each agent's hook contract has a pinned source, a test and a weekly drift sentinel |
-| [`docs/attention-protocol.md`](docs/attention-protocol.md) | You touch `attention.tsv` or a hook's attention line |
+| [`docs/attention-protocol.md`](docs/attention-protocol.md) | You touch the event log (`events.tsv`, Attention Protocol v5) or a hook's line |
 | [`docs/landing-hosts.md`](docs/landing-hosts.md) | You change how a click lands on a terminal or an editor |
 
 **The roster is seven agents**, an owner decision: Claude, Codex, Cursor (IDE
@@ -45,25 +45,42 @@ compiles and ships.
   hooks and never makes a row of its own.
 - **No quota, cost, or reset HUD.** That is a different product.
 - **No judgment transfer, and no blind approve.** Pulse never answers a
-  permission request, and the hook receiver never holds — it writes one
-  attention line and exits. The answer is always given in the vendor's own
+  permission request, and the hook receiver never holds — it appends one
+  line to the event log and exits. The answer is always given in the vendor's own
   prompt. Forbidden: rules engines, always-allow, auto-approve, approving
   from a truncated summary, and any hold that would freeze an agent.
 - **Pulse watches orchestrators; it is not one.** No dispatching sessions,
   no managed runtimes, no worktrees, no running the user's checks, no typing
   into terminals. Bringing any of it back is a product decision, not a
   feature.
-- **Pulse keeps no record of its own.** The agents' hooks (`attention.tsv`,
-  `activity.d/`) are the only state that outlives a launch, beside
-  `settings.json` and the hook-install ledger. What the banner remembers
-  (`WaitLedger`) is in memory; files earlier versions kept are deleted at
-  launch, never read or migrated.
+- **Pulse keeps no record of its own.** The agents' hooks write the one
+  event log (`events.tsv`, append-only, Attention Protocol v5: every hook
+  event — start, prompt, tool, block, idle, turn, done, end — one line in
+  order); it is the only state that outlives a launch, beside
+  `settings.json` and the hook-install ledger. The app appends to it only a
+  `done` for a dismissal. What the banner remembers (`WaitLedger`) is in
+  memory; files earlier versions kept (`attention.tsv`, `activity.d/`, …)
+  are deleted at launch, never read or migrated.
+- **Replay before the first projection.** At launch `ScanEngine` reads the
+  whole log, applies every line in order to `SessionBook`, and only then
+  projects; that projection is the banner baseline. After it the engine
+  reads only the bytes after its cursor. A log rewritten by a compaction (a
+  new generation in its header) is read whole again and only lines not
+  already applied are applied. A failed or empty read changes nothing — it
+  never resets what was applied, so an answered block is never replayed red.
+- **The log is bounded without losing an answer.** An append that would
+  pass `EventLog.maxBytes` compacts first: per session (per agent + folder
+  for a session-less one) the last lines and every recent line stay, and an
+  open block is kept with everything after it in its session.
 - **A source failure must not blank the tray.** A failed libproc scan keeps
   the last good process list; an unreadable transcript only thins a row;
   neither ever removes a session. Sessions leave only by an event (`end`), a
-  process exit, the idle bound or the one-day prune.
-- **Event-driven, no fixed probe interval.** State moves when an event file
-  changes (`DispatchSource`) or a session's process exits (a per-pid exit
+  process exit (or a pid now running another process — `AgentProcesses.stillRuns`),
+  the idle bound, the silent bound or the one-day prune. A live process keeps
+  a working or blocked session listed, never an idle or recent one: one
+  Cursor or OpenCode process runs many sessions all day.
+- **Event-driven, no fixed probe interval.** State moves when the event log
+  changes (one `DispatchSource`) or a session's process exits (a per-pid exit
   source). Besides that there is one cheap tick (`ProbeSchedule.tick`: 5 s
   with the tray open or a fresh wait, else 60 s, stopped when nothing is
   listed) and the libproc scan (at launch, on wake, for an unknown hook pid,
@@ -93,14 +110,16 @@ down only:
 | Target | Kind | What it holds |
 | --- | --- | --- |
 | `PulseCore` | library | the agent catalog, bounded and private IO, process supervision, the cadence, the debug log (members `public`) |
-| `PulseHarvest` | library | the event sources: attention IO, the activity spool, libproc `AgentProcesses`, `RowIdentity`, `TranscriptSummary` (members `package`) |
+| `PulseHarvest` | library | the event sources: the event log (`EventLog`: append, read from a cursor, compact), libproc `AgentProcesses`, `RowIdentity`, `TranscriptSummary` (members `package`) |
 | `PulseApp` | library | `SessionBook` → `TrayState` → `StatusStore`, `ScanEngine`, `WaitNotifier` + `WaitLedger`, the hook receiver and installer, every view; owns the resources (`PulseResources`, never `Bundle.module`) |
 | `PulseBar` | executable | `PulseBarMain.main()` and nothing else — the shipping app |
 | `PulseQA` | executable | `SurfaceFixtures`, `SurfaceCapture`, `StatusStoreFixture`, `TrayPreviewWindowController`, `QADriver` (`@testable import PulseApp`, debug only) |
 
 No library imports AppKit or SwiftUI below `PulseApp`, and none reaches
-`StatusStore`. Data flow: a hook writes a line → `ScanEngine` applies unseen
-lines to `SessionBook` → `TrayState.project(book:processes:summaries:context:)`
+`StatusStore`. Data flow: a hook appends a line to `events.tsv` →
+`AttentionWatcher` wakes `ScanEngine`, which reads the bytes after its cursor
+and applies those lines, in order, to `SessionBook` (at launch: the whole log,
+before the first projection) → `TrayState.project(book:processes:summaries:context:)`
 returns rows, lamp, title, counts, newly-blocked edges and `staleHidden` →
 `StatusStore.land` assigns an observed property only when it changed →
 `WaitNotifier` plans banners from the edges. `Explain` says every row's
@@ -117,8 +136,8 @@ Every target is in the Swift 6 language mode; every product target treats
 warnings as errors. Tests live in `PulseBar/Tests/PulseBarTests/`, one file
 per component: `CoreTests` (catalog, bounded IO, libproc processes),
 `TranscriptTests` (the six transcript dialects), `VendorFormatTests` (hook
-contracts and drift), `AttentionTests` (the book reading attention lines,
-protocol, hook receiver, installer), `SessionTests` (the seven agents' truth
+contracts and drift), `AttentionTests` (the book reading event lines, the
+protocol, the event log, the hook receiver, the installer), `SessionTests` (the seven agents' truth
 tables, `TrayState`, identity), `ExplainTests`, `NotifierTests` (`WaitLedger`,
 delivery, routing), `TrayTests`, `SettingsTests`, `DiagnosticsTests` (the
 report, the hooks section, the tray notice, version and updates),

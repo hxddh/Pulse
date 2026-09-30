@@ -79,10 +79,10 @@ struct PulseSettings: Equatable, Codable, Sendable {
 
     static let readLimit = 64 * 1024
 
-    /// Where `settings.json` lives: next to `attention.tsv`, so `PULSE_HOME`
+    /// Where `settings.json` lives: next to `events.tsv`, so `PULSE_HOME`
     /// moves both. A `home` (tests) names a home directory instead.
     static func directory(home: URL? = nil) -> URL {
-        guard let home else { return AttentionIO.path.deletingLastPathComponent() }
+        guard let home else { return EventLog.directory }
         return home.appendingPathComponent("Library/Application Support/Pulse", isDirectory: true)
     }
 

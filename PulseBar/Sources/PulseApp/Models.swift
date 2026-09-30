@@ -155,6 +155,9 @@ enum RecentReason: Hashable, Sendable {
     /// Its process is not known and nothing was heard for the idle bound —
     /// Pulse cannot vouch that it is still there.
     case quiet
+    /// It was working, its process lives, and nothing has been heard
+    /// for `TrayState.silentBoundMs` (an interrupted turn sends no Stop).
+    case silent
 }
 
 /// 23.0 · where a row's facts came from, in the words `Explain` uses.

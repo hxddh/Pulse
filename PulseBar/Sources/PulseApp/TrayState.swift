@@ -16,15 +16,22 @@ import Foundation
 /// - a session whose pid is known stays in its state while the process
 ///   lives (an exit ends it); with no pid, a session quiet for `idleBoundMs`
 ///   is shown as recent — Pulse cannot tell it is still there;
+/// - a working session that has said nothing for `silentBoundMs` is recent
+///   even while its process lives (an interrupted turn sends no Stop —
+///   it is stalled for a while, never orange for ever);
 /// - a turn is owed for `idleBoundMs`, then it is recent;
-/// - a recent session (idle, ended, or past the bound) stays listed for
-///   `recentWindowMs` after its last event, or while its process lives; then
-///   it is counted as "older, not shown" for a day.
+/// - a recent session (idle, ended, or past a bound) stays listed for
+///   `recentWindowMs` after its last event, then it is counted as "older,
+///   not shown" for a day. A live process does not keep it listed:
+///   one Cursor or OpenCode process runs many sessions all day.
 struct TrayState: Equatable {
     /// Rows shown before the "and N more" fold.
     static let maxVisibleRows = 12
     static let idleBoundMs: Int64 = 30 * 60 * 1000
     static let recentWindowMs: Int64 = 45 * 60 * 1000
+    /// A working session with no event for this long is recent, whatever
+    /// its process: past the stall, Pulse has no word from it at all.
+    static let silentBoundMs: Int64 = 2 * 60 * 60 * 1000
     /// Hidden sessions are counted only within this window.
     static let staleHiddenWindowMs: Int64 = 24 * 60 * 60 * 1000
     /// A raise closer than this to the previous one on the same row is the
@@ -114,7 +121,12 @@ struct TrayState: Equatable {
             row.stateSinceMs = stateSince(of: session, nowMs: nowMs)
             row.recentReason = recentReason(of: session)
 
-            let visible = live || nowMs - session.lastEventMs <= recentWindowMs || !row.isRecent
+            // Only a session still working or blocked is kept by its
+            // process; a recent one leaves after the window, live or not.
+            // A silent one's window starts when it went silent — its last
+            // event is already past the window by then.
+            let recentFrom = row.isRecent && row.recentReason == .silent ? row.stateSinceMs : session.lastEventMs
+            let visible = nowMs - recentFrom <= recentWindowMs || !row.isRecent
             guard visible else {
                 if nowMs - session.lastEventMs <= staleHiddenWindowMs {
                     out.staleHidden[session.agent, default: 0] += 1
@@ -192,6 +204,7 @@ struct TrayState: Equatable {
             return .blocked(RowWait(kind: waitKind(block.kind), ask: block.ask, sinceMs: block.sinceMs, inFront: block.inFront))
         case .working:
             if unknownPid, quiet { return .recent }
+            if nowMs - session.lastEventMs > silentBoundMs { return .recent }
             return .running
         case .yourTurn(let since):
             if nowMs - since > idleBoundMs { return .recent }
@@ -201,13 +214,15 @@ struct TrayState: Equatable {
         }
     }
 
-    /// Why a session projected as recent is: ended, at its prompt, or
-    /// quiet past the idle bound with no process Pulse can see.
+    /// Why a session projected as recent is: ended, at its prompt, quiet
+    /// past the idle bound with no process Pulse can see, or silent past
+    /// `silentBoundMs` although its process lives.
     static func recentReason(of session: SessionBook.Session) -> RecentReason {
         switch session.state {
         case .ended: return .ended
         case .idle, .yourTurn: return .atPrompt
-        case .working, .blocked: return .quiet
+        case .working: return session.pid > 0 ? .silent : .quiet
+        case .blocked: return .quiet
         }
     }
 
@@ -217,6 +232,7 @@ struct TrayState: Equatable {
     static func stateSince(of session: SessionBook.Session, nowMs: Int64) -> Int64 {
         switch (session.state, state(of: session, nowMs: nowMs)) {
         case (.yourTurn(let since), .recent): return since + idleBoundMs
+        case (.working, .recent) where session.pid > 0: return session.lastEventMs + silentBoundMs
         case (.blocked, .recent), (.working, .recent): return session.lastEventMs + idleBoundMs
         default: return session.stateSinceMs
         }

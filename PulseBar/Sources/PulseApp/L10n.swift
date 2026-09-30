@@ -104,6 +104,8 @@ enum L10n {
         case .hooksFailureInvalidJSON: return "its settings file is not valid JSON — fix it, then install again"
         case .hooksFailureNotOurs: return "a file Pulse did not write is in the way — move it, then install again"
         case .hooksFailureUnwritable: return "its settings could not be written"
+        case .hooksFailureHasComments: return "its settings file has comments, which Pulse will not rewrite — remove them, then install again"
+        case .hooksFailureShape: return "its hooks section is not the shape its docs describe — fix it, then install again"
         case .kindPermission: return "Permission"
         case .kindInput: return "Input"
         case .kindWaiting: return "Waiting"
@@ -176,7 +178,7 @@ enum L10n {
         case .explainHook: return "%@'s hook reported %@ %@"
         case .explainHookFront: return " — its window was in front, so no banner"
         case .explainTurn: return "%@'s hook reported the turn ended %@ — focus it or reply to clear"
-        case .explainProcessOnly: return "Seen only as a process — no hook event since Pulse started"
+        case .explainProcessOnly: return "Seen only as a process — no hook event for it in the event log"
         case .explainStalled: return "No new output for %@"
         case .explainStalledUnknown: return "Running, but Pulse has no clock for its activity"
         case .explainRunning: return "%@'s hook reported work %@"
@@ -222,6 +224,7 @@ enum L10n {
         case .explainIdle: return "At its prompt, nothing owed; last event %@"
         case .explainEnded: return "The session ended %@"
         case .explainQuiet: return "No event for %@, and no process Pulse can see — shown as recent"
+        case .explainSilent: return "No word from it for %@ — shown as recent"
         }
     }
 
@@ -265,6 +268,8 @@ enum L10n {
         case .hooksFailureInvalidJSON: return "它的设置文件不是合法 JSON——修好后再安装"
         case .hooksFailureNotOurs: return "那里有一个不是 Pulse 写的文件——移走后再安装"
         case .hooksFailureUnwritable: return "无法写入它的设置"
+        case .hooksFailureHasComments: return "它的设置文件里有注释，Pulse 不会改写——删掉注释后再安装"
+        case .hooksFailureShape: return "它的 hooks 部分和文档写的结构不一样——修好后再安装"
         case .kindPermission: return "需要授权"
         case .kindInput: return "等待输入"
         case .kindWaiting: return "等待中"
@@ -334,7 +339,7 @@ enum L10n {
         case .explainHook: return "%@ 的 hook 报告了%@ · %@"
         case .explainHookFront: return " —— 当时提示窗口就在最前，所以没有通知"
         case .explainTurn: return "%@ 的 hook 报告回合结束 · %@ —— 聚焦或回复它即消失"
-        case .explainProcessOnly: return "只看到进程——Pulse 启动后它还没发过 hook 事件"
+        case .explainProcessOnly: return "只看到进程——事件日志里还没有它的 hook 事件"
         case .explainStalled: return "已经 %@ 没有新输出"
         case .explainStalledUnknown: return "在运行，但 Pulse 读不到它的活动时间"
         case .explainRunning: return "%@ 的 hook 报告在工作 · %@"
@@ -380,6 +385,7 @@ enum L10n {
         case .explainIdle: return "停在提示符，没有欠你的事 · 最近事件 %@"
         case .explainEnded: return "会话已结束 · %@"
         case .explainQuiet: return "已经 %@ 没有事件，也看不到它的进程 —— 按最近显示"
+        case .explainSilent: return "已经 %@ 没有任何消息 —— 按最近显示"
         }
     }
 
@@ -399,6 +405,7 @@ enum L10n {
         case hooksNudge, hooksUnknown, hooksMissing, hooksInstalledCount
         case hooksFailed
         case hooksWorking, hooksAgentFailed, hooksFailureInvalidJSON, hooksFailureNotOurs, hooksFailureUnwritable
+        case hooksFailureHasComments, hooksFailureShape
         case kindPermission, kindInput, kindWaiting
         case terminalSession, appSession
         case terminalDetectedNoDetails, appDetectedNoDetails
@@ -481,7 +488,7 @@ enum L10n {
         case detailProcess
         case detailLastChange
         case detailDiagnostics
-        case explainIdle, explainEnded, explainQuiet
+        case explainIdle, explainEnded, explainQuiet, explainSilent
     }
 }
 

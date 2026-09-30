@@ -8,13 +8,14 @@
         "urls": [
           "https://code.claude.com/docs/en/hooks"
         ],
-        "checked": "2026-09-29",
-        "note": "Every Pulse entry runs async: true — an async hook cannot block or decide (\"Run hooks in the background\"). PostToolUse replaces PreToolUse for activity.",
+        "checked": "2026-09-30",
+        "note": "Every Pulse entry runs async: true — an async hook cannot block or decide (\"Run hooks in the background\"). PostToolUse replaces PreToolUse for activity; PostToolUseFailure (after a tool call fails; output cannot change the outcome) is activity too. PermissionDenied is not installed: its hookSpecificOutput.retry can change what the model does. PermissionRequest AskUserQuestion reads tool_input.questions[0].question; ExitPlanMode reads tool_input.plan.",
         "events": [
           "SessionStart",
           "SessionEnd",
           "UserPromptSubmit",
           "PostToolUse",
+          "PostToolUseFailure",
           "PermissionRequest",
           "Notification",
           "Stop",

@@ -5,10 +5,14 @@ import AppKit
 ///
 /// Nothing here polls a vendor. What moves a session:
 ///
-/// - the **attention file** (`attention.tsv`): a hook appends a v4 line; the
-///   watcher wakes the engine, which reads the file off the main thread and
-///   applies only the lines it has not seen to the `SessionBook`;
-/// - the **activity spool** (`activity.d/`): a hook's tool or prompt event;
+/// - the **event log** (`events.tsv`): a hook appends a v5 line; the
+///   watcher wakes the engine, which reads the bytes after its cursor off
+///   the main thread and applies those lines, in order, to the
+///   `SessionBook`. At launch the whole log is replayed **before the first
+///   projection**, and that projection is the baseline (no banner for what
+///   was already there). A rewritten log (compaction: a new generation) is
+///   read whole again, and only lines not already applied are applied; a
+///   failed or empty read changes nothing;
 /// - a **process exit**: kqueue (`ProcessExitWatch`) ends the sessions that
 ///   process ran;
 /// - the **process scan** (libproc — at launch, on wake, when a hook names
@@ -23,16 +27,15 @@ import AppKit
 /// when its value changed. A transcript is
 /// read only when its session reaches your turn or a wait, or its detail
 /// opens — bounded, off the main thread, cached per (path, size, mtime).
-/// A failed read — attention, spool, process table, transcript — keeps what
-/// the engine had: a source failure never blanks the tray.
+/// A failed read — event log, process table, transcript — keeps what the
+/// engine had: a source failure never blanks the tray.
 @MainActor
 final class ScanEngine {
     /// The model this engine feeds. Weak: the model owns the engine.
     weak var model: StatusStore?
 
     /// Tests exercising store behaviour must not start real reads: a read
-    /// is not free (the attention file is locked). Same shape as
-    /// `AttentionIO.pathOverride`.
+    /// is not free (the event log is locked).
     static var suppressBackgroundScansForTesting = false
 
     let powerMonitor = PowerMonitor()
@@ -43,27 +46,32 @@ final class ScanEngine {
     // MARK: The world, as the events said it
 
     private(set) var book = SessionBook()
-    /// The attention lines already applied — the file is re-read whole (it
-    /// is small and compacted), and only lines not seen before are new.
-    private var seenLines: Set<String> = []
+    /// Where the engine is in the event log: its generation and the byte
+    /// after the last line applied.
+    private(set) var logCursor: EventLog.Cursor?
+    /// Every line of the current generation already applied — consulted
+    /// only when the log was rewritten and is read whole again, so a line
+    /// the compaction kept is not applied twice. Bounded by the log.
+    private var appliedLines: Set<String> = []
     /// Agent processes the last process scan found.
     private(set) var processes: [AgentProcesses.Hit] = []
     /// Transcript summaries by path, and the file stamp each was read at.
     private(set) var transcripts: [String: TranscriptSummary] = [:]
     private var transcriptStamps: [String: FileStamp] = [:]
     private var transcriptReads: Set<String> = []
-    /// The newest hook event per agent — an attention line or an activity
-    /// event — for Settings' "last event" and the report. Kept here so a
-    /// redraw never reads a file, and so it outlives the attention file's
-    /// 80-line window.
+    /// The newest hook event per agent, for Settings' "last event" and the
+    /// report. Kept here so a redraw never reads a file.
     private(set) var latestHookEventMs: [AgentID: Int64] = [:]
     /// The last projection's open waits (`TrayState.waitingSince`) — what
     /// the next one finds its Waiting edges against.
     private var lastWaits: [String: Int64] = [:]
-    /// The attention file has been read once: every projection up to and
-    /// including the one after that read is the launch baseline — a wait
-    /// already in the file is not news.
-    private(set) var attentionRead = false
+    /// The event log has been read once: every projection up to and
+    /// including the one after that read (the launch replay) is the
+    /// baseline — a wait already in the log is not news.
+    private(set) var logRead = false
+    /// `start()` holds every projection until the launch replay has landed
+    /// (or failed), so the first tray drawn is the replayed one.
+    private var holdProjection = false
 
     // MARK: Cadence
 
@@ -92,7 +100,7 @@ final class ScanEngine {
     }
 
     /// Reads in flight, and reads asked for while one was.
-    private enum Source: Hashable { case attention, activity, processes }
+    private enum Source: Hashable { case events, processes }
     private var reading: Set<Source> = []
     private var rereadWanted: Set<Source> = []
 
@@ -108,19 +116,15 @@ final class ScanEngine {
     /// settings are loaded.
     func start() {
         armed = true
+        holdProjection = !Self.suppressBackgroundScansForTesting
         exitWatch.start { [weak self] pid in
             // Bind before the Task: the exit callback is @Sendable.
             guard let engine = self else { return }
             Task { @MainActor in engine.processExited(pid) }
         }
-        attentionWatcher.start(
-            onChange: { [weak self] in
-                Task { @MainActor in self?.read(.attention) }
-            },
-            onActivity: { [weak self] in
-                Task { @MainActor in self?.read(.activity) }
-            }
-        )
+        attentionWatcher.start { [weak self] in
+            Task { @MainActor in self?.read(.events) }
+        }
         powerMonitor.start { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
@@ -135,8 +139,9 @@ final class ScanEngine {
                 }
             }
         }
-        read(.attention)
-        read(.activity)
+        // The launch replay first; the process scan lands after it or is
+        // held with it.
+        read(.events)
         read(.processes)
         rescheduleTimer()
         rescheduleProcessScan()
@@ -158,15 +163,14 @@ final class ScanEngine {
         rescheduleTimer()
     }
 
-    /// Re-read everything and re-project: the attention file, the spool and
-    /// the process table. Cheap — two small files and one pass over the
-    /// process table, no vendor file — and only on a person's action (the
-    /// tray opening, ⌘R, a dismissal, a setting).
+    /// Read what is new in the event log and re-scan the process table.
+    /// Cheap — the bytes after the cursor and one pass over the process
+    /// table, no vendor file — and only on a person's action (the tray
+    /// opening, ⌘R, a dismissal, a setting).
     func refresh(reason: String) {
         if Self.suppressBackgroundScansForTesting { return }
         DebugLog.write("refresh reason=\(reason)")
-        read(.attention)
-        read(.activity)
+        read(.events)
         read(.processes)
     }
 
@@ -223,21 +227,18 @@ final class ScanEngine {
         }
         reading.insert(source)
         switch source {
-        case .attention:
+        case .events:
+            let cursor = logCursor
             ioQueue.async { [weak self] in
-                let text = AttentionIO.readText()
+                let chunk = EventLog.read(after: cursor)
                 DispatchQueue.main.async { [weak self] in
-                    self?.finishRead(.attention)
-                    self?.landAttention(text)
-                }
-            }
-        case .activity:
-            let nowMs = Self.nowMs()
-            ioQueue.async { [weak self] in
-                let events = ActivitySpool.readEvents(nowMs: nowMs)
-                DispatchQueue.main.async { [weak self] in
-                    self?.finishRead(.activity)
-                    self?.apply(activity: events, nowMs: Self.nowMs())
+                    guard let self else { return }
+                    self.finishRead(.events)
+                    if let chunk {
+                        self.landLog(chunk)
+                    } else {
+                        self.logReadFailed()
+                    }
                 }
             }
         case .processes:
@@ -258,29 +259,79 @@ final class ScanEngine {
 
     // MARK: - Applying what was read
 
-    /// The attention file's text: apply the lines not seen before, in file
-    /// order.
-    func landAttention(_ text: String, nowMs: Int64 = ScanEngine.nowMs()) {
-        let lines = text.split(whereSeparator: \.isNewline).map(String.init)
-        let fresh = lines.filter { !seenLines.contains($0) }
-        seenLines = Set(lines)
-        for (agent, event) in AttentionIO.latestEvents(in: text) {
-            noteHookEvent(agent, atMs: event.tsMs)
+    /// One read of the event log, in file order. The first is the launch
+    /// replay: every line, then the first projection, which is the
+    /// baseline. After it, only the lines after the cursor — unless the log
+    /// was rewritten (`chunk.fresh`), when the lines already applied are
+    /// skipped. An empty read changes nothing: it never resets what was
+    /// applied, so the next read cannot replay an answered block.
+    func landLog(_ chunk: EventLog.Chunk, nowMs: Int64 = ScanEngine.nowMs()) {
+        holdProjection = false
+        let baseline = !logRead
+        if chunk.lines.isEmpty, chunk.fresh {
+            // Nothing there (a missing header, an empty file): keep the
+            // cursor and what was applied.
+            if baseline { project(nowMs: nowMs) }
+            logRead = true
+            return
         }
-        apply(records: fresh.compactMap { AttentionRecord(line: $0) }, nowMs: nowMs)
+        var fresh: [String] = []
+        if chunk.fresh {
+            var next: Set<String> = []
+            for line in chunk.lines {
+                if !appliedLines.contains(line) { fresh.append(line) }
+                next.insert(line)
+            }
+            appliedLines = next
+        } else {
+            fresh = chunk.lines
+            appliedLines.formUnion(chunk.lines)
+        }
+        logCursor = chunk.cursor
+        let records = fresh.compactMap { AttentionRecord(line: $0) }
+        apply(records: records, nowMs: nowMs, verifyPids: baseline)
         // The projection above was the baseline; the next one can notify.
-        attentionRead = true
+        logRead = true
+    }
+
+    /// The log could not be read. Nothing changes; the launch hold is lifted
+    /// (the tray draws what it has, baseline) and the read is tried again.
+    func logReadFailed() {
+        DebugLog.write("event log read failed; keeping \(book.sessions.count) sessions")
+        if holdProjection {
+            holdProjection = false
+            project()
+        }
+        guard armed, !Self.suppressBackgroundScansForTesting else { return }
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            self?.read(.events)
+        }
     }
 
     private func noteHookEvent(_ agent: AgentID, atMs ms: Int64) {
         if (latestHookEventMs[agent] ?? 0) < ms { latestHookEventMs[agent] = ms }
     }
 
-    /// Attention records, in order. Tests call this directly.
-    func apply(records: [AttentionRecord], nowMs: Int64) {
-        for record in records { book.apply(record, nowMs: nowMs) }
-        // A pid the file names that is gone ended while nobody watched.
-        book.endSessions(whosePidIsDead: AgentProcesses.isAlive)
+    /// Event records, in order. Tests call this directly. `verifyPids` (the
+    /// launch replay) also ends a session whose pid now belongs to another
+    /// process — a pid reused since the log was written.
+    func apply(records: [AttentionRecord], nowMs: Int64, verifyPids: Bool = false) {
+        for record in records {
+            book.apply(record, nowMs: nowMs)
+            // A `done` may be Pulse's own (a dismissal): not the agent's hook
+            // speaking, so not its "last event".
+            if let agent = AgentCatalog.agent(named: record.agent), record.ms > 0,
+               AttentionProtocol.kind(record.kind) != .done {
+                noteHookEvent(agent, atMs: min(record.ms, nowMs))
+            }
+        }
+        // A pid the log names that is gone ended while nobody watched.
+        if verifyPids {
+            endGoneSessions()
+        } else {
+            book.endSessions(whosePidIsDead: AgentProcesses.isAlive)
+        }
         // A live pid no scan has found: one scan, so its terminal and host
         // are known and a process-only row is not left beside its session.
         if armed {
@@ -293,18 +344,6 @@ final class ScanEngine {
                 if pidsScannedFor.count > 512 { pidsScannedFor = unknown }
                 quietProcessScans = 0
                 read(.processes)
-            }
-        }
-        project(nowMs: nowMs)
-    }
-
-    /// Activity events (the spool is re-read whole; the book ignores what it
-    /// has already seen).
-    func apply(activity events: [ActivitySpool.Event], nowMs: Int64) {
-        for event in events {
-            book.apply(activity: event, nowMs: nowMs)
-            if let agent = AgentCatalog.agent(named: event.agent) {
-                noteHookEvent(agent, atMs: event.tsMs)
             }
         }
         project(nowMs: nowMs)
@@ -323,7 +362,8 @@ final class ScanEngine {
         } else {
             DebugLog.write("process scan failed; keeping \(processes.count)")
         }
-        book.endSessions(whosePidIsDead: AgentProcesses.isAlive)
+        // Dead, or its pid reused by another process since.
+        endGoneSessions()
         project(nowMs: nowMs)
         rescheduleProcessScan()
     }
@@ -346,9 +386,26 @@ final class ScanEngine {
 
     // MARK: - Projection
 
+    /// Ends every live session whose process is gone: its pid is dead, or
+    /// it now runs another agent or started after the session named it (a
+    /// reused pid — `AgentProcesses.stillRuns`). IO: `kill(0)` per session,
+    /// and one `proc_pidinfo` + argv read (one shared buffer) per live pid.
+    private func endGoneSessions() {
+        var buffer: [UInt8] = []
+        book.endSessions(whoseProcessIsGone: { session in
+            guard AgentProcesses.isAlive(session.pid) else { return true }
+            return !AgentProcesses.stillRuns(
+                agent: session.agent,
+                since: session.pidSinceMs,
+                identity: AgentProcesses.identity(of: session.pid, buffer: &buffer)
+            )
+        })
+    }
+
     /// The book as rows, landed on the model. Pure but for the landing.
+    /// Held while the launch replay is being read.
     func project(nowMs: Int64 = ScanEngine.nowMs()) {
-        guard let model else { return }
+        guard let model, !holdProjection else { return }
         // A turn held for a block lands once its grace has passed, even when
         // no event follows (a denied prompt, then Stop within 20 s).
         book.settleHeldTurns(nowMs: nowMs)
@@ -367,7 +424,7 @@ final class ScanEngine {
         )
         lastWaits = state.waitingSince
         state.snapshot.updatedAt = Date(timeIntervalSince1970: Double(nowMs) / 1000)
-        model.land(state, nowMs: nowMs, baseline: !attentionRead)
+        model.land(state, nowMs: nowMs, baseline: !logRead)
         let snap = state.snapshot
 
         exitWatch.follow(book.livePids)

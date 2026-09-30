@@ -137,6 +137,9 @@ struct Explain: Equatable {
             case .quiet:
                 let quiet = DurationFormat.label(seconds: row.lastActivitySeconds(at: nowMs), lang: lang)
                 return String(format: t(.explainQuiet), quiet)
+            case .silent:
+                let quiet = DurationFormat.label(seconds: row.lastActivitySeconds(at: nowMs), lang: lang)
+                return String(format: t(.explainSilent), quiet)
             }
         }
     }

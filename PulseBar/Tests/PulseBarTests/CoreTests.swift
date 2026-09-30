@@ -344,6 +344,47 @@ final class AgentProcessesTests: XCTestCase {
         XCTAssertEqual(AgentProcesses.commandLine(path: "", argv: ["pi", "--model", "x"]), "pi --model x")
     }
 
+    /// 25.0 fix 14: Pi's deny list reads the program, never its arguments:
+    /// `pi ./pipeline.ts` is Pi. Other agents' argument-level denials stay.
+    func testPisDenyListReadsOnlyTheProgram() {
+        XCTAssertEqual(AgentProcesses.match(args: "/opt/homebrew/bin/pi ./pipeline.ts"), .pi)
+        XCTAssertEqual(AgentProcesses.match(args: "/opt/homebrew/bin/pi --model piano-large --session pickle"), .pi)
+        XCTAssertEqual(AgentProcesses.match(args: "/opt/homebrew/bin/node /opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/dist/cli.js --file pypi.md"), .pi)
+        XCTAssertNil(AgentProcesses.match(args: "/usr/bin/pip3 install pi"))
+        XCTAssertNil(AgentProcesses.match(args: "/usr/local/bin/pihole -g"))
+        XCTAssertNil(AgentProcesses.match(args: "/Users/me/.local/bin/cursor-agent worker start --worker-dir /w"), "an argument-level denial still reads the line")
+    }
+
+    /// 25.0 fix 5: a recorded pid is still the session's process only while
+    /// it runs no other agent and started no later than the first event that
+    /// named it.
+    func testAReusedPidIsNotTheSessionsProcess() {
+        let since: Int64 = 1_800_000_000_000
+        let claude = AgentProcesses.Identity(args: "/Users/me/.local/bin/claude --resume", startedMs: since - 60_000)
+        XCTAssertTrue(AgentProcesses.stillRuns(agent: .claude, since: since, identity: claude))
+        XCTAssertTrue(AgentProcesses.stillRuns(agent: .claude, since: since, identity: nil), "unreadable: the benefit of the doubt")
+        XCTAssertTrue(
+            AgentProcesses.stillRuns(agent: .claude, since: since, identity: AgentProcesses.Identity(args: "/bin/zsh -l", startedMs: since - 60_000)),
+            "the hook's direct parent (no ancestor was the agent) is kept"
+        )
+        XCTAssertTrue(
+            AgentProcesses.stillRuns(agent: .claude, since: since, identity: AgentProcesses.Identity(args: "/Users/me/.local/bin/claude", startedMs: since + 1_000)),
+            "the kernel's clock and the hook's differ by a moment"
+        )
+        XCTAssertFalse(
+            AgentProcesses.stillRuns(agent: .claude, since: since, identity: AgentProcesses.Identity(args: "/Users/me/.local/bin/claude", startedMs: since + 60_000)),
+            "a claude started after the session named the pid is another claude"
+        )
+        XCTAssertFalse(
+            AgentProcesses.stillRuns(agent: .claude, since: since, identity: AgentProcesses.Identity(args: "/opt/homebrew/bin/codex", startedMs: since - 60_000)),
+            "the pid now runs another agent"
+        )
+        XCTAssertFalse(
+            AgentProcesses.stillRuns(agent: .claude, since: since, identity: AgentProcesses.Identity(args: "/usr/bin/vim notes.md", startedMs: since + 3_600_000)),
+            "a process that started an hour later is not the one the hook ran under"
+        )
+    }
+
     private func proc(_ pid: Int32, _ ppid: Int32, _ args: String, tty: String = "") -> AgentProcesses.Proc {
         AgentProcesses.Proc(pid: pid, ppid: ppid, args: args, tty: tty, startedMs: 1_800_000_000_000)
     }
@@ -555,7 +596,7 @@ final class PrivateFileTests: XCTestCase {
             .appendingPathComponent("pulse-tighten-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let url = directory.appendingPathComponent("attention.tsv")
+        let url = directory.appendingPathComponent("events.tsv")
         // What every install made before this rule has on disk.
         XCTAssertTrue(FileManager.default.createFile(
             atPath: url.path,

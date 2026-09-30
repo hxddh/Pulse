@@ -48,6 +48,8 @@ enum HooksSupport {
             case .invalidJSON: return L10n.t(.hooksFailureInvalidJSON, lang)
             case .notOurs: return L10n.t(.hooksFailureNotOurs, lang)
             case .unwritable: return L10n.t(.hooksFailureUnwritable, lang)
+            case .hasComments: return L10n.t(.hooksFailureHasComments, lang)
+            case .unexpectedShape: return L10n.t(.hooksFailureShape, lang)
             }
         }
 

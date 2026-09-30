@@ -124,10 +124,12 @@ final class StatusStore {
         engine.refresh(reason: reason)
     }
 
-    /// Files earlier versions kept beside `attention.tsv` (`PULSE_HOME`
+    /// Files earlier versions kept beside `events.tsv` (`PULSE_HOME`
     /// moves it) and in the default support folder. Deleted at launch,
-    /// never migrated.
+    /// never migrated — the v4 attention file and the activity spool
+    /// included: the event log starts empty.
     nonisolated static let retiredFileNames = [
+        "attention.tsv", "activity.d",
         "session-log.json",
         "attention-ledger.json", "attention-history.json", "session-timeline.json", "dismissed-pending.json",
     ]
@@ -135,7 +137,7 @@ final class StatusStore {
     nonisolated static func removeRetiredFiles() {
         let defaultDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Pulse", isDirectory: true)
-        var dirs = [AttentionIO.path.deletingLastPathComponent()]
+        var dirs = [EventLog.directory]
         if dirs[0].standardizedFileURL != defaultDir.standardizedFileURL { dirs.append(defaultDir) }
         removeRetiredFiles(in: dirs)
     }
@@ -155,7 +157,7 @@ final class StatusStore {
 
     /// One projection. Each observed property is assigned only when its
     /// value changed; a projection that finds the same world announces
-    /// nothing. `baseline`: the attention file has not been read yet (or
+    /// nothing. `baseline`: the event log has not been read yet (or
     /// this is the projection of its first read) — a wait already there is
     /// not a new one.
     func land(_ state: TrayState, nowMs: Int64, baseline: Bool = false) {
@@ -375,14 +377,14 @@ final class StatusStore {
     }
 
     /// Looking at a finished session is what "your turn" was asking for. A
-    /// session-scoped `done` in the attention file is the record — it
+    /// session-scoped `done` in the event log is the record — it
     /// survives a restart, and it is the same line a new prompt would write.
     func markTurnSeen(_ row: AgentRow) {
         guard row.isYourTurn, !row.attentionSession.isEmpty else { return }
         writeDone(agent: row.agent, session: row.attentionSession)
     }
 
-    /// The person dismissed a wait: a `done` in the attention file under
+    /// The person dismissed a wait: a `done` in the event log under
     /// exactly the session its entry carried — an empty one clears only that
     /// agent's session-less entries, never its other sessions — and no
     /// banner for it.
@@ -395,12 +397,11 @@ final class StatusStore {
     }
 
     /// File writes for `done` lines, one at a time, off the main thread:
-    /// the attention file is locked and fsync'd, and a click must not wait
-    /// on either.
+    /// the event log is locked, and a click must not wait on it.
     private static let doneWrites = DispatchQueue(label: "com.pulse.attention-done", qos: .userInitiated)
 
     /// A `done` line: applied to the book at once (the row moves under the
-    /// click), written to the attention file off the main thread. The watch
+    /// click), appended to the event log off the main thread. The watch
     /// reads the line back; the book has already applied it, so it changes
     /// nothing.
     private func writeDone(agent: AgentID, session: String, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) {
@@ -414,7 +415,7 @@ final class StatusStore {
         if !previewFixtureActive { engine.apply(records: [record], nowMs: nowMs) }
         let line = record.line
         Self.doneWrites.async {
-            AttentionIO.appendRawLine(line)
+            EventLog.append(line, nowMs: nowMs)
         }
     }
 

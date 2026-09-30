@@ -47,14 +47,18 @@ enum HooksInstaller {
         supportDir.appendingPathComponent("hook-installs.json")
     }
 
-    /// Tokens that unambiguously mean "Pulse owns this hook entry".
-    ///
-    /// A bare `--hook` is deliberately NOT in this list: uninstall runs on
-    /// the user's own settings, and a user entry like `mytool --hook-dir …`
-    /// must never be treated as ours. Legacy installs that pointed straight
-    /// at the binary (`…/PulseBar --hook claude`) are still recognized by the
-    /// `--hook` + `PulseBar` combination in `containsPulseMarker`.
-    static let pulseMarkers = ["pulse-hook"]
+    /// What marks an entry as Pulse's: the launcher `pulse-hook` as a whole
+    /// command token — a path ending in `/pulse-hook`, or the bare word —
+    /// never a substring (a user's `impulse-hook.sh` must never be taken for
+    /// Pulse's and removed). Legacy installs that pointed straight at the
+    /// binary (`…/PulseBar --hook claude`) are the token `PulseBar` followed
+    /// by the token `--hook`; a bare `--hook` alone (`mytool --hook-dir`) is
+    /// never ours. The quote and backslash boundaries cover the command as
+    /// it sits inside JSON, TOML and JavaScript text.
+    static let pulseMarkerPatterns = [
+        #"(?:^|[\s/"'\\])pulse-hook(?:$|[\s"'\\])"#,
+        #"(?:^|[\s/"'\\])PulseBar["'\\]*\s+--hook(?:$|[\s"'\\])"#,
+    ]
 
     /// Seconds a hook may run before the vendor gives up on it. Pulse's hook
     /// exits at once; this only bounds a pathological case.
@@ -96,6 +100,13 @@ enum HooksInstaller {
         case notOurs
         /// The file could not be read or written.
         case unwritable
+        /// It has `//` or `/* */` comments (JSONC) — Pulse's JSON
+        /// reader would lose them, so it is not rewritten.
+        case hasComments
+        /// Its `hooks` (or one event under it) is not the shape the
+        /// vendor documents — an object of arrays — so Pulse's entries have
+        /// nowhere safe to go.
+        case unexpectedShape
     }
 
     /// One agent's install or removal.
@@ -115,6 +126,8 @@ enum HooksInstaller {
         switch error as? InstallError {
         case .invalidJSON?: return .invalidJSON
         case .notOurs?: return .notOurs
+        case .hasComments?: return .hasComments
+        case .unexpectedShape?: return .unexpectedShape
         case nil: return .unwritable
         }
     }
@@ -199,7 +212,7 @@ enum HooksInstaller {
         case .copilotHooks, .openCodePlugin, .piExtension:
             return containsPulseMarker(text) ? Set(contract.events.map(\.name)) : []
         case .claudeSettings, .geminiSettings, .codexHooks, .cursorHooks:
-            guard let root = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
+            guard let root = try? JSONSerialization.jsonObject(with: Data(JSONSplice.splitBOM(text).body.utf8)) as? [String: Any] else {
                 return nil
             }
             let hooks = root["hooks"] as? [String: Any] ?? [:]
@@ -316,6 +329,8 @@ enum HooksInstaller {
                 ensureVersion: version,
                 dropEmptyHooks: dropEmptyHooks
             )
+        } catch is JSONSplice.UnexpectedShape {
+            throw InstallError.unexpectedShape(path)
         } catch {
             throw InstallError.invalidJSON(path, "not valid JSON")
         }
@@ -330,8 +345,14 @@ enum HooksInstaller {
         (try? String(data: JSONSerialization.data(withJSONObject: entry), encoding: .utf8)) ?? ""
     }
 
-    private static func jsonObject(_ text: String?, path: String) throws -> [String: Any] {
-        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [:] }
+    private static func jsonObject(_ raw: String?, path: String) throws -> [String: Any] {
+        guard let raw else { return [:] }
+        // A UTF-8 byte-order mark is not JSON; it is kept as it was.
+        let text = JSONSplice.splitBOM(raw).body
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [:] }
+        // JSONC (VS Code-style comments) is not JSON: rewriting it would
+        // either fail or drop the user's comments.
+        if JSONSplice.hasComments(text) { throw InstallError.hasComments(path) }
         let parsed: Any
         do {
             parsed = try JSONSerialization.jsonObject(with: Data(text.utf8))
@@ -558,12 +579,16 @@ enum HooksInstaller {
                 return "\"\(escaped)\""
             }.joined(separator: ", ")
             let end = rootTableEnd(text)
-            var root = String(text.prefix(end))
-            let rest = String(text.dropFirst(end))
-            if root.range(of: #"(?m)^\s*notify\s*=.*pulse-hook"#, options: .regularExpression) != nil {
+            var root = String(text[..<end])
+            let rest = String(text[end...])
+            // A `notify` may span lines (a reformatted array): the whole
+            // statement decides whose it is.
+            let rootBytes = Array(root.utf8)
+            let notify = TOMLScan.statements(root).filter { !$0.isTable && $0.key == "notify" }
+            if notify.contains(where: { containsPulseMarker(String(decoding: rootBytes[$0.start..<$0.end], as: UTF8.self)) }) {
                 return text
             }
-            if root.range(of: #"(?m)^\s*notify\s*="#, options: .regularExpression) != nil {
+            if !notify.isEmpty {
                 report += " (kept your own notify — Codex allows one; Pulse was not added)"
                 return text
             }
@@ -581,9 +606,17 @@ enum HooksInstaller {
     private static func uninstallCodexNotify() throws -> String {
         let cfg = codexConfigURL
         let changed = try revert(cfg) { text in
+            // Whole statements, not lines: a `notify` reformatted over
+            // several lines goes with every line of it.
+            let bytes = Array(text.utf8)
+            var body = ""
+            for statement in TOMLScan.statements(text) {
+                let chunk = String(decoding: bytes[statement.start..<statement.end], as: UTF8.self)
+                if !statement.isTable, containsPulseMarker(chunk) { continue }
+                body += chunk
+            }
             var kept: [String] = []
-            for line in text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
-                if containsPulseMarker(line) { continue }
+            for line in body.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
                 if line.trimmingCharacters(in: .whitespaces) == "# Pulse attention hooks" { continue }
                 if line.trimmingCharacters(in: .whitespaces).isEmpty,
                    let last = kept.last,
@@ -592,10 +625,10 @@ enum HooksInstaller {
                 }
                 kept.append(line)
             }
-            var body = kept.joined(separator: "\n")
-            while body.hasSuffix("\n\n") { body = String(body.dropLast()) }
-            if !body.hasSuffix("\n") { body += "\n" }
-            return body
+            var result = kept.joined(separator: "\n")
+            while result.hasSuffix("\n\n") { result = String(result.dropLast()) }
+            if !result.hasSuffix("\n") { result += "\n" }
+            return result
         }
         return cfg.path + (changed ? "" : " (nothing to remove)")
     }
@@ -617,25 +650,23 @@ enum HooksInstaller {
         }
     }
 
-    /// Offset where Codex's root table ends (start of the first `[section]`).
-    static func rootTableEnd(_ text: String) -> Int {
-        if let regex = try? NSRegularExpression(pattern: #"(?m)^[ \t]*\["#),
-           let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
-           let range = Range(match.range, in: text) {
-            return text.distance(from: text.startIndex, to: range.lowerBound)
-        }
-        return text.count
+    /// Where Codex's root table ends: the start of the first `[table]`
+    /// header — a line that begins with `[` outside any multi-line array or
+    /// string (an element line of a reformatted array is not one).
+    static func rootTableEnd(_ text: String) -> String.Index {
+        guard let table = TOMLScan.statements(text).first(where: \.isTable) else { return text.endIndex }
+        return text.utf8.index(text.utf8.startIndex, offsetBy: table.start)
     }
 
     static func containsPulseMarker(_ text: String) -> Bool {
-        if pulseMarkers.contains(where: { text.contains($0) }) { return true }
-        // Legacy direct-binary entries only; never a bare `--hook` by itself.
-        return text.contains("--hook") && text.contains("PulseBar")
+        pulseMarkerPatterns.contains { text.range(of: $0, options: .regularExpression) != nil }
     }
 
     enum InstallError: LocalizedError {
         case invalidJSON(String, String)
         case notOurs(String)
+        case hasComments(String)
+        case unexpectedShape(String)
 
         var errorDescription: String? {
             switch self {
@@ -643,6 +674,10 @@ enum HooksInstaller {
                 return "refusing to rewrite \(path): \(reason). Fix or move the file, then install hooks again."
             case .notOurs(let path):
                 return "refusing to replace \(path): it is not Pulse's. Move it, then install hooks again."
+            case .hasComments(let path):
+                return "refusing to rewrite \(path): it has comments. Remove them, then install hooks again."
+            case .unexpectedShape(let path):
+                return "refusing to rewrite \(path): its hooks are not an object of arrays. Fix it, then install hooks again."
             }
         }
     }
@@ -660,6 +695,40 @@ enum HooksInstaller {
 /// throws, and the file is refused rather than guessed at.
 enum JSONSplice {
     struct Malformed: Error {}
+    /// `hooks`, or an event under it Pulse must add to, is not the
+    /// documented shape (an object of arrays): refused, never guessed at.
+    struct UnexpectedShape: Error {}
+
+    /// A leading UTF-8 byte-order mark, split off so the reader sees JSON
+    /// and the writer can put it back.
+    static func splitBOM(_ text: String) -> (bom: String, body: String) {
+        guard text.unicodeScalars.first == "\u{FEFF}" else { return ("", text) }
+        return ("\u{FEFF}", String(String.UnicodeScalarView(text.unicodeScalars.dropFirst())))
+    }
+
+    /// Whether `text` has a `//` or `/* */` comment outside its strings.
+    static func hasComments(_ text: String) -> Bool {
+        let bytes = Array(text.utf8)
+        var index = 0
+        var inString = false
+        while index < bytes.count {
+            let byte = bytes[index]
+            if inString {
+                if byte == UInt8(ascii: "\\") {
+                    index += 2
+                    continue
+                }
+                if byte == UInt8(ascii: "\"") { inString = false }
+            } else if byte == UInt8(ascii: "\"") {
+                inString = true
+            } else if byte == UInt8(ascii: "/"), index + 1 < bytes.count,
+                      bytes[index + 1] == UInt8(ascii: "/") || bytes[index + 1] == UInt8(ascii: "*") {
+                return true
+            }
+            index += 1
+        }
+        return false
+    }
 
     struct Member {
         var key: String
@@ -790,12 +859,20 @@ enum JSONSplice {
     /// kept. `ensureVersion` adds `"version": 1` when the root has none;
     /// `dropEmptyHooks` removes a `hooks` member left empty.
     static func replacingHooks(
-        in text: String,
+        in original: String,
         pulse: [(String, [String])],
         isPulse: (String) -> Bool,
         ensureVersion: Bool,
         dropEmptyHooks: Bool
     ) throws -> String {
+        // A byte-order mark stays where it was; the JSON after it is read.
+        let (bom, text) = splitBOM(original)
+        // A file with CRLF line endings gets CRLF in what Pulse writes too.
+        let lineBreak = text.contains("\r\n") ? "\r\n" : "\n"
+        func breaks(_ fragment: String) -> String {
+            guard lineBreak != "\n" else { return fragment }
+            return fragment.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\n", with: lineBreak)
+        }
         let bytes = Array(text.utf8)
         let unit = indentUnit(bytes)
         func slice(_ range: Range<Int>) -> String { String(decoding: bytes[range], as: UTF8.self) }
@@ -804,9 +881,10 @@ enum JSONSplice {
             // No file (or an empty one): a document of Pulse's own.
             var members: [String] = []
             if ensureVersion { members.append(unit + "\"version\": 1") }
-            let hooks = hooksObject(merge([], pulse: pulse, isPulse: isPulse), indent: unit, unit: unit, inline: false)
+            let fresh = try merge([], pulse: pulse, isPulse: isPulse)
+            let hooks = hooksObject(fresh, indent: unit, unit: unit, inline: false)
             if hooks != "{}" || !dropEmptyHooks { members.append(unit + "\"hooks\": " + hooks) }
-            return members.isEmpty ? "{}\n" : "{\n" + members.joined(separator: ",\n") + "\n}\n"
+            return bom + (members.isEmpty ? "{}\n" : "{\n" + members.joined(separator: ",\n") + "\n}\n")
         }
 
         var reader = Reader(bytes)
@@ -818,7 +896,10 @@ enum JSONSplice {
 
         // The events the file already has, in order.
         var existing: [Event] = []
-        if let found, bytes[found.valueStart] == UInt8(ascii: "{") {
+        // A `hooks` that is not an object has nowhere for an entry to go,
+        // and replacing it would lose what the user put there.
+        if let found, bytes[found.valueStart] != UInt8(ascii: "{") { throw UnexpectedShape() }
+        if let found {
             var inner = Reader(bytes, at: found.valueStart)
             for member in try inner.members() {
                 var event = Event(key: member.key, raw: slice(member.valueStart..<member.valueEnd), entries: nil)
@@ -829,15 +910,14 @@ enum JSONSplice {
                 existing.append(event)
             }
         }
-        let merged = merge(existing, pulse: pulse, isPulse: isPulse)
+        let merged = try merge(existing, pulse: pulse, isPulse: isPulse)
         let dropHooks = merged.isEmpty && dropEmptyHooks
 
         // Non-overlapping edits, applied from the end of the file.
         var edits: [(range: Range<Int>, text: String)] = []
         if let found {
             let indent = lineIndent(bytes, at: found.start)
-            let isObject = bytes[found.valueStart] == UInt8(ascii: "{")
-            let changed = !isObject || merged.count != existing.count || merged.contains(where: \.changed)
+            let changed = merged.count != existing.count || merged.contains(where: \.changed)
             if dropHooks {
                 edits.append((removalRange(of: found, in: root, open: open, close: close), ""))
             } else if changed {
@@ -866,12 +946,12 @@ enum JSONSplice {
                 edits.append(((open + 1)..<close, body + (indent == nil ? " " : "\n")))
             }
         }
-        guard !edits.isEmpty else { return text }
+        guard !edits.isEmpty else { return original }
         var out = bytes
         for edit in edits.sorted(by: { $0.range.lowerBound > $1.range.lowerBound }) {
-            out.replaceSubrange(edit.range, with: Array(edit.text.utf8))
+            out.replaceSubrange(edit.range, with: Array(breaks(edit.text).utf8))
         }
-        return String(decoding: out, as: UTF8.self)
+        return bom + String(decoding: out, as: UTF8.self)
     }
 
     /// One event of the `hooks` object.
@@ -886,13 +966,18 @@ enum JSONSplice {
     }
 
     /// The user's events with Pulse's entries taken out and `pulse`'s put
-    /// in; an event left with nothing goes.
-    static func merge(_ existing: [Event], pulse: [(String, [String])], isPulse: (String) -> Bool) -> [Event] {
+    /// in; an event Pulse emptied goes, one the user left empty (`[]`)
+    /// stays. An event Pulse must add to whose value is not an array throws
+    /// `UnexpectedShape` — a second member with the same key would be
+    /// invalid, and replacing the user's value would lose it.
+    static func merge(_ existing: [Event], pulse: [(String, [String])], isPulse: (String) -> Bool) throws -> [Event] {
         var out: [Event] = []
         var placed: Set<String> = []
         for event in existing {
             guard let entries = event.entries else {
+                if pulse.contains(where: { $0.0 == event.key && !$0.1.isEmpty }) { throw UnexpectedShape() }
                 out.append(event)
+                placed.insert(event.key)
                 continue
             }
             var kept = entries.filter { !isPulse($0) }
@@ -902,7 +987,7 @@ enum JSONSplice {
                 changed = changed || !mine.isEmpty
                 placed.insert(event.key)
             }
-            guard !kept.isEmpty else { continue }
+            guard !kept.isEmpty || entries.isEmpty else { continue }
             out.append(Event(key: event.key, raw: event.raw, entries: kept, changed: changed))
         }
         for (key, entries) in pulse where !placed.contains(key) && !entries.isEmpty {
@@ -964,5 +1049,121 @@ enum JSONSplice {
         if position > 0 { return members[position - 1].valueEnd..<member.valueEnd }
         if members.count > 1 { return member.start..<members[1].start }
         return (open + 1)..<close
+    }
+}
+
+/// Just enough of TOML to find Codex's statements: a key/value that
+/// runs over several lines (a multi-line array or string) is one statement,
+/// and only a line that begins with `[` outside all of them is a table
+/// header. Byte offsets, UTF-8 — every character that matters is ASCII.
+enum TOMLScan {
+    struct Statement: Equatable {
+        /// Byte offset of its first line.
+        var start: Int
+        /// Byte offset after its last line's line break (or the end).
+        var end: Int
+        /// A `[table]` / `[[array]]` header line.
+        var isTable: Bool
+        /// The key of a key/value statement ("" for a blank or comment line).
+        var key: String
+    }
+
+    static func statements(_ text: String) -> [Statement] {
+        let bytes = Array(text.utf8)
+        var out: [Statement] = []
+        var depth = 0
+        var multiBasic = false
+        var multiLiteral = false
+        var lineStart = 0
+        while lineStart < bytes.count {
+            var lineEnd = lineStart
+            while lineEnd < bytes.count, bytes[lineEnd] != 0x0A { lineEnd += 1 }
+            let next = min(lineEnd + 1, bytes.count)
+            if depth > 0 || multiBasic || multiLiteral, var last = out.popLast() {
+                last.end = next
+                out.append(last)
+            } else {
+                var first = lineStart
+                while first < lineEnd, bytes[first] == 0x20 || bytes[first] == 0x09 { first += 1 }
+                let isTable = first < lineEnd && bytes[first] == UInt8(ascii: "[")
+                var key = ""
+                if !isTable, let equals = (first..<lineEnd).first(where: { bytes[$0] == UInt8(ascii: "=") }) {
+                    key = String(decoding: bytes[first..<equals], as: UTF8.self).trimmingCharacters(in: .whitespaces)
+                }
+                out.append(Statement(start: lineStart, end: next, isTable: isTable, key: key))
+                if isTable {
+                    lineStart = next
+                    continue
+                }
+            }
+            scan(bytes, from: lineStart, to: lineEnd, depth: &depth, multiBasic: &multiBasic, multiLiteral: &multiLiteral)
+            lineStart = next
+        }
+        return out
+    }
+
+    /// One line's brackets and strings, carried over from the lines before.
+    private static func scan(
+        _ bytes: [UInt8], from start: Int, to end: Int,
+        depth: inout Int, multiBasic: inout Bool, multiLiteral: inout Bool
+    ) {
+        let quote = UInt8(ascii: "\""), apostrophe = UInt8(ascii: "'"), backslash = UInt8(ascii: "\\")
+        func triple(_ byte: UInt8, at index: Int) -> Bool {
+            index + 2 < end && bytes[index] == byte && bytes[index + 1] == byte && bytes[index + 2] == byte
+        }
+        var index = start
+        while index < end {
+            let byte = bytes[index]
+            if multiBasic {
+                if byte == backslash {
+                    index += 2
+                } else if triple(quote, at: index) {
+                    multiBasic = false
+                    index += 3
+                } else {
+                    index += 1
+                }
+                continue
+            }
+            if multiLiteral {
+                if triple(apostrophe, at: index) {
+                    multiLiteral = false
+                    index += 3
+                } else {
+                    index += 1
+                }
+                continue
+            }
+            switch byte {
+            case UInt8(ascii: "#"):
+                return
+            case quote:
+                if triple(quote, at: index) {
+                    multiBasic = true
+                    index += 3
+                } else {
+                    index += 1
+                    while index < end, bytes[index] != quote { index += bytes[index] == backslash ? 2 : 1 }
+                    index += 1
+                }
+            case apostrophe:
+                if triple(apostrophe, at: index) {
+                    multiLiteral = true
+                    index += 3
+                } else {
+                    index += 1
+                    while index < end, bytes[index] != apostrophe { index += 1 }
+                    index += 1
+                }
+            case UInt8(ascii: "["), UInt8(ascii: "{"):
+                depth += 1
+                index += 1
+            case UInt8(ascii: "]"), UInt8(ascii: "}"):
+                depth = max(0, depth - 1)
+                index += 1
+            default:
+                index += 1
+            }
+        }
     }
 }

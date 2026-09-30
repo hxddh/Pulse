@@ -14,7 +14,7 @@ import Foundation
 /// counts and vendor tool names. The two files holding actual prose had the
 /// weakest protection of anything Pulse writes: the attention ledger kept
 /// session titles — the user's own words, up to 160 characters — and set no
-/// mode at all; `attention.tsv` keeps the command an agent asked to run and
+/// mode at all; `events.tsv` keeps the command an agent asked to run and
 /// the directory it asked from, and was created 0644. `settings.json` and
 /// the hook-install ledger are written through here.
 public enum PrivateFile {
@@ -54,7 +54,7 @@ public enum PrivateFile {
     /// Bring a file written before this rule down to 0600.
     ///
     /// A creation mode only applies to files that do not exist yet, so every
-    /// install that already has an `attention.tsv` would keep its 0644 for
+    /// install that already has an `events.tsv` would keep its 0644 for
     /// ever. Doing it through the descriptor we already hold costs one
     /// `fchmod`, cannot race a swapped path, and needs no migration step that
     /// somebody has to remember to run.

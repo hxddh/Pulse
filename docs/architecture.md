@@ -3,10 +3,10 @@
 数据从「Agent 的 hook 报了一件事」走到「菜单栏亮红灯」的完整路径。
 
 ```
-  pulse-hook / 插件 / 扩展 ──► attention.tsv（v4 十列）· activity.d/<agent>-<session>.json
-           │  AttentionWatcher（DispatchSource，写入即触发）
+  pulse-hook / 插件 / 扩展 ──► events.tsv（v5 十一列，只追加，每个 hook 事件一行）
+           │  AttentionWatcher（一个 DispatchSource，写入即触发）
            ▼
-      ScanEngine            只把 attention.tsv 里没见过的行按文件顺序交给会话簿；活动文件按 activityMs 去重
+      ScanEngine            启动时整份重放、再第一次投影；之后只按游标读新字节，逐行按顺序交给会话簿
            │
            ▼
       SessionBook           纯值 reducer：apply(event) → 工作中 / 需要你 / 轮到你 / 结束
@@ -54,9 +54,9 @@ QA 代码不进产品：`surface_check.py` 不让 QA 文件回到 `PulseApp`，`
 
 `StatusStore` 是 `@Observable`：视图只因它的 body 实际读到的属性变化而重绘。状态分三份：
 
-- **`ScanEngine`**（`@MainActor`，不被观察）：持有 `SessionBook`、见过的 attention 行、最近一次有效的
-  进程列表、会话摘要缓存、上一轮开着的等待（给下一轮算边沿）与两个便宜的定时器；在后台队列读
-  attention.tsv、`activity.d/`、进程表与会话文件；调用纯函数 `TrayState.project`，把结果交给
+- **`ScanEngine`**（`@MainActor`，不被观察）：持有 `SessionBook`、事件日志的游标（这一代的表头与
+  已应用到的字节）与这一代已应用过的行、最近一次有效的进程列表、会话摘要缓存、上一轮开着的等待
+  （给下一轮算边沿）与两个便宜的定时器；在后台队列读事件日志、进程表与会话文件；调用纯函数 `TrayState.project`，把结果交给
   `StatusStore.land`。它不持有也不写任何 UI 状态。
 - **`WaitNotifier`**（`@MainActor`，不被观察）：横幅的规划（`WaitingDelivery`）、发送
   （`PulseNotify`）、限流与点横幅回到对应行；记账在纯值 `WaitLedger` 里，只在内存。
@@ -73,23 +73,28 @@ QA 代码不进产品：`surface_check.py` 不让 QA 文件回到 `PulseApp`，`
 
 ### 事件（主干）
 
-`~/Library/Application Support/Pulse/attention.tsv`，由原生 `pulse-hook` /
-`PulseBar --hook`（`PulseHookReceiver`）写入，或按 Attention Protocol v4
-（每行十列：agent、kind、ms、message、session、cwd、front、pid、transcript、landing）直接追加。
+`~/Library/Application Support/Pulse/events.tsv` —— **一个**只追加的事件日志（`EventLog`），由原生
+`pulse-hook` / `PulseBar --hook`（`PulseHookReceiver`）在排他 `flock` 下追加，或按 Attention Protocol v5
+（每行十一列：agent、kind、ms、message、session、cwd、front、pid、transcript、landing、tool）直接追加。
 每个 Agent 的 hook 都以 `pulse-hook <agent> <厂商事件名>` 调用，接收器按 Agent 把厂商事件与载荷
-映射成 start / working / 阻塞（permission / question / waiting）/ turn / idle / done / end。契约见
-[`attention-protocol.md`](attention-protocol.md)；产品政策见 [`attention-bridge.md`](attention-bridge.md)。
-活动事件（Claude 的 `PostToolUse` / `UserPromptSubmit` 等）写 `activity.d/`，每会话一个状态文件。
+映射成 start / working / tool / 阻塞（permission / question / waiting）/ turn / idle / done / end，
+每个事件一行、带自己的时间戳。契约见 [`attention-protocol.md`](attention-protocol.md)；产品政策见
+[`attention-bridge.md`](attention-bridge.md)。
 
-`AttentionWatcher` 用 `DispatchSource` 盯着这两处，写入即触发读取。引擎把整份 attention.tsv 读回，
-只把**没见过的行**按文件顺序交给会话簿（压缩后的文件不重放）；活动文件整份重读，会话簿按
-`activityMs` 去重。
+文件有界：追加会让它超过 1 MiB 时先压缩并换一代表头 —— 每个会话（无会话的按 Agent + 目录）留最近
+64 行与两小时内的全部行，一天没动静的会话整组丢掉，开着的阻塞连同它之后的行永不丢。
+
+`AttentionWatcher` 用一个 `DispatchSource` 盯着它，写入即触发读取。**启动时**引擎把整份日志读一遍、
+逐行应用到会话簿，然后才第一次投影（这次投影是横幅基线）；之后只读游标之后的完整行。表头的「代」
+变了（被压缩重写）或文件比游标短时整份再读，已应用过的行按原文跳过、不重放。**读失败或读到空不改变
+任何状态** —— 游标与已应用的行都保留，被回答过的阻塞不会因为重读而再红。
 
 ### 进程（便宜，按需）
 
 `AgentProcesses` 用 libproc：`proc_listallpids` 列出本用户的进程，`PROC_PIDTBSDINFO` 取父进程、
 TTY 与开始时间，`proc_pidpath` 与 `KERN_PROCARGS2` 取可执行路径与参数，按 `AgentCatalog` 的进程
-规则匹配到 `AgentID`（排除串必需：`pi` 要躲开 `pip`，`cursor-agent` 常驻 worker 不算会话；路径片段
+规则匹配到 `AgentID`（排除串必需：`pi` 要躲开 `pip` —— 只看程序本身，`pi ./pipeline.ts` 仍是 Pi；
+`cursor-agent` 常驻 worker 按参数排除，不算会话；路径片段
 只匹配程序本身 —— 可执行文件，解释器（node / bun / deno）则加上它的脚本 —— 且必须落在
 路径分段边界上：`/opt/homebrew/bin/pinentry-mac` 不是 Pi，`claude-*` 辅助程序不是 Claude）。
 一次遍历只分配一个 `KERN_ARGMAX` 大小的参数缓冲区（hook 查父链时也一样）。
@@ -101,7 +106,9 @@ TTY 与开始时间，`proc_pidpath` 与 `KERN_PROCARGS2` 取可执行路径与�
 （`ProbeSchedule.processScan(power:quietScans:)`，低电量加倍，息屏停表）。用来：
 找出没有会话认领的进程（仅进程行 —— Pulse 启动前就在跑的会话，直到它的下一个事件）；以及知道
 会话的 pid 还在不在。每个会话 pid 另有一个 `DispatchSource.makeProcessSource(.exit)`
-（`ProcessExitWatch`），退出即结束会话，不等下一次扫描。**一次失败的扫描保留上一份有效列表。**
+（`ProcessExitWatch`），退出即结束会话，不等下一次扫描。启动重放与每次扫描还核对会话记下的 pid
+是否仍是那个进程（`AgentProcesses.stillRuns`：换成了别的 Agent、或在第一次报出这个 pid 的事件之后才
+启动的，都算 pid 被复用 —— 会话已结束）。**一次失败的扫描保留上一份有效列表。**
 
 ### 会话文件（按需）
 
@@ -117,16 +124,18 @@ OpenCode 没有会话文件，用它的事件自带的内容。读不到文件�
 
 - 状态：`.idle`（刚开始 / 在提示处）、`.working`、`.blocked(Block)`、`.yourTurn(sinceMs:)`、`.ended(atMs:)`。
 - `start` → idle（进行中的保持 working）；`working` → working；阻塞 → blocked（`waiting: .none` 的
-  Agent 的阻塞行拒收；20 秒内同类的再次提出算同一次，保留第一次的问题与时钟）；`turn` → 轮到你
+  Agent 的阻塞行拒收；20 秒内同类的再次提出算同一次，保留第一次的时钟与更具体的那句问题）；`turn` → 轮到你
   （阻塞后 20 秒内**暂存不丢**：宽限期满时由下一个事件或时钟落地，或在早于它的回答到达时立即落地 ——
   被拒绝的权限不会让红灯一直亮；提示窗口在最前时算已看见 → idle）；`idle`（Claude 的 `idle_prompt`）
   只在会话仍在工作或阻塞时算轮到你，从不复活已看过的回合；`done` → 清掉阻塞 / 轮到你（早于当前
   状态的 `done` 不算）；`end` → ended。未来戳拒收；不点名会话的 `turn` 与 `done` / `end` 不造会话；
   协议之外的词不造会话。
-- `apply(activity:nowMs:)`：同一会话在提问之后的活动熄灭等待（回答发生在厂商自己的提示里）；
-  提问与活动都点名工具时，只有同一个工具的活动算回答（并行的别的工具结束不算）。
+- `tool` 行：同一会话在提问之后的工具活动熄灭等待（回答发生在厂商自己的提示里）；提问与工具行都
+  点名工具时，只有同一个工具算回答（并行的别的工具结束不算）。每一行都应用，答案前后的并行工具不会
+  把它盖掉。
 - `settleHeldTurns(nowMs:)`：时钟（每次投影）落地宽限期已满的暂存回合。
-- `processExited(pid:atMs:)`、`endSessions(whosePidIsDead:)`、`prune(nowMs:)`（一天没动静的忘掉，至多 256 个）。
+- `processExited(pid:atMs:)`、`endSessions(whoseProcessIsGone:)`（死掉或被复用的 pid；会话记着第一次报出
+  当前 pid 的时刻 `pidSinceMs`）、`prune(nowMs:)`（一天没动静的忘掉，至多 256 个）。
 
 ## TrayState（纯函数）
 
@@ -159,14 +168,14 @@ VoiceOver 计数，以及**边沿**：上一轮没在等的行，或同一行上
 
 ## 横幅与 StatusStore（外壳）
 
-attention.tsv 与 `activity.d/` 归 hook 所有；Pulse 自己**不存会话记录**。更早版本留下的
-`session-log.json`、`attention-ledger.json`、`attention-history.json`、`session-timeline.json`、
+事件日志 `events.tsv` 归 hook 所有（Pulse 只往里追加忽略时的 `done`）；Pulse 自己**不存会话记录**。
+更早版本留下的 `attention.tsv`、`activity.d/`、`session-log.json`、`attention-ledger.json`、`attention-history.json`、`session-timeline.json`、
 `dismissed-pending.json` 在启动时删掉，从不读取。
 
 横幅要记住的东西在 `WaitLedger`（纯值，只在内存）：每个开着的等待（按 row key）欠不欠横幅、发没发出、
 有没有被忽略，以及限流的锚点（上一条被接受的横幅）。每轮 `reconcile(rows:edges:)`：没在等的行没有
-等待，所以解决了的等待不再欠横幅；边沿上的行换成一条新的等待，不继承旧的忽略。第一次读到
-attention.tsv 之前以及那一轮是**基线**：启动时已经在等的不发横幅。重启后记账从零开始 —— 需要跨启动的
+等待，所以解决了的等待不再欠横幅；边沿上的行换成一条新的等待，不继承旧的忽略。启动时重放事件日志
+之后的第一次投影是**基线**（重放完成前不投影）：启动时已经在等的不发横幅。重启后记账从零开始 —— 需要跨启动的
 只有 hook 自己的文件。
 
 `ScanEngine`、`WaitNotifier` 与 `StatusStore` 一起拥有纯函数刻意不碰的东西：
@@ -174,11 +183,11 @@ attention.tsv 之前以及那一轮是**基线**：启动时已经在等的不�
 - **节奏**。没有固定的探测间隔：事件文件一变就处理。`ProbeSchedule.tick` 只是一个便宜的时钟
   （托盘打开或屏上有秒级等待时 5 秒，否则 60 秒，没有会话时停表），用来推进「最近」「停滞」与相对时间；
   `ProbeSchedule.processScan` 是进程查看的退避节奏。`PowerMonitor` 提供息屏 / 锁屏 / 低电量状态：
-  低电量加倍，息屏停表 —— attention 文件变化仍会唤醒。
+  低电量加倍，息屏停表 —— 事件日志变化仍会唤醒。
 - **通知策略**。投影报告边沿，`WaitNotifier` 决定要不要发：按 agent 静音（行菜单）、在最前、
   开关、授权、限流（3 秒），多于三个同时到达合成一条汇总；Notification Center 接受了才算发出，
   被拒的留着欠账重试。安静时段与声音交给 macOS 的专注模式与通知设置。
-- **设置**。`PulseSettings` 是 `Codable` 值，存为 `settings.json`（与 attention.tsv 同目录，`PULSE_HOME`
+- **设置**。`PulseSettings` 是 `Codable` 值，存为 `settings.json`（与 events.tsv 同目录，`PULSE_HOME`
   一起搬；经 `PrivateFile` 以 `0600` 写入；缺字段取默认、未知值取默认）。改设置只走
   `StatusStore.set(_:_:)`：值变了才写盘并应用（登录项、快捷键、横幅按钮语言、重扫），且只在 `start()`
   读过设置之后。`allowTerminalAutomation` 没有设置项，只在 `settings.json` 里改，报告会写出它的值。
@@ -245,7 +254,7 @@ hook 安装或 `--selftest`。
 
 测试（`PulseBar/Tests/PulseBarTests/`）按组件分文件：`CoreTests`（目录、有界 IO、libproc 进程）、
 `TranscriptTests`（有界尾读与六种会话文件方言）、`VendorFormatTests`（hook 契约与漂移）、`AttentionTests`
-（会话簿读 attention、协议、hook 接收器、安装器）、`SessionTests`（七个 Agent 的真值表、`TrayState`、身份）、
+（会话簿读事件行、协议、事件日志、hook 接收器、安装器）、`SessionTests`（七个 Agent 的真值表、`TrayState`、身份）、
 `ExplainTests`、`NotifierTests`（`WaitLedger`、横幅规划与路由）、`TrayTests`、`SettingsTests`、
 `DiagnosticsTests`（报告、Hooks 一节、托盘提示、版本与更新）、`EngineTests`（扫描静默、事件馈送、节奏）。
 新测试放进它所测组件的文件，不按发版建文件；`docs/scenarios.md` 按套件名与方法名点名。加上 `swift test`

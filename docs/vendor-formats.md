@@ -37,7 +37,12 @@ the answer to a permission, and the only silence that means a stall
 (`HookContract.reportsToolActivity`). Each was checked non-blocking at exit 0
 with empty output against the pinned source (Codex: `engine/discovery.rs`
 runs every event but `SessionEnd` async when asked; Gemini: "Global hook
-mechanics"; Copilot: "postToolUse output").
+mechanics"; Copilot: "postToolUse output"). Claude also installs
+`PostToolUseFailure` (after a tool call fails; its output cannot change the
+outcome), which answers a block for that tool like `PostToolUse`; it does
+not install `PermissionDenied`, whose `hookSpecificOutput.retry` can change
+what the model does. Every event the receiver reads becomes one line of the
+one event log (`docs/attention-protocol.md`), tool activity included.
 **Changing a hook contract means updating its block and its test in the same
 change.**
 

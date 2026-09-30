@@ -4,11 +4,13 @@ import Foundation
 /// is in, from the agents' own hook events.
 ///
 /// Pulse no longer reads vendor session files to guess what a session is
-/// doing. Each supported agent's hook writes an attention line (v4) when a
-/// session starts, takes a prompt, is blocked, finishes its turn or ends,
-/// and an activity event per tool call; a process exit ends a session. This
-/// is the reducer those events feed — a pure value, `apply` in, `sessions`
-/// out — and `TrayState.project` turns it into what the tray draws.
+/// doing. Each supported agent's hook appends one v5 line to the event log
+/// (`EventLog`) when a session starts, takes a prompt, runs a tool, is
+/// blocked, finishes its turn or ends; a process exit ends a session. This
+/// is the reducer those lines feed, in file order — a pure value, `apply`
+/// in, `sessions` out — and `TrayState.project` turns it into what the tray
+/// draws. At launch the engine replays the whole log through it before the
+/// first projection.
 ///
 /// The rules, each an owner decision:
 ///
@@ -25,10 +27,12 @@ import Foundation
 ///   minute after the turn) is a turn only while the session was still
 ///   working or blocked — it never revives a turn already seen.
 /// - **An answer arrives as activity**: nothing writes `done` when a
-///   permission is granted in the vendor's own prompt — the next tool call
+///   permission is granted in the vendor's own prompt — the next `tool` line
 ///   (or prompt) stamped after the raise is the answer. When the block and
-///   the activity both name their tool, only that tool's activity answers
-///   it: a parallel tool finishing is not the person saying yes.
+///   the tool line both name their tool, only that tool answers it: a
+///   parallel tool finishing is not the person saying yes. Every line is
+///   applied, so a parallel tool written after the answer no longer
+///   hides it.
 /// - **`done`** (the vendor's "resolved", or a dismissal in Pulse) clears the
 ///   session it names; an empty session clears only the agent's session-less
 ///   sessions, never one that has an id.
@@ -79,6 +83,9 @@ struct SessionBook: Equatable {
         var cwd = ""
         /// The agent process the hook ran under; 0 unknown.
         var pid: Int32 = 0
+        /// The first event that named the current `pid` — a process that
+        /// started after it is not that process (a reused pid).
+        var pidSinceMs: Int64 = 0
         /// The vendor's transcript, when its hook names one.
         var transcript = ""
         /// Where the session can be reached (`tmux:…;tty:…;term:…`).
@@ -90,7 +97,7 @@ struct SessionBook: Equatable {
         var startedMs: Int64 = 0
         /// The newest event of any kind.
         var lastEventMs: Int64 = 0
-        /// The newest activity event (a tool ran, a prompt was submitted).
+        /// The newest activity (a `tool` line, or a prompt).
         var activityMs: Int64 = 0
         /// What the latest turn line carried (a vendor's last words, when
         /// its hook sends them) — the only words an agent with no transcript
@@ -114,15 +121,12 @@ struct SessionBook: Equatable {
     /// A session nothing has said anything about for this long is dropped.
     static let retentionMs: Int64 = 24 * 60 * 60 * 1000
     static let maxSessions = 256
-    /// An activity event may introduce a session Pulse has not met only
-    /// while it is this fresh (the spool keeps a day of files).
-    static let activityIntroductionMs: Int64 = 30 * 60 * 1000
 
     init() {}
 
-    // MARK: - Attention events
+    // MARK: - Events
 
-    /// One attention line, in file order. Returns whether anything changed.
+    /// One event line, in file order. Returns whether anything changed.
     @discardableResult
     mutating func apply(_ record: AttentionRecord, nowMs: Int64) -> Bool {
         guard let agent = AgentCatalog.agent(named: record.agent),
@@ -162,7 +166,22 @@ struct SessionBook: Equatable {
             // the work; otherwise the session is at its prompt.
             if session.state != .working { Self.set(&session, .idle, at: ms) }
         case .working:
+            session.activityMs = max(session.activityMs, ms)
             Self.answer(&session, at: ms)
+        case .tool:
+            session.activityMs = max(session.activityMs, ms)
+            // Work goes on — unless it is older than the state it would
+            // end, or a different tool than the one a block is about.
+            if ms > session.stateSinceMs || before == nil {
+                switch session.state {
+                case .working:
+                    break
+                case .blocked(let block):
+                    if Self.answers(tool: record.tool, block) { Self.answer(&session, at: ms) }
+                case .idle, .yourTurn, .ended:
+                    Self.set(&session, .working, at: ms)
+                }
+            }
         case .permission, .question, .waiting:
             Self.raise(kind, record: record, at: ms, in: &session)
         case .turn:
@@ -194,15 +213,20 @@ struct SessionBook: Equatable {
     /// nothing is going on (a `done` or an `end` for a session never seen).
     private func introduce(key: String, agent: AgentID, session: String, kind: AttentionKind, ms: Int64) -> Session? {
         if kind == .done || kind == .end { return nil }
-        // A turn with no identity has no session to belong to.
-        if kind == .turn || kind == .idle, session.isEmpty { return nil }
+        // A turn or a tool with no identity has no session to belong to.
+        if kind == .turn || kind == .idle || kind == .tool, session.isEmpty { return nil }
         return Session(key: key, agent: agent, session: session, stateSinceMs: ms, startedMs: ms)
     }
 
     private func note(_ record: AttentionRecord, ms: Int64, into session: inout Session) {
         let cwd = ContentSanitizer.redact(record.cwd)
         if !cwd.isEmpty { session.cwd = cwd }
-        if record.pid > 0 { session.pid = record.pid }
+        if record.pid > 1, record.pid != session.pid {
+            session.pid = record.pid
+            session.pidSinceMs = ms
+        } else if record.pid > 1, ms < session.pidSinceMs {
+            session.pidSinceMs = ms
+        }
         if !record.transcript.isEmpty { session.transcript = record.transcript }
         if !record.landing.isEmpty { session.landing = record.landing }
         if session.startedMs == 0 || ms < session.startedMs { session.startedMs = ms }
@@ -211,8 +235,10 @@ struct SessionBook: Equatable {
 
     /// A blocked event. A re-raise of the same kind inside the grace is the
     /// same block said again (Claude's `PermissionRequest`, then its
-    /// `Notification` about six seconds later): it keeps the earlier words,
-    /// clock and tool. A later raise with no words keeps the earlier ones'.
+    /// `Notification` about six seconds later): it keeps the earlier clock,
+    /// and the more specific of the two asks (`askSpecificity`) — the
+    /// earlier one on a tie — with its tool. A later raise with no words
+    /// keeps the earlier ones'.
     private static func raise(_ kind: AttentionKind, record: AttentionRecord, at ms: Int64, in session: inout Session) {
         var block = Block(
             kind: kind,
@@ -220,12 +246,17 @@ struct SessionBook: Equatable {
             sinceMs: ms,
             inFront: record.front == true
         )
-        block.tool = blockedTool(block.ask)
+        let named = record.tool.trimmingCharacters(in: .whitespacesAndNewlines)
+        block.tool = named.isEmpty ? blockedTool(block.ask) : named
         var held: HeldTurn?
         if case .blocked(let open) = session.state {
             if open.kind == kind, abs(ms - open.sinceMs) < Self.stopGraceMs {
-                if !open.ask.isEmpty { block.ask = open.ask }
-                if !open.tool.isEmpty || block.ask == open.ask { block.tool = open.tool }
+                if askSpecificity(block.ask, tool: block.tool) <= askSpecificity(open.ask, tool: open.tool) {
+                    block.ask = open.ask
+                    if !open.tool.isEmpty { block.tool = open.tool }
+                } else if block.tool.isEmpty {
+                    block.tool = open.tool
+                }
                 block.sinceMs = min(open.sinceMs, ms)
                 block.inFront = open.inFront
             } else if block.ask.isEmpty {
@@ -241,15 +272,23 @@ struct SessionBook: Equatable {
     }
 
     /// The tool a raise names, when its words are the receiver's tool
-    /// descriptor (`Tool` or `Tool: target`): one token of letters, digits
-    /// and `_ . -`. Anything else — prose, a question — names no tool.
+    /// descriptor (`Tool` or `Tool: target`) — `AttentionProtocol.blockedTool`.
     static func blockedTool(_ ask: String) -> String {
-        let head = ask.components(separatedBy: ": ").first ?? ""
-        guard let first = head.unicodeScalars.first, CharacterSet.letters.contains(first),
-              head.count <= 64,
-              head.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || "_.-".unicodeScalars.contains($0) })
-        else { return "" }
-        return head
+        AttentionProtocol.blockedTool(ask)
+    }
+
+    /// How much an ask says: 0 nothing; 1 only which tool, or a vendor's
+    /// generic "needs your permission / input" line; 2 what is actually
+    /// asked (a command, a path, a question).
+    static func askSpecificity(_ ask: String, tool: String) -> Int {
+        let text = ask.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty { return 0 }
+        if !tool.isEmpty, text.caseInsensitiveCompare(tool) == .orderedSame { return 1 }
+        if blockedTool(text) == text { return 1 }
+        let lower = text.lowercased()
+        let generic = ["needs your permission", "needs your input", "needs your attention", "waiting for your input"]
+        if generic.contains(where: { lower.contains($0) }) { return 1 }
+        return 2
     }
 
     /// A new state from `ms`. A held turn belongs to the block it waits on
@@ -344,56 +383,11 @@ struct SessionBook: Equatable {
         return true
     }
 
-    // MARK: - Activity events
-
-    /// A tool ran or a prompt was submitted (the activity spool). Stamped
-    /// after the current state began, it says the session is working: a
-    /// block was answered in the vendor's prompt, a turn was taken up again,
-    /// a session at its prompt got going. A block that names its tool is
-    /// answered only by a prompt or by that tool (`answers`). Idempotent —
-    /// the spool is re-read whole, and an event no newer than the last one
-    /// changes nothing.
-    @discardableResult
-    mutating func apply(activity event: ActivitySpool.Event, nowMs: Int64) -> Bool {
-        guard let agent = AgentID(rawValue: event.agent), !event.session.isEmpty else { return false }
-        let ms = min(event.tsMs, nowMs)
-        guard ms > 0 else { return false }
-        let key = RowIdentity.session(agent: agent, session: event.session)
-        let before = sessions[key]
-        var session: Session
-        if let before {
-            guard ms > before.activityMs else { return false }
-            session = before
-        } else {
-            guard nowMs - ms <= Self.activityIntroductionMs else { return false }
-            session = Session(key: key, agent: agent, session: event.session, stateSinceMs: ms, startedMs: ms)
-        }
-        Self.settleHeldTurn(&session, nowMs: ms)
-        session.activityMs = ms
-        session.lastEventMs = max(session.lastEventMs, ms)
-        if session.startedMs == 0 || ms < session.startedMs { session.startedMs = ms }
-        let cwd = ContentSanitizer.redact(event.cwd)
-        if session.cwd.isEmpty, !cwd.isEmpty { session.cwd = cwd }
-        if ms > session.stateSinceMs || before == nil {
-            switch session.state {
-            case .working:
-                break
-            case .blocked(let block):
-                if Self.answers(event, block) { Self.answer(&session, at: ms) }
-            case .idle, .yourTurn, .ended:
-                Self.set(&session, .working, at: ms)
-            }
-        }
-        sessions[key] = session
-        return session != before
-    }
-
-    /// Whether an activity event answers a block: a prompt always does; a
-    /// tool does unless both name a tool and the names differ (a parallel
-    /// tool finishing is not the answer).
-    static func answers(_ event: ActivitySpool.Event, _ block: Block) -> Bool {
-        if event.event == "prompt" { return true }
-        let tool = event.tool.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Whether a `tool` line answers a block: it does unless both name a
+    /// tool and the names differ (a parallel tool finishing is not the
+    /// answer).
+    static func answers(tool raw: String, _ block: Block) -> Bool {
+        let tool = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if tool.isEmpty || block.tool.isEmpty { return true }
         return tool.caseInsensitiveCompare(block.tool) == .orderedSame
     }
@@ -418,8 +412,16 @@ struct SessionBook: Equatable {
     /// a scan, not seen exiting, so it ended when it was last heard from.
     @discardableResult
     mutating func endSessions(whosePidIsDead isAlive: (Int32) -> Bool) -> Bool {
+        endSessions(whoseProcessIsGone: { !isAlive($0.pid) })
+    }
+
+    /// Ends every live session with a pid for which `gone` says its process
+    /// is not there any more — dead, or the pid now belongs to a
+    /// different process (`AgentProcesses.stillRuns`).
+    @discardableResult
+    mutating func endSessions(whoseProcessIsGone gone: (Session) -> Bool) -> Bool {
         var changed = false
-        for (key, session) in sessions where session.pid > 0 && !session.isEnded && !isAlive(session.pid) {
+        for (key, session) in sessions where session.pid > 0 && !session.isEnded && gone(session) {
             var copy = session
             Self.set(&copy, .ended(atMs: session.lastEventMs), at: session.lastEventMs)
             sessions[key] = copy

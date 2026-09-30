@@ -254,5 +254,5 @@ About 保持 `preview` —— **绝不能自称 stable / Gatekeeper-ready**。
 | [`EXPERIENCE.md`](EXPERIENCE.md) | 体验规格 —— UI 改动的验收依据 |
 | [`docs/architecture.md`](docs/architecture.md) | 数据从进程到菜单栏的完整路径 |
 | [`docs/attention-bridge.md`](docs/attention-bridge.md) | 用 `pulse-hook` / 追加一行上报状态 |
-| [`docs/attention-protocol.md`](docs/attention-protocol.md) | Attention Protocol v4 契约与各 Agent 事件映射 |
+| [`docs/attention-protocol.md`](docs/attention-protocol.md) | Attention Protocol v5（事件日志 `events.tsv`）契约与各 Agent 事件映射 |
 | [`CHANGELOG.md`](CHANGELOG.md) | 每个版本改了什么 |

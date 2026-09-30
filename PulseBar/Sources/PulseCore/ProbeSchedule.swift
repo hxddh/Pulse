@@ -3,8 +3,8 @@ import Foundation
 
 /// How often Pulse looks, now that events drive it (24.0).
 ///
-/// Nothing here polls a vendor. The attention file and the activity spool
-/// wake Pulse when a hook writes (a file-system watch), and a process exit
+/// Nothing here polls a vendor. The event log (`events.tsv`) wakes Pulse
+/// when a hook appends to it (a file-system watch), and a process exit
 /// wakes it through kqueue. Two timers remain, both cheap:
 ///
 /// - the **tick** re-projects the in-memory session book so facts that move

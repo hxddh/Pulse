@@ -5,7 +5,7 @@ import Foundation
 ///
 /// The hook runs inside the agent's own process tree and environment, so it
 /// can say — at no cost to the scan — which process is the agent and how its
-/// terminal can be reached. Both go into the v4 attention record (`pid`,
+/// terminal can be reached. Both go into the v5 event line (`pid`,
 /// `landing`). No fork, no `ps`, no `lsof`: `sysctl`, libproc and the
 /// environment only, matched by the same rule as the process scan
 /// (`AgentProcesses.match(args:)`).
@@ -47,7 +47,10 @@ enum HookLanding {
 
     /// The agent's pid: the first process on the chain from `start` upward
     /// whose argv is this agent by its catalog process rule. When none is,
-    /// the direct parent (`start`) — the process that ran the hook.
+    /// the direct parent (`start`) — the process that ran the hook — unless
+    /// that is launchd or nothing (a parent that had exited leaves the
+    /// hook re-parented to pid 1, which is nobody's session): then 0,
+    /// unknown.
     static func agentPID(
         agent: AgentID,
         start: Int32,
@@ -65,7 +68,7 @@ enum HookLanding {
             guard let parent = parentOf(current) else { break }
             current = parent
         }
-        return start
+        return start > 1 ? start : 0
     }
 
     /// One field of a `;`-separated list inside a TSV column.

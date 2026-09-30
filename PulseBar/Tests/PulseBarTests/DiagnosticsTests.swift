@@ -76,7 +76,7 @@ struct ReportTests {
         let store = StatusStore()
         let fired: Int64 = Int64(Date().timeIntervalSince1970 * 1000) - 60_000
         let line = AttentionRecord(agent: "claude", kind: "turn", ms: fired, session: "s1").line
-        store.engine.landAttention(AttentionProtocol.header + line + "\n")
+        store.engine.landLog(EventLog.Chunk(header: "# g", lines: [line], end: 200, fresh: true))
         #expect(store.engine.latestHookEventMs[.claude] == fired)
         let report = store.reportText
         #expect(report.contains("  claude: "))

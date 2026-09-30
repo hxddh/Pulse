@@ -153,7 +153,7 @@ struct PulseSettingsTests {
     }
 }
 
-/// What earlier versions kept beside the attention file is deleted at
+/// What earlier versions kept beside the event log is deleted at
 /// launch, never read: the agents' hooks are the only state that outlives a
 /// launch.
 @Suite("Retired files")
@@ -172,6 +172,28 @@ struct RetiredFileTests {
         let settingsLeft = FileManager.default.fileExists(atPath: keep.path)
         #expect(!logLeft)
         #expect(settingsLeft, "settings.json is the person's")
+    }
+
+    /// The v4 attention file and the activity spool are deleted at launch,
+    /// unread; the event log stays.
+    @Test func theV4FilesAreDeletedAndTheEventLogStays() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulse-retired-\(UUID().uuidString)", isDirectory: true)
+        let spool = dir.appendingPathComponent("activity.d", isDirectory: true)
+        try FileManager.default.createDirectory(at: spool, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let attention = dir.appendingPathComponent("attention.tsv")
+        let events = dir.appendingPathComponent(EventLog.fileName)
+        try Data("# pulse-attention v4\n".utf8).write(to: attention)
+        try Data("{}".utf8).write(to: spool.appendingPathComponent("claude-s1.json"))
+        try Data("# pulse-events v5 g1\n".utf8).write(to: events)
+        StatusStore.removeRetiredFiles(in: [dir])
+        let attentionLeft = FileManager.default.fileExists(atPath: attention.path)
+        let spoolLeft = FileManager.default.fileExists(atPath: spool.path)
+        let eventsLeft = FileManager.default.fileExists(atPath: events.path)
+        #expect(!attentionLeft)
+        #expect(!spoolLeft)
+        #expect(eventsLeft)
     }
 }
 

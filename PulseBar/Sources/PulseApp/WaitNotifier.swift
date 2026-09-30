@@ -52,7 +52,7 @@ final class WaitNotifier {
     // MARK: - A scan landed
 
     /// Notification policy for one projection; the projection only reports
-    /// the edges. `baseline`: the attention file has not been read since
+    /// the edges. `baseline`: the event log has not been read since
     /// launch (or this is the projection of that first read) — its waits
     /// were raised before Pulse was watching and get no banner.
     func scanLanded(_ state: TrayState, nowMs: Int64, baseline: Bool) {
