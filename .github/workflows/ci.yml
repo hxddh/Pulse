@@ -41,6 +41,8 @@ jobs:
           key: spm-${{ runner.os }}-${{ hashFiles('PulseBar/Package.swift') }}-${{ github.sha }}
           restore-keys: |
             spm-${{ runner.os }}-${{ hashFiles('PulseBar/Package.swift') }}-
+      # Every target: the app (`PulseBar`) and the QA driver (`PulseQA`),
+      # which the capture steps below run.
       - name: Build
         run: swift build -c debug
         working-directory: PulseBar
@@ -55,6 +57,8 @@ jobs:
       - name: Package and verify the app bundle
         run: ./PulseBar/Scripts/package.sh
 
+      # The QA driver, not the app: fixtures and captures live in `PulseQA`
+      # and never ship (package_check.py fails an app binary that has them).
       - name: Observation Truth captures
         id: observation_truth
         run: ./scripts/qa_observation_truth.sh
@@ -83,10 +87,10 @@ jobs:
           path: zig-out/qa-observation-truth-en-dark/
           if-no-files-found: error
 
-      # 15.0 · Witness: every surface fixture (tray rows, the cards under a
-      # row, the Why card, the self-check) rendered in zh/en × light/dark.
-      # A missing PNG fails the build; the manifests (with each capture's
-      # size) are printed to the log.
+      # Every surface fixture (tray rows, header, notice, detail page,
+      # Settings) rendered by `PulseQA` in zh/en × light/dark. A missing PNG
+      # fails the build; the manifests (with each capture's size) are printed
+      # to the log.
       - name: Surface captures
         id: surfaces
         run: ./scripts/qa_surfaces.sh

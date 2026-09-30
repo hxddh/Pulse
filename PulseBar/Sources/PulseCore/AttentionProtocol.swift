@@ -1,9 +1,10 @@
 import Foundation
 
-/// What an attention event means, as a type.
+/// What an event means, as a type.
 ///
 /// v3 (16.0) separated the three things a person can owe an agent; v4 (24.0)
-/// adds the session lifecycle the vendors' own hooks report:
+/// added the session lifecycle the vendors' own hooks report; v5 puts
+/// tool activity in the same log (`tool`), so every hook event is one line:
 ///
 /// - **blocked** (`permission`, `question`, `waiting`): the agent cannot go
 ///   on without you — the red lamp, a banner, a sound;
@@ -15,8 +16,9 @@ import Foundation
 ///   or was never seen — so a turn the person already saw is not revived;
 /// - **resolved** (`done`): nothing is owed;
 /// - **lifecycle** (`start`, `working`, `end`): the session began, took a
-///   prompt, or ended. Each says nothing is owed any more, so each clears the
-///   session's entry exactly like `done`.
+///   prompt, or ended;
+/// - **activity** (`tool`): a tool ran. It keeps a working session
+///   from reading stalled and answers a block raised for that tool.
 public enum AttentionKind: String, Sendable, CaseIterable {
     case permission
     case question
@@ -27,29 +29,31 @@ public enum AttentionKind: String, Sendable, CaseIterable {
     case start
     case working
     case end
-    case subagentStart = "subagent_start"
-    case subagentStop = "subagent_stop"
+    case tool
 
     /// The agent cannot continue until the user acts.
     public var isBlocking: Bool {
         self == .permission || self == .question || self == .waiting
     }
 
-    /// Still owed to the user — kept when the attention file is compacted.
+    /// Still owed to the user: the kinds whose `front` column is written.
     public var isOpen: Bool { isBlocking || self == .turn || self == .idle }
 }
 
-/// One v4 record: ten tab-separated columns.
+/// One v5 record: eleven tab-separated columns.
 ///
-/// `agent  kind  ms  message  session  cwd  front  pid  transcript  landing`
+/// `agent  kind  ms  message  session  cwd  front  pid  transcript  landing  tool`
 ///
 /// - `front`: `1` when the prompt's own window was frontmost as the event was
 ///   raised, `0` when it was not, empty when that could not be established;
-/// - `pid`: the agent process the hook ran under, `0`/empty when unknown;
+/// - `pid`: the agent process the hook ran under, empty when unknown (a
+///   pid of 1 or less is never written: the hook's parent had exited);
 /// - `transcript`: the vendor's transcript path, when its hook names one;
 /// - `landing`: where the session can be reached, most specific first,
 ///   `;`-separated — `tmux:%3`, `iterm:w0t1p0:<uuid>`, `tty:/dev/ttys004`,
-///   `term:<TERM_PROGRAM>`.
+///   `term:<TERM_PROGRAM>`;
+/// - `tool`: the tool a `tool` line ran, or the tool a block is about
+///   (`Bash`); its target, when known, is the message.
 ///
 /// Writers clean every field (no tabs, no line breaks) before building one.
 public struct AttentionRecord: Equatable, Sendable {
@@ -63,6 +67,7 @@ public struct AttentionRecord: Equatable, Sendable {
     public var pid: Int32
     public var transcript: String
     public var landing: String
+    public var tool: String
 
     public init(
         agent: String,
@@ -74,7 +79,8 @@ public struct AttentionRecord: Equatable, Sendable {
         front: Bool? = nil,
         pid: Int32 = 0,
         transcript: String = "",
-        landing: String = ""
+        landing: String = "",
+        tool: String = ""
     ) {
         self.agent = agent
         self.kind = kind
@@ -86,6 +92,7 @@ public struct AttentionRecord: Equatable, Sendable {
         self.pid = pid
         self.transcript = transcript
         self.landing = landing
+        self.tool = tool
     }
 
     /// The record as one line, without a line break.
@@ -98,14 +105,15 @@ public struct AttentionRecord: Equatable, Sendable {
             session,
             cwd,
             AttentionProtocol.frontField(front),
-            pid > 0 ? String(pid) : "",
+            pid > 1 ? String(pid) : "",
             transcript,
             landing,
+            tool,
         ].joined(separator: "\t")
     }
 
-    /// A complete v4 record, or nil for anything else (a comment, a blank
-    /// line, a v3 line with eight columns).
+    /// A complete v5 record, or nil for anything else (a comment, a blank
+    /// line, a v4 line with ten columns).
     public init?<S: StringProtocol>(line: S) {
         guard let cols = AttentionProtocol.columns(of: line) else { return nil }
         self.init(
@@ -116,32 +124,38 @@ public struct AttentionRecord: Equatable, Sendable {
             session: cols[4],
             cwd: cols[5],
             front: AttentionProtocol.parseFront(cols[6]),
-            pid: Int32(cols[7]) ?? 0,
+            pid: AttentionProtocol.parsePid(cols[7]),
             transcript: cols[8],
-            landing: cols[9]
+            landing: cols[9],
+            tool: cols[10]
         )
     }
 }
 
-/// Frozen Attention bridge contract (v4) — the Waiting path for every
-/// supported agent's hook, and for anything else that can invoke
-/// `pulse-hook` / `PulseBar --hook`.
+/// Frozen Attention bridge contract (v5) — every hook event of every
+/// supported agent, and anything else that can invoke `pulse-hook` /
+/// `PulseBar --hook`, as one line of one append-only event log
+/// (`events.tsv`, `EventLog`).
 ///
-/// Writers: `PulseHookReceiver`, `AttentionIO`, and external integrators
-/// appending lines directly. Reader: `SessionBook` (the app). Spec:
+/// Writers: `PulseHookReceiver` (through `EventLog.append`), the app's own
+/// `done` for a dismissal, and external integrators appending lines.
+/// Reader: `SessionBook` (the app), every line in file order. Spec:
 /// `docs/attention-protocol.md`.
 public enum AttentionProtocol {
-    public static let version = 4
+    public static let version = 5
 
-    /// Comment header written at the top of `attention.tsv`. Since 24.0 only
-    /// complete v4 records (ten columns) are read; a v3 line is ignored.
-    public static let header =
-        "# pulse-attention v4 (agent\\tkind\\tms\\tmessage\\tsession\\tcwd\\tfront\\tpid\\ttranscript\\tlanding)\n"
+    /// The first line of `events.tsv`: the protocol and this file's
+    /// generation (a new one each time the file is created or compacted, so
+    /// a reader holding a byte offset knows the file was rewritten). Only
+    /// complete v5 records (eleven columns) are read.
+    public static func header(generation: String) -> String {
+        "# pulse-events v5 \(generation) (agent\\tkind\\tms\\tmessage\\tsession\\tcwd\\tfront\\tpid\\ttranscript\\tlanding\\ttool)\n"
+    }
 
-    /// Column count of a complete v4 record.
-    public static let columnCount = 10
+    /// Column count of a complete v5 record.
+    public static let columnCount = 11
 
-    /// The columns of one v4 record, or nil for a blank line, a comment or
+    /// The columns of one v5 record, or nil for a blank line, a comment or
     /// header, or a line without exactly `columnCount` columns. Only line
     /// breaks are trimmed: a record's trailing columns are often empty, so
     /// trailing tabs are part of it.
@@ -156,7 +170,7 @@ public enum AttentionProtocol {
         Set(AttentionKind.allCases.map(\.rawValue))
     }
 
-    /// Protocol spellings onto the v4 kinds, for bridges that write a kind
+    /// Protocol spellings onto the v5 kinds, for bridges that write a kind
     /// word rather than a vendor event. Unknown tokens stay as-is — and an
     /// empty one stays empty — so `acceptsWrite(kind:)` rejects them: a line
     /// that does not say what it is about is never Waiting.
@@ -196,6 +210,9 @@ public enum AttentionProtocol {
             // The elicitation was answered or closed.
             "elicitation_complete": .done,
             "elicitation_response": .done,
+            // Activity: a tool ran.
+            "tool": .tool,
+            "activity": .tool,
             // 24.0 lifecycle.
             "start": .start,
             "session_start": .start,
@@ -203,9 +220,6 @@ public enum AttentionProtocol {
             "prompt": .working,
             "end": .end,
             "session_end": .end,
-            // Lifecycle, stored for diagnostics only.
-            "subagent_start": .subagentStart,
-            "subagent_stop": .subagentStop,
         ]
         if let mapped = mapping[low] { return mapped.rawValue }
         // Never invent Waiting from free text: an unknown word stays unknown.
@@ -228,6 +242,26 @@ public enum AttentionProtocol {
         case .some(false): return "0"
         case .none: return ""
         }
+    }
+
+    /// The tool a raise names when its words are the receiver's tool
+    /// descriptor (`Tool` or `Tool: target`): one token of letters, digits
+    /// and `_ . -`. Anything else — prose, a question — names no tool. Used
+    /// when a line's `tool` column is empty.
+    public static func blockedTool(_ ask: String) -> String {
+        let head = ask.components(separatedBy: ": ").first ?? ""
+        guard let first = head.unicodeScalars.first, CharacterSet.letters.contains(first),
+              head.count <= 64,
+              head.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || "_.-".unicodeScalars.contains($0) })
+        else { return "" }
+        return head
+    }
+
+    /// The `pid` column: a pid of 1 or less (launchd — the hook's parent had
+    /// exited — or garbage) is unknown.
+    public static func parsePid(_ field: String) -> Int32 {
+        let pid = Int32(field.trimmingCharacters(in: .whitespaces)) ?? 0
+        return pid > 1 ? pid : 0
     }
 
     public static func parseFront(_ field: String) -> Bool? {

@@ -1,21 +1,20 @@
 import Foundation
 import Testing
 import XCTest
-@testable import PulseBar
+@testable import PulseApp
 @testable import PulseCore
 @testable import PulseHarvest
 
-// Attention: the protocol read into the session book, the hook receiver and
-// activity spool, the hooks installer.
+// Attention: the protocol read into the session book, the hook receiver,
+// the event log, the hooks installer.
 
-/// 24.0 · the attention file as the book reads it: every complete v4 line,
-/// in file order. (It was `AttentionReader`, a last-event-wins map with a
-/// TTL; the book keeps sessions, and the time rules live in the projection.)
+/// The event log as the book reads it: every complete v5 line, in file
+/// order.
 final class AttentionBookTests: XCTestCase {
     private let now: Int64 = 1_700_000_000_000
 
-    /// Rows are padded to the ten v4 columns (front, pid, transcript and
-    /// landing empty).
+    /// Rows are padded to the eleven v5 columns (front, pid, transcript,
+    /// landing and tool empty).
     private func tsv(_ rows: [[String]]) -> String {
         rows.map { row in
             (row + Array(repeating: "", count: max(0, AttentionProtocol.columnCount - row.count)))
@@ -97,10 +96,10 @@ final class AttentionBookTests: XCTestCase {
         let b = book(tsv([["claude", "permission", "\(now - 1000)", "old", "s1", "/p"]]))
         let session = try XCTUnwrap(b.sessions["claude|s1"])
         XCTAssertEqual(
-            SessionProjection.state(of: session, nowMs: now),
+            TrayState.state(of: session, nowMs: now),
             .blocked(RowWait(kind: "Permission", ask: "old", sinceMs: now - 1000))
         )
-        XCTAssertEqual(SessionProjection.state(of: session, nowMs: now + SessionProjection.idleBoundMs + 1), .recent)
+        XCTAssertEqual(TrayState.state(of: session, nowMs: now + TrayState.idleBoundMs + 1), .recent)
     }
 
     func testSubagentEventsNeverRaiseWaiting() {
@@ -113,7 +112,7 @@ final class AttentionBookTests: XCTestCase {
     }
 
     func testProtocolHeaderIsIgnoredAsComment() {
-        let b = book(AttentionProtocol.header + tsv([
+        let b = book(AttentionProtocol.header(generation: "g1") + tsv([
             ["gemini", "waiting", "\(now - 1000)", "Need choice", "j1", "/w"],
         ]))
         XCTAssertEqual(Array(b.sessions.keys), ["gemini|j1"])
@@ -124,17 +123,21 @@ final class AttentionBookTests: XCTestCase {
         XCTAssertTrue(book("# header\nclaude\tpermission\n\n").sessions.isEmpty)
     }
 
-    /// 24.0: v4 needs all ten columns. A v3 (eight-column) line is not read.
+    /// 25.0: v5 needs all eleven columns. A v4 (ten-column) or v3 line is
+    /// not read.
     func testAnOlderShorterLineIsNotRead() throws {
         let v1 = "claude\tpermission\t\(now - 1000)\tapprove\ts1\t/p\n"
         let v3 = "claude\tpermission\t\(now - 1000)\tapprove\ts1\t/p\t\t\n"
+        let v4 = "claude\tpermission\t\(now - 1000)\tapprove\ts1\t/p\t\t4242\t/t.jsonl\ttmux:%3\n"
         XCTAssertTrue(book(v1).sessions.isEmpty)
         XCTAssertTrue(book(v3).sessions.isEmpty)
-        let v4 = "claude\tpermission\t\(now - 1000)\tapprove\ts1\t/p\t\t4242\t/t.jsonl\ttmux:%3\n"
-        let session = try XCTUnwrap(book(v4).sessions["claude|s1"])
+        XCTAssertTrue(book(v4).sessions.isEmpty)
+        let v5 = "claude\tpermission\t\(now - 1000)\tBash: ls\ts1\t/p\t\t4242\t/t.jsonl\ttmux:%3\tBash\n"
+        let session = try XCTUnwrap(book(v5).sessions["claude|s1"])
         XCTAssertEqual(session.pid, 4242)
         XCTAssertEqual(session.transcript, "/t.jsonl")
         XCTAssertEqual(session.landing, "tmux:%3")
+        XCTAssertEqual(block(book(v5), "claude|s1")?.tool, "Bash")
     }
 
     /// 24.0: a hand-written blocked line for an agent whose hooks cannot
@@ -178,8 +181,8 @@ final class AttentionBookTests: XCTestCase {
     func testAStopStillClearsAPermissionPastTheGraceWindow() {
         let old = now - 60_000
         let b = book([
-            "claude\tpermission\t\(old)\tBash: npm run build\tsession-10\t/Users/me/Pulse\t\t\t\t",
-            "claude\tstop\t\(old + SessionBook.stopGraceMs + 1)\t\tsession-10\t\t\t\t\t",
+            "claude\tpermission\t\(old)\tBash: npm run build\tsession-10\t/Users/me/Pulse\t\t\t\t\t",
+            "claude\tstop\t\(old + SessionBook.stopGraceMs + 1)\t\tsession-10\t\t\t\t\t\t",
         ].joined(separator: "\n") + "\n")
         XCTAssertEqual(state(b, "claude|session-10"), "turn")
     }
@@ -187,18 +190,18 @@ final class AttentionBookTests: XCTestCase {
 
 final class PulseHookReceiverTests: XCTestCase {
     private var tempHome: URL!
+    /// This test's own event log — an explicit file, never a global
+    /// override (suites run in parallel).
+    private var log: URL!
 
     override func setUpWithError() throws {
         tempHome = FileManager.default.temporaryDirectory
             .appendingPathComponent("pulse-hook-recv-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tempHome, withIntermediateDirectories: true)
-        AttentionIO.pathOverride = tempHome.appendingPathComponent("attention.tsv")
-        ActivitySpool.directoryOverride = tempHome.appendingPathComponent("activity.d", isDirectory: true)
+        log = tempHome.appendingPathComponent(EventLog.fileName)
     }
 
     override func tearDownWithError() throws {
-        AttentionIO.pathOverride = nil
-        ActivitySpool.directoryOverride = nil
         try? FileManager.default.removeItem(at: tempHome)
     }
 
@@ -209,19 +212,27 @@ final class PulseHookReceiverTests: XCTestCase {
 
     /// Run one vendor event through the receiver, as its installed hook does.
     @discardableResult
-    private func deliver(_ agent: String, _ event: String, _ payload: String) -> Int32 {
+    private func deliver(
+        _ agent: String, _ event: String, _ payload: String,
+        locate: ((AgentID, [String: String]) -> (pid: Int32, landing: String))? = nil
+    ) -> Int32 {
         var arguments = ["PulseBar", "--hook", agent]
         if !event.isEmpty { arguments.append(event) }
-        return PulseHookReceiver.run(arguments: arguments, stdin: payload, locate: located)
+        return PulseHookReceiver.run(arguments: arguments, stdin: payload, logURL: log, locate: locate ?? located)
     }
 
     private func records() -> [AttentionRecord] {
-        let text = (try? String(contentsOf: AttentionIO.path, encoding: .utf8)) ?? ""
+        let text = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
         return text.split(separator: "\n").compactMap { AttentionRecord(line: $0) }
     }
 
+    /// Everything but the `tool` lines — what the older tests were about.
+    private func blocksAndTurns() -> [AttentionRecord] {
+        records().filter { $0.kind != "tool" }
+    }
+
     private func kinds() -> [String] {
-        records().map { $0.kind }
+        blocksAndTurns().map { $0.kind }
     }
 
     // MARK: - The protocol's own words
@@ -243,20 +254,26 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertFalse(AttentionProtocol.acceptsWrite(kind: "exec_approval_request"))
     }
 
-    /// v4: ten columns, and a record survives its own line.
-    func testAV4RecordRoundTrips() throws {
+    /// v5: eleven columns, and a record survives its own line.
+    func testAV5RecordRoundTrips() throws {
         let record = AttentionRecord(
             agent: "claude", kind: "permission", ms: 1_800_000_000_000,
             message: "Bash: npm test", session: "s1", cwd: "/w", front: false,
             pid: 4242, transcript: "/Users/me/.claude/projects/w/s1.jsonl",
-            landing: "tmux:%3;tty:/dev/ttys004"
+            landing: "tmux:%3;tty:/dev/ttys004", tool: "Bash"
         )
-        XCTAssertEqual(record.line.split(separator: "\t", omittingEmptySubsequences: false).count, 10)
+        XCTAssertEqual(record.line.split(separator: "\t", omittingEmptySubsequences: false).count, 11)
         XCTAssertEqual(AttentionRecord(line: record.line), record)
         let unknown = AttentionRecord(agent: "codex", kind: "turn", ms: 1)
         XCTAssertEqual(AttentionRecord(line: unknown.line), unknown, "empty columns stay empty")
         XCTAssertNil(AttentionRecord(line: "claude\tpermission\t1\tx\ts\t/p\t\t"), "a v3 line is not read")
-        XCTAssertTrue(AttentionProtocol.header.hasPrefix("# pulse-attention v4"))
+        XCTAssertNil(AttentionRecord(line: "claude\tpermission\t1\tx\ts\t/p\t\t\t\t"), "a v4 line is not read")
+        let header = AttentionProtocol.header(generation: "g42")
+        XCTAssertTrue(header.hasPrefix("# pulse-events v5 g42 "))
+        XCTAssertNotEqual(header, AttentionProtocol.header(generation: "g43"), "each generation has its own header")
+        XCTAssertEqual(AttentionProtocol.kind("tool"), .tool)
+        XCTAssertEqual(AttentionProtocol.kind("activity"), .tool)
+        XCTAssertFalse(AttentionKind.tool.isOpen)
     }
 
     // MARK: - Claude (code.claude.com/docs/en/hooks)
@@ -282,6 +299,28 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(kinds(), ["question"])
     }
 
+    /// 25.0 fix 9: the question itself, not the tool's name — and the tool
+    /// column says which tool will answer it.
+    func testClaudeAskUserQuestionSaysTheQuestion() throws {
+        deliver("claude", "PermissionRequest", #"""
+        {"session_id":"c2","cwd":"/w","hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion",
+         "tool_input":{"questions":[{"question":"Which database should the cache use?","header":"DB",
+         "options":[{"label":"Redis"},{"label":"SQLite"}],"multiSelect":false}]}}
+        """#)
+        deliver("claude", "PermissionRequest", ##"""
+        {"session_id":"c3","cwd":"/w","hook_event_name":"PermissionRequest","tool_name":"ExitPlanMode",
+         "tool_input":{"plan":"\n## Move the cache to Redis\n1. Add the client"}}
+        """##)
+        let question = try XCTUnwrap(records().first { $0.session == "c2" })
+        XCTAssertEqual(question.kind, "question")
+        XCTAssertEqual(question.message, "Which database should the cache use?")
+        XCTAssertEqual(question.tool, "AskUserQuestion")
+        let plan = try XCTUnwrap(records().first { $0.session == "c3" })
+        XCTAssertEqual(plan.kind, "permission")
+        XCTAssertEqual(plan.message, "Move the cache to Redis")
+        XCTAssertEqual(PulseHookReceiver.planSummary("\n## Move the cache\n- step"), "Move the cache")
+    }
+
     func testClaudeNotificationTypesMapByMeaning() {
         func note(_ type: String) {
             deliver("claude", "Notification", #"{"session_id":"n-\#(type)","cwd":"/w","hook_event_name":"Notification","message":"Claude needs your input","notification_type":"\#(type)"}"#)
@@ -300,10 +339,38 @@ final class PulseHookReceiverTests: XCTestCase {
         deliver("claude", "PostToolUse", #"{"session_id":"s1","cwd":"/w","hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"/w/a.swift"}}"#)
         deliver("claude", "Stop", #"{"session_id":"s1","cwd":"/w","hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"All tests pass."}"#)
         deliver("claude", "SessionEnd", #"{"session_id":"s1","cwd":"/w","hook_event_name":"SessionEnd","reason":"exit"}"#)
-        XCTAssertEqual(kinds(), ["start", "working", "turn", "end"], "a tool call is activity, never an attention line")
+        XCTAssertEqual(records().map(\.kind), ["start", "working", "tool", "turn", "end"], "25.0: one log, every event in order")
         XCTAssertEqual(records().first { $0.kind == "turn" }?.message, "All tests pass.")
-        let spool = ActivitySpool.readEvents(nowMs: Int64(Date().timeIntervalSince1970 * 1000))
-        XCTAssertEqual(spool.first?.tool, "Edit")
+        let tool = try? XCTUnwrap(records().first { $0.kind == "tool" })
+        XCTAssertEqual(tool?.tool, "Edit")
+        XCTAssertEqual(tool?.message, "/w/a.swift")
+        XCTAssertEqual(tool?.pid, 4242, "a tool line names its process too")
+        XCTAssertNil(tool?.front, "front is only asked for what is owed")
+    }
+
+    /// 25.0 fix 1: a failed tool is activity for that tool.
+    func testClaudePostToolUseFailureIsAToolLine() throws {
+        deliver("claude", "PostToolUseFailure", #"{"session_id":"s1","cwd":"/w","hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"npm test"},"error":"exit 1"}"#)
+        let line = try XCTUnwrap(records().first)
+        XCTAssertEqual(line.kind, "tool")
+        XCTAssertEqual(line.tool, "Bash")
+        XCTAssertEqual(line.message, "npm test")
+    }
+
+    /// 25.0 fix 10: a hook whose parent had exited is re-parented to
+    /// launchd; pid 1 is never written.
+    func testPidOneIsNeverWritten() throws {
+        deliver("claude", "Stop", #"{"session_id":"s1","cwd":"/w"}"#, locate: { _, _ in (1, "") })
+        let raw = try String(contentsOf: log, encoding: .utf8)
+        let line = try XCTUnwrap(raw.split(separator: "\n").first { !$0.hasPrefix("#") })
+        XCTAssertEqual(line.split(separator: "\t", omittingEmptySubsequences: false)[7], "")
+        XCTAssertEqual(records().first?.pid, 0)
+        let parents: [Int32: Int32] = [300: 1]
+        XCTAssertEqual(
+            HookLanding.agentPID(agent: .claude, start: 1, parentOf: { parents[$0] }, argumentsOf: { _ in nil }),
+            0,
+            "the chain starts at launchd: unknown"
+        )
     }
 
     /// A 23.0 entry names no event; the payload does.
@@ -317,7 +384,7 @@ final class PulseHookReceiverTests: XCTestCase {
     func testCodexStopAndNotifyAreYourTurnAndItNeverBlocks() {
         deliver("codex", "Stop", #"{"session_id":"x1","turn_id":"t1","transcript_path":null,"cwd":"/w","hook_event_name":"Stop","model":"gpt-5","permission_mode":"default","stop_hook_active":false,"last_assistant_message":"Done."}"#)
         let notify = #"{"type":"agent-turn-complete","thread-id":"x2","turn-id":"1","cwd":"/w","input-messages":["go"],"last-assistant-message":"Shipped."}"#
-        PulseHookReceiver.run(arguments: ["pulse-hook", "--hook", "codex", notify], locate: located)
+        PulseHookReceiver.run(arguments: ["pulse-hook", "--hook", "codex", notify], logURL: log, locate: located)
         // A bridge that says Codex is blocked is refused: Codex's own
         // PermissionRequest fires before its auto-review.
         deliver("codex", "permission", #"{"session_id":"x3","message":"Approve shell"}"#)
@@ -368,7 +435,8 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(records()[2].message, "Which database?")
         var book = SessionBook()
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
-        for record in records() { book.apply(record, nowMs: nowMs) }
+        // The grace is about the turn: replay the block and the turn alone.
+        for record in blocksAndTurns() { book.apply(record, nowMs: nowMs) }
         XCTAssertEqual(HookFeed.word(book.sessions["opencode|ses_1"]?.state), "blocked:question", "an idle moments after a question does not wipe it (stop grace)")
     }
 
@@ -386,6 +454,19 @@ final class PulseHookReceiverTests: XCTestCase {
 
     // MARK: - Pi (extension events)
 
+    /// 25.0 fix 8: a Pi prompt with no title never says its event's
+    /// reason (`ui_prompt`); the extension sends a reason only on shutdown.
+    func testAPiPromptNeverSaysItsReason() throws {
+        deliver("pi", "ui_prompt_start", #"{"session_id":"p9","cwd":"/w","kind":"input","reason":"ui_prompt"}"#)
+        let line = try XCTUnwrap(records().first)
+        XCTAssertEqual(line.kind, "question")
+        XCTAssertEqual(line.message, "", "not the literal ui_prompt")
+        XCTAssertEqual(PulseHookReceiver.genericMessage(from: ["reason": "ui_prompt"], blocked: true), "")
+        XCTAssertEqual(PulseHookReceiver.genericMessage(from: ["reason": "rate_limit"]), "rate_limit", "a turn may still say why it ended")
+        let module = HookModules.piExtension(launcher: "/x/pulse-hook", events: ["ui_prompt_start", "session_shutdown"])
+        XCTAssertTrue(module.contains(#"if (name === "session_shutdown" && event && typeof event.reason === "string") payload.reason = event.reason"#))
+    }
+
     func testPiUIPromptsAreBlocksUntilTheyEnd() {
         deliver("pi", "agent_start", #"{"session_id":"p1","transcript_path":"/Users/me/.pi/agent/sessions/w/p1.jsonl","cwd":"/w"}"#)
         deliver("pi", "ui_prompt_start", #"{"session_id":"p1","cwd":"/w","kind":"confirm","title":"Allow rm -rf build?"}"#)
@@ -402,8 +483,8 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(deliver("claude", "made_up_vendor_event", #"{"message":"x","session_id":"x"}"#), 0)
         XCTAssertEqual(deliver("goose", "permission", #"{"message":"x","session_id":"x"}"#), 0, "not a supported agent")
         XCTAssertEqual(deliver("claude", "", #"{"message":"says nothing about what it is","session_id":"x"}"#), 0)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: AttentionIO.path.path))
-        XCTAssertFalse(PulseHookReceiver.appendEvent(agent: "claude", kind: "", message: "nope"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: log.path))
+        XCTAssertFalse(PulseHookReceiver.appendEvent(agent: "claude", kind: "", message: "nope", logURL: log))
         XCTAssertEqual(AttentionProtocol.normalizeKind("   "), "")
     }
 
@@ -412,6 +493,7 @@ final class PulseHookReceiverTests: XCTestCase {
             arguments: ["PulseBar", "--hook", "claude", "PermissionRequest"],
             stdin: #"{"session_id":"g","tool_name":"Bash"}"#,
             environment: ["GROK_HOOK_EVENT": "PermissionRequest"],
+            logURL: log,
             locate: located
         )
         XCTAssertEqual(code, 0)
@@ -437,7 +519,7 @@ final class PulseHookReceiverTests: XCTestCase {
             #"{"sessionID":"o1","directory":"/w","permission":"bash","patterns":["npm test"]}"#,
         ]
         XCTAssertTrue(PulseHookReceiver.payloadInArguments(args))
-        PulseHookReceiver.run(arguments: args, stdin: "", locate: located)
+        PulseHookReceiver.run(arguments: args, stdin: "", logURL: log, locate: located)
         let record = records().first
         XCTAssertEqual(record?.kind, "permission")
         XCTAssertEqual(record?.session, "o1")
@@ -454,36 +536,18 @@ final class PulseHookReceiverTests: XCTestCase {
         }
     }
 
-    func testSelfTestDoesNotNeedPython() {
-        // Route seedAssets away from the real support dir: the self-test must
-        // never rewrite the user's hook-runner.path to the xctest binary.
-        HooksInstaller.homeOverride = tempHome
-        defer { HooksInstaller.homeOverride = nil }
-        let before = AttentionIO.pathOverride
-        let result = HooksSupport.selfTest()
-        guard case .passed = result else {
-            XCTFail("native self-test must pass: \(result)")
-            return
-        }
-        XCTAssertEqual(AttentionIO.pathOverride, before)
-        XCTAssertFalse(
-            FileManager.default.fileExists(atPath: AttentionIO.path.path),
-            "the self-test's lines never reach the attention file a scan reads"
-        )
-    }
-
     /// One invalid byte (a hook cut off mid-character) must not read as an
     /// empty file — every wait would vanish.
     func testOneBadByteDoesNotHideEveryWait() throws {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
-        var bytes = Data(AttentionIO.header.utf8)
-        bytes.append(Data("claude\tpermission\t\(now - 1_000)\tBash: make\ts1\t/p\t\t\t\t\n".utf8))
+        var bytes = Data(AttentionProtocol.header(generation: "g1").utf8)
+        bytes.append(Data("claude\tpermission\t\(now - 1_000)\tBash: make\ts1\t/p\t\t\t\t\t\n".utf8))
         bytes.append(contentsOf: [0x63, 0x6C, 0xE2, 0x82, 0x0A]) // "cl" + a truncated "€"
-        try bytes.write(to: AttentionIO.path)
-        let text = AttentionIO.readText()
-        XCTAssertFalse(text.isEmpty)
+        try bytes.write(to: log)
+        let chunk = try XCTUnwrap(EventLog.read(at: log, after: nil))
+        XCTAssertFalse(chunk.lines.isEmpty)
         var book = SessionBook()
-        for line in text.split(whereSeparator: \.isNewline) {
+        for line in chunk.lines {
             if let record = AttentionRecord(line: line) { book.apply(record, nowMs: now) }
         }
         XCTAssertEqual(Array(book.sessions.keys), ["claude|s1"])
@@ -539,7 +603,7 @@ final class PulseHookReceiverTests: XCTestCase {
          "tool_input":{"command":"curl -H 'Authorization: Bearer abcdefgh12345678' https://x"},
          "session_id":"c10"}
         """#)
-        let text = try String(contentsOf: AttentionIO.path, encoding: .utf8)
+        let text = try String(contentsOf: log, encoding: .utf8)
         XCTAssertTrue(text.contains("Bash: curl"), text)
         XCTAssertFalse(text.contains("abcdefgh12345678"), "naming the ask must not leak the secret in it")
     }
@@ -549,7 +613,7 @@ final class PulseHookReceiverTests: XCTestCase {
         let code = deliver("claude", "PermissionRequest", #"{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"ls"},"session_id":"s1","cwd":"/w"}"#)
         XCTAssertEqual(code, 0)
         XCTAssertLessThan(Date().timeIntervalSince(started), 5, "the receiver exits at once")
-        let text = try String(contentsOf: AttentionIO.path, encoding: .utf8)
+        let text = try String(contentsOf: log, encoding: .utf8)
         let line = try XCTUnwrap(text.split(separator: "\n").first { $0.hasPrefix("claude\t") })
         XCTAssertEqual(line.split(separator: "\t", omittingEmptySubsequences: false).count, AttentionProtocol.columnCount)
     }
@@ -616,8 +680,8 @@ final class HookLandingTests: XCTestCase {
         bytes += Array("node".utf8) + [0]
         bytes += Array("/opt/homebrew/bin/gemini".utf8) + [0]
         bytes += Array("SECRET=env".utf8) + [0]
-        XCTAssertEqual(AgentProcesses.parseProcArgs(bytes), "node /opt/homebrew/bin/gemini", "argc bounds the read: no environment")
-        XCTAssertNil(AgentProcesses.parseProcArgs([0, 0]))
+        XCTAssertEqual(AgentProcesses.parseProcArgv(bytes), ["node", "/opt/homebrew/bin/gemini"], "argc bounds the read: no environment")
+        XCTAssertNil(AgentProcesses.parseProcArgv([0, 0]))
     }
 }
 
@@ -955,35 +1019,201 @@ final class HooksInstallerTests: XCTestCase {
     func testRootTableEndFindsFirstSection() {
         let text = "model = \"o3\"\n\n[profiles.x]\nmodel = \"y\"\n"
         let end = HooksInstaller.rootTableEnd(text)
-        XCTAssertEqual(String(text.prefix(end)), "model = \"o3\"\n\n")
+        XCTAssertEqual(String(text[..<end]), "model = \"o3\"\n\n")
     }
 
+    /// 25.0 fix 13: a line of a multi-line array or string that begins with
+    /// `[` is not a table header.
+    func testRootTableEndIgnoresBracketsInsideValues() {
+        let text = """
+        model = "o3"
+        matrix = [
+          ["a", "b"],
+          ["c", "d"],
+        ]
+        prompt = \"\"\"
+        [not a table]
+        \"\"\"
+        notify = ["/x/n"] # [comment]
+
+        [profiles.x]
+        model = "y"
+
+        """
+        let end = HooksInstaller.rootTableEnd(text)
+        XCTAssertTrue(String(text[end...]).hasPrefix("[profiles.x]"), String(text[end...]))
+        let statements = TOMLScan.statements(text)
+        XCTAssertEqual(statements.filter(\.isTable).count, 1)
+        XCTAssertEqual(statements.filter { $0.key == "matrix" }.count, 1, "the array is one statement")
+        XCTAssertEqual(HooksInstaller.rootTableEnd("model = 1\n"), "model = 1\n".endIndex)
+    }
+
+    /// 25.0 fix 13: a Pulse `notify` the user reformatted over several
+    /// lines goes whole — no dangling `]` — and is still recognized as
+    /// Pulse's on a reinstall.
+    func testAReformattedNotifyIsRemovedWhole() throws {
+        let launcher = HooksInstaller.launcherURL.path
+        let config = """
+        model = "gpt-5"
+
+        # Pulse attention hooks
+        notify = [
+          "\(launcher)",
+          "codex",
+        ]
+
+        [profiles.fast]
+        model = "o4-mini"
+
+        """
+        try write(".codex/config.toml", config)
+        try write(".codex/hooks.json", "{}\n")
+        let report = try HooksInstaller.install(agents: [.codex])
+        XCTAssertFalse(report.map(\.line).joined().contains("kept your own notify"), "the multi-line notify is Pulse's")
+        XCTAssertEqual(read(".codex/config.toml"), config, "nothing to add")
+        HooksInstaller.uninstall(agents: [.codex])
+        let after = try XCTUnwrap(read(".codex/config.toml"))
+        XCTAssertFalse(HooksInstaller.containsPulseMarker(after), after)
+        XCTAssertFalse(after.contains("notify"), after)
+        XCTAssertFalse(after.contains("\"codex\","), after)
+        XCTAssertFalse(after.contains("\n]\n"), "no dangling bracket: \(after)")
+        XCTAssertTrue(after.contains("[profiles.fast]\nmodel = \"o4-mini\""), after)
+    }
+
+    /// 25.0 fix 11: the launcher as a whole token, never a substring.
     func testMarkersNeverClaimAUsersOwnHook() {
         XCTAssertTrue(HooksInstaller.containsPulseMarker("/x/pulse-hook claude Stop"))
+        XCTAssertTrue(HooksInstaller.containsPulseMarker(#""/Users/me/Library/Application Support/Pulse/pulse-hook" claude Stop"#))
+        XCTAssertTrue(HooksInstaller.containsPulseMarker(#"{"command": "\"/a b/pulse-hook\" claude Stop"}"#))
+        XCTAssertTrue(HooksInstaller.containsPulseMarker(#"notify = ["/x/pulse-hook", "codex"]"#))
+        XCTAssertTrue(HooksInstaller.containsPulseMarker(#"{"command":"\/x\/pulse-hook claude"}"#), "JSONSerialization escapes slashes")
         XCTAssertTrue(HooksInstaller.containsPulseMarker("/Applications/Pulse.app/Contents/MacOS/PulseBar --hook claude"))
         XCTAssertFalse(HooksInstaller.containsPulseMarker("mytool --hook-dir /tmp"))
+        XCTAssertFalse(HooksInstaller.containsPulseMarker("~/bin/impulse-hook.sh"), "impulse-hook is not pulse-hook")
+        XCTAssertFalse(HooksInstaller.containsPulseMarker("/x/pulse-hook.sh"))
+        XCTAssertFalse(HooksInstaller.containsPulseMarker("/x/my-pulse-hook claude"))
+        XCTAssertFalse(HooksInstaller.containsPulseMarker("PulseBarHelper --hooks"))
     }
 
-    /// The Settings lines say what is installed, what is not there, when a
-    /// hook last spoke, and which agents never report a wait.
+    /// 25.0 fix 11: a user's `impulse-hook.sh` survives an install and an
+    /// uninstall.
+    func testAUsersImpulseHookIsNeverRemoved() throws {
+        let original = """
+        {
+          "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "~/bin/impulse-hook.sh"}]}]}
+        }
+
+        """
+        try write(".claude/settings.json", original)
+        try HooksInstaller.install(agents: [.claude])
+        XCTAssertTrue(read(".claude/settings.json")?.contains("impulse-hook.sh") == true)
+        try write(".claude/settings.json", (read(".claude/settings.json") ?? "").replacingOccurrences(of: "\"hooks\": {", with: "\"theme\": \"dark\",\n  \"hooks\": {"))
+        HooksInstaller.uninstall(agents: [.claude])
+        let after = try XCTUnwrap(read(".claude/settings.json"))
+        XCTAssertTrue(after.contains("~/bin/impulse-hook.sh"), after)
+        XCTAssertFalse(HooksInstaller.containsPulseMarker(after))
+    }
+
+    /// 25.0 fix 12: the edges of a user's JSON — a non-array event, a
+    /// user's empty event, CRLF, a byte-order mark, comments.
+    func testJSONSpliceEdges() throws {
+        let pulse = [("Stop", [#"{"x": 1}"#])]
+        let isPulse: (String) -> Bool = { $0.contains(#""x""#) }
+        // A non-array event Pulse must add to: refused, never a duplicate key.
+        XCTAssertThrowsError(try JSONSplice.replacingHooks(
+            in: #"{"hooks": {"Stop": {"hooks": []}}}"#, pulse: pulse, isPulse: isPulse, ensureVersion: false, dropEmptyHooks: false
+        )) { error in XCTAssertTrue(error is JSONSplice.UnexpectedShape) }
+        XCTAssertThrowsError(try JSONSplice.replacingHooks(
+            in: #"{"hooks": []}"#, pulse: pulse, isPulse: isPulse, ensureVersion: false, dropEmptyHooks: false
+        ), "a hooks that is not an object is not replaced")
+        // A non-array event Pulse does not touch stays as it is.
+        let other = try JSONSplice.replacingHooks(
+            in: #"{"hooks": {"Custom": "x"}}"#, pulse: pulse, isPulse: isPulse, ensureVersion: false, dropEmptyHooks: false
+        )
+        XCTAssertEqual(other, #"{"hooks": {"Custom": "x", "Stop": [{"x": 1}]}}"#)
+        // The user's own empty event stays through an install and an uninstall.
+        let empty = #"{"hooks": {"Stop": [], "Start": []}}"#
+        let installed = try JSONSplice.replacingHooks(in: empty, pulse: pulse, isPulse: isPulse, ensureVersion: false, dropEmptyHooks: false)
+        XCTAssertEqual(installed, #"{"hooks": {"Stop": [{"x": 1}], "Start": []}}"#)
+        let stripped = try JSONSplice.replacingHooks(in: installed, pulse: [], isPulse: isPulse, ensureVersion: false, dropEmptyHooks: true)
+        XCTAssertEqual(stripped, #"{"hooks": {"Start": []}}"#)
+        XCTAssertEqual(try JSONSplice.replacingHooks(in: empty, pulse: [], isPulse: isPulse, ensureVersion: false, dropEmptyHooks: true), empty)
+        // CRLF stays CRLF.
+        let crlf = "{\r\n  \"a\": 1\r\n}\r\n"
+        let crlfOut = try JSONSplice.replacingHooks(in: crlf, pulse: pulse, isPulse: isPulse, ensureVersion: false, dropEmptyHooks: false)
+        XCTAssertEqual(crlfOut, "{\r\n  \"a\": 1,\r\n  \"hooks\": {\r\n    \"Stop\": [\r\n      {\"x\": 1}\r\n    ]\r\n  }\r\n}\r\n")
+        XCTAssertFalse(crlfOut.replacingOccurrences(of: "\r\n", with: "").contains("\n"), "no bare LF")
+        // A byte-order mark is kept, and the JSON after it read.
+        let bom = "\u{FEFF}{\"a\": 1}"
+        let bomOut = try JSONSplice.replacingHooks(in: bom, pulse: pulse, isPulse: isPulse, ensureVersion: false, dropEmptyHooks: false)
+        XCTAssertEqual(bomOut, "\u{FEFF}{\"a\": 1, \"hooks\": {\"Stop\": [{\"x\": 1}]}}")
+        // Comments: found outside strings only.
+        XCTAssertTrue(JSONSplice.hasComments("{\n  // mine\n  \"a\": 1\n}"))
+        XCTAssertTrue(JSONSplice.hasComments("{ /* mine */ \"a\": 1 }"))
+        XCTAssertFalse(JSONSplice.hasComments(#"{"url": "https://example.com/a", "q": "a \" // b"}"#))
+    }
+
+    /// 25.0 fix 12: a settings file with comments is refused with its own
+    /// reason, in the person's language, and left alone.
+    func testAJSONCSettingsFileIsRefusedAsHavingComments() throws {
+        let jsonc = "{\n  // my theme\n  \"theme\": \"dark\"\n}\n"
+        try write(".claude/settings.json", jsonc)
+        let results = try HooksInstaller.install(agents: [.claude])
+        XCTAssertEqual(results.map(\.failure), [.hasComments])
+        XCTAssertEqual(read(".claude/settings.json"), jsonc)
+        XCTAssertEqual(HooksSupport.Status.reason(.hasComments, lang: .en), L10n.t(.hooksFailureHasComments, .en))
+        XCTAssertNotEqual(L10n.t(.hooksFailureHasComments, .zh), L10n.t(.hooksFailureHasComments, .en))
+        try write(".gemini/settings.json", #"{"hooks": {"AfterTool": {"command": "x"}}}"#)
+        let shape = try HooksInstaller.install(agents: [.gemini])
+        XCTAssertEqual(shape.map(\.failure), [.unexpectedShape])
+        // A byte-order mark is no reason to refuse.
+        try write(".cursor/hooks.json", "\u{FEFF}{\"version\": 1}\n")
+        let cursor = try HooksInstaller.install(agents: [.cursor])
+        XCTAssertEqual(cursor.map(\.failure), [nil])
+        XCTAssertTrue(HooksSupport.isWired(.cursor))
+    }
+
+    /// The Settings lines say what is installed, what is not, when a hook
+    /// last spoke, and which agents never report a wait; the agents that
+    /// are not on this Mac share one line.
     func testSettingsSaysEachAgentsHook() {
         let now: Int64 = 1_800_000_000_000
         let lines = SettingsModel.hookAgents(
-            installed: [.claude, .codex], present: [.claude, .codex, .gemini],
+            installed: [.claude, .codex], present: [.claude, .codex, .cursor, .gemini],
             lastEventMs: [.claude: now - 12_000], nowMs: now, lang: .en
         )
-        XCTAssertEqual(lines.map(\.agent), AgentID.priority)
+        XCTAssertEqual(lines.map(\.agent), [.claude, .codex, .cursor, .gemini])
         let claude = lines[0]
         XCTAssertTrue(claude.installed)
+        XCTAssertFalse(claude.needsFix)
         XCTAssertEqual(claude.lastEvent, String(format: L10n.t(.settingsHookLastEvent, .en), DurationFormat.label(seconds: 12, lang: .en)))
         XCTAssertNil(claude.note)
         let codex = lines.first { $0.agent == .codex }
         XCTAssertEqual(codex?.lastEvent, L10n.t(.settingsHookNoEvent, .en))
         XCTAssertEqual(codex?.note, L10n.t(.settingsHookNoWait, .en))
         XCTAssertEqual(lines.first { $0.agent == .cursor }?.note, L10n.t(.settingsHookNoWait, .en))
-        XCTAssertEqual(lines.first { $0.agent == .gemini }?.state, L10n.t(.hooksMissing, .en))
-        XCTAssertEqual(lines.first { $0.agent == .pi }?.state, L10n.t(.settingsHookNotFound, .en))
-        XCTAssertEqual(lines.first { $0.agent == .pi }?.lastEvent, "")
+        let gemini = lines.first { $0.agent == .gemini }
+        XCTAssertEqual(gemini?.state, L10n.t(.hooksMissing, .en))
+        XCTAssertEqual(gemini?.lastEvent, "")
+        XCTAssertEqual(gemini?.needsFix, true, "an agent here without its hook is offered the install")
+        let absent = SettingsModel.absentAgents(installed: [.claude, .codex], present: [.claude, .codex, .cursor, .gemini])
+        XCTAssertEqual(absent, [.copilot, .opencode, .pi], "in roster order")
+        let line = SettingsModel.absentLine(absent, lang: .en)
+        XCTAssertNotNil(line)
+        for agent in absent { XCTAssertTrue(line?.contains(agent.displayName) == true, agent.rawValue) }
+        XCTAssertNil(SettingsModel.absentLine([], lang: .en), "nothing to say when every agent is here")
+    }
+
+    /// A failed install names the agent and why, and offers the fix again.
+    func testAFailedInstallIsItsOwnLine() {
+        let lines = SettingsModel.hookAgents(
+            installed: [], present: [], lastEventMs: [:], nowMs: 0, lang: .en,
+            failed: [.gemini: .invalidJSON]
+        )
+        XCTAssertEqual(lines.map(\.agent), [.gemini])
+        XCTAssertTrue(lines[0].failed)
+        XCTAssertTrue(lines[0].needsFix)
+        XCTAssertTrue(lines[0].state.contains(L10n.t(.hooksFailureInvalidJSON, .en)), lines[0].state)
     }
 }
 
@@ -994,60 +1224,26 @@ final class AttentionWatcherReArmTests: XCTestCase {
         home = FileManager.default.temporaryDirectory
             .appendingPathComponent("pulse-watcher-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        AttentionIO.pathOverride = home.appendingPathComponent("attention.tsv")
     }
 
     override func tearDownWithError() throws {
-        AttentionIO.pathOverride = nil
         try? FileManager.default.removeItem(at: home)
     }
 
-    func testReArmingTheFileWatchLeavesTheActivityWatchAlone() {
-        let watcher = AttentionWatcher()
-        defer { watcher.stop() }
-        watcher.start(onChange: {}, onActivity: {})
-        XCTAssertTrue(watcher.isWatchingFile)
-        XCTAssertTrue(watcher.isWatchingActivity)
-
-        // What the delete/rename handler does after an atomic replace — which
-        // is what every hook write looks like from the outside.
-        watcher.arm()
-        XCTAssertTrue(watcher.isWatchingFile)
-        XCTAssertTrue(
-            watcher.isWatchingActivity,
-            "activity.d/ must keep waking Pulse after attention.tsv is replaced"
-        )
-    }
-
-    func testReArmingTheActivityWatchLeavesTheFileWatchAlone() {
-        let watcher = AttentionWatcher()
-        defer { watcher.stop() }
-        watcher.start(onChange: {}, onActivity: {})
-        watcher.armActivity()
-        XCTAssertTrue(watcher.isWatchingFile)
-        XCTAssertTrue(watcher.isWatchingActivity)
-    }
-
     /// A deleted file cannot be reopened, so the watch would have stayed dead
-    /// for the life of the process.
-    func testAFileThatWasDeletedIsRecreatedAndWatchedAgain() throws {
+    /// for the life of the process: re-arming recreates it, with a header.
+    func testAFileThatWasDeletedIsRecreatedWhenTheWatchReArms() throws {
+        let file = home.appendingPathComponent(EventLog.fileName)
         let watcher = AttentionWatcher()
         defer { watcher.stop() }
-        watcher.start {}
-        let file = try XCTUnwrap(AttentionIO.pathOverride)
+        watcher.start(url: file) {}
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
         try FileManager.default.removeItem(at: file)
 
         watcher.arm()
         XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
-        XCTAssertTrue(watcher.isWatchingFile)
-    }
-
-    func testStopTearsDownEveryWatch() {
-        let watcher = AttentionWatcher()
-        watcher.start(onChange: {}, onActivity: {})
-        watcher.stop()
-        XCTAssertFalse(watcher.isWatchingFile)
-        XCTAssertFalse(watcher.isWatchingActivity)
+        let text = try String(contentsOf: file, encoding: .utf8)
+        XCTAssertTrue(text.hasPrefix("# pulse-events v5 "), text)
     }
 }
 
@@ -1068,29 +1264,22 @@ struct TurnTruthTests {
         _ agent: String, _ kind: String, ago: Int64, message: String = "",
         session: String = "s1", cwd: String = "/p", front: String? = nil
     ) -> String {
-        // v4: all ten columns; front as given (empty = unknown), pid,
-        // transcript and landing empty.
-        let cols = [agent, kind, "\(now - ago)", message, session, cwd, front ?? "", "", "", ""]
+        // v5: all eleven columns; front as given (empty = unknown), pid,
+        // transcript, landing and tool empty.
+        let cols = [agent, kind, "\(now - ago)", message, session, cwd, front ?? "", "", "", "", ""]
         return cols.joined(separator: "\t")
     }
 
-    static func world(
-        _ lines: [String],
-        activity: [ActivitySpool.Event] = []
-    ) -> SnapshotBuilder.Result {
-        let text = AttentionProtocol.header + lines.joined(separator: "\n") + "\n"
+    static func world(_ lines: [String]) -> TrayState {
+        let text = AttentionProtocol.header(generation: "g1") + lines.joined(separator: "\n") + "\n"
         var book = SessionBook()
         for line in text.split(whereSeparator: \.isNewline) {
             if let record = AttentionRecord(line: line) { book.apply(record, nowMs: now) }
         }
-        for event in activity { book.apply(activity: event, nowMs: now) }
-        let rows = SessionProjection.rows(
-            book: book, processes: [], transcripts: [:],
-            context: SessionProjection.Context(
-                nowMs: now
-            )
-        ).rows
-        return SnapshotBuilder.build(rows: rows, previous: .init(), context: SnapshotBuilder.Context(nowMs: now, lang: .en))
+        return TrayState.project(
+            book: book, processes: [], summaries: [:],
+            context: TrayState.Context(nowMs: now, lang: .en)
+        )
     }
 
     static func delivery(_ rows: [AgentRow]) -> WaitingDelivery.Plan {
@@ -1227,11 +1416,10 @@ struct TurnTruthTests {
     @Test func aFinishedTurnWithALiveProcessIsAGreyLamp() throws {
         var book = SessionBook()
         book.apply(AttentionRecord(agent: "claude", kind: "turn", ms: Self.now - 2 * Self.second, session: "s1", cwd: "/p", pid: 42), nowMs: Self.now)
-        let rows = SessionProjection.rows(
-            book: book, processes: [], transcripts: [:],
-            context: SessionProjection.Context(nowMs: Self.now)
-        ).rows
-        let r = SnapshotBuilder.build(rows: rows, previous: .init(), context: SnapshotBuilder.Context(nowMs: Self.now, lang: .en))
+        let r = TrayState.project(
+            book: book, processes: [], summaries: [:],
+            context: TrayState.Context(nowMs: Self.now, lang: .en)
+        )
         let row = try #require(r.rows.first)
         #expect(row.isYourTurn)
         #expect(row.liveProcess)
@@ -1268,11 +1456,10 @@ struct TurnTruthTests {
     // MARK: - Beyond the table
 
     @Test func aToolCallAfterTheTurnEndsYourTurn() throws {
-        let tool = ActivitySpool.Event(
-            agent: "claude", session: "s1", event: "tool", tool: "Edit", target: "a.swift",
-            prompt: "", cwd: "/p", tsMs: Self.now - 5 * Self.second
-        )
-        let r = Self.world([Self.line("claude", "stop", ago: 30 * Self.second)], activity: [tool])
+        let r = Self.world([
+            Self.line("claude", "stop", ago: 30 * Self.second),
+            Self.line("claude", "tool", ago: 5 * Self.second, message: "a.swift"),
+        ])
         let row = try #require(r.rows.first)
         #expect(!row.isYourTurn)
     }
@@ -1282,12 +1469,12 @@ struct TurnTruthTests {
         #expect(r.rows.isEmpty, "with no session there is no row it could belong to")
     }
 
-    @Test func theReceiverWritesTheV4Kinds() throws {
+    @Test func theReceiverWritesTheV5Kinds() throws {
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("pulse-turn-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        // An explicit file, not the global override: suites run in parallel.
-        let attention = home.appendingPathComponent("attention.tsv")
+        // An explicit file, not a global override: suites run in parallel.
+        let attention = home.appendingPathComponent(EventLog.fileName)
         defer { try? FileManager.default.removeItem(at: home) }
         let stop = PulseHookReceiver.interpret(agent: .claude, event: "Stop", payload: [:])
         let failure = PulseHookReceiver.interpret(agent: .claude, event: "StopFailure", payload: [:])
@@ -1301,11 +1488,11 @@ struct TurnTruthTests {
         let t0: Int64 = 1_780_000_000_000
         PulseHookReceiver.run(arguments: ["PulseBar", "--hook", "claude", "Stop"],
                               stdin: #"{"session_id":"s1","cwd":"/p","last_assistant_message":"All tests pass."}"#,
-                              attentionURL: attention, nowMs: t0,
+                              logURL: attention, nowMs: t0,
                               locate: here)
         PulseHookReceiver.run(arguments: ["PulseBar", "--hook", "claude", "UserPromptSubmit"],
                               stdin: #"{"hook_event_name":"UserPromptSubmit","session_id":"s1","cwd":"/p","prompt":"next"}"#,
-                              attentionURL: attention, nowMs: t0 + 1_000,
+                              logURL: attention, nowMs: t0 + 1_000,
                               locate: here)
         let lines = try String(contentsOf: attention, encoding: .utf8)
             .split(separator: "\n").filter { !$0.hasPrefix("#") }
@@ -1326,133 +1513,199 @@ struct TurnTruthTests {
     }
 }
 
-final class ActivitySpoolTests: XCTestCase {
-    private var wallNow: Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
-    private var directory: URL!
+/// 25.0 · the event log: one append-only file, read from an offset.
+@Suite("Event log")
+struct EventLogTests {
+    let t0: Int64 = 1_800_000_000_000
+    static let hour: Int64 = 60 * 60 * 1000
 
-    override func setUpWithError() throws {
-        directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pulse-activity-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        ActivitySpool.directoryOverride = directory
-        // A prompt also writes a `working` line: never into the real file.
-        AttentionIO.pathOverride = directory.appendingPathComponent("attention.tsv")
-    }
-
-    override func tearDownWithError() throws {
-        ActivitySpool.directoryOverride = nil
-        AttentionIO.pathOverride = nil
-        try? FileManager.default.removeItem(at: directory)
-    }
-
-    // MARK: - The receiver's side: what an event becomes on disk
-
-    func testAPreToolUseEventBecomesAStateFileAndNeverAttention() throws {
-        let stdin = #"""
-        {"hook_event_name":"PreToolUse","session_id":"sess-a","tool_name":"Edit",
-         "tool_input":{"file_path":"/repo/src/Main.swift"},"cwd":"/repo"}
-        """#
-        _ = PulseHookReceiver.run(arguments: ["--hook", "claude", "activity"], stdin: stdin)
-        let events = ActivitySpool.readEvents(nowMs: wallNow)
-        let event = try XCTUnwrap(events.first)
-        XCTAssertEqual(events.count, 1)
-        XCTAssertEqual(event.agent, "claude")
-        XCTAssertEqual(event.session, "sess-a")
-        XCTAssertEqual(event.event, "tool")
-        XCTAssertEqual(event.tool, "Edit")
-        XCTAssertEqual(event.target, "/repo/src/Main.swift")
-        let url = directory.appendingPathComponent("claude-sess-a.json")
-        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
-        XCTAssertEqual((attrs[.posixPermissions] as? NSNumber)?.intValue, 0o600)
-    }
-
-    func testTheEventNameAloneDispatchesWithoutAKindArgument() throws {
-        let stdin = #"{"hook_event_name":"UserPromptSubmit","session_id":"sess-b","prompt":"Fix the login bug\nsecond line"}"#
-        _ = PulseHookReceiver.run(arguments: ["--hook", "claude"], stdin: stdin)
-        let event = try XCTUnwrap(ActivitySpool.readEvents(nowMs: wallNow).first)
-        XCTAssertEqual(event.event, "prompt")
-        XCTAssertEqual(event.prompt, "Fix the login bug second line")
-        XCTAssertEqual(event.tool, "")
-    }
-
-    func testLatestEventWinsBecauseActivityIsAStateNotALedger() throws {
-        for (kind, body) in [
-            ("activity", #"{"hook_event_name":"PreToolUse","session_id":"s","tool_name":"Edit","tool_input":{"file_path":"/a"}}"#),
-            ("activity", #"{"hook_event_name":"PreToolUse","session_id":"s","tool_name":"Bash","tool_input":{"command":"swift test"}}"#),
-        ] {
-            _ = PulseHookReceiver.run(arguments: ["--hook", "claude", kind], stdin: body)
+    final class Home {
+        let url: URL
+        init() {
+            url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("pulse-events-\(UUID().uuidString)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         }
-        let events = ActivitySpool.readEvents(nowMs: wallNow)
-        XCTAssertEqual(events.count, 1, "one session, one state file")
-        XCTAssertEqual(events.first?.tool, "Bash")
+        deinit { try? FileManager.default.removeItem(at: url) }
+        var log: URL { url.appendingPathComponent(EventLog.fileName) }
+        var size: Int {
+            ((try? FileManager.default.attributesOfItem(atPath: log.path))?[.size] as? NSNumber)?.intValue ?? 0
+        }
     }
 
-    func testASessionlessEventWritesNothing() {
-        _ = PulseHookReceiver.run(
-            arguments: ["--hook", "claude", "activity"],
-            stdin: #"{"hook_event_name":"PreToolUse","tool_name":"Bash"}"#
-        )
-        XCTAssertTrue(ActivitySpool.readEvents(nowMs: wallNow).isEmpty)
+    private func line(
+        _ kind: String, _ ms: Int64, session: String = "s1", message: String = "",
+        tool: String = "", cwd: String = "/w", agent: String = "claude"
+    ) -> String {
+        AttentionRecord(agent: agent, kind: kind, ms: ms, message: message, session: session, cwd: cwd, tool: tool).line
     }
 
-    func testSecretsNeverReachTheSpool() throws {
-        let stdin = #"{"hook_event_name":"PreToolUse","session_id":"s","tool_name":"Bash","tool_input":{"command":"deploy with Bearer abc123secretvalue"}}"#
-        _ = PulseHookReceiver.run(arguments: ["--hook", "claude", "activity"], stdin: stdin)
-        let event = try XCTUnwrap(ActivitySpool.readEvents(nowMs: wallNow).first)
-        XCTAssertFalse(event.target.contains("abc123secretvalue"), event.target)
-    }
+    // MARK: - The receiver's side
 
-    // MARK: - The reader's side: identity and age
-
-    func testABodyThatDisagreesWithItsFilenameIsRefused() throws {
-        let body: [String: Any] = [
-            "v": 1, "agent": "claude", "session": "other",
-            "event": "tool", "tool": "Edit", "target": "", "prompt": "",
-            "cwd": "", "ts_ms": wallNow,
+    @Test func everyHookEventIsOneLineInOrderAndPrivate() throws {
+        let home = Home()
+        let here: (AgentID, [String: String]) -> (pid: Int32, landing: String) = { _, _ in (4242, "") }
+        let events: [(String, String)] = [
+            ("UserPromptSubmit", #"{"session_id":"sess-a","cwd":"/repo","prompt":"Fix the login bug"}"#),
+            ("PostToolUse", #"{"session_id":"sess-a","cwd":"/repo","tool_name":"Edit","tool_input":{"file_path":"/repo/src/Main.swift"}}"#),
+            ("PostToolUse", #"{"session_id":"sess-a","cwd":"/repo","tool_name":"Bash","tool_input":{"command":"swift test"}}"#),
+            ("PostToolUse", #"{"tool_name":"Bash"}"#),
+            ("PostToolUse", #"{"session_id":"sess-a","tool_name":"Bash","tool_input":{"command":"deploy with Bearer abc123secretvalue"}}"#),
         ]
-        try JSONSerialization.data(withJSONObject: body)
-            .write(to: directory.appendingPathComponent("claude-sess-x.json"))
-        XCTAssertTrue(ActivitySpool.readEvents(nowMs: wallNow).isEmpty,
-                      "the filename decides who this is; a disagreeing body is somebody being clever")
-    }
-
-    func testAnAncientEventIsNotServedAndAFutureStampIsClamped() throws {
-        _ = ActivitySpool.write(ActivitySpool.Event(
-            agent: "claude", session: "old", event: "tool",
-            tool: "Edit", target: "", prompt: "", cwd: "",
-            tsMs: wallNow - ActivitySpool.maxAgeMs - 60_000
-        ))
-        XCTAssertTrue(ActivitySpool.readEvents(nowMs: wallNow).isEmpty)
-
-        _ = ActivitySpool.write(ActivitySpool.Event(
-            agent: "claude", session: "future", event: "tool",
-            tool: "Edit", target: "", prompt: "", cwd: "",
-            tsMs: wallNow + 10 * 60 * 1000
-        ))
-        let event = try XCTUnwrap(ActivitySpool.readEvents(nowMs: wallNow).first)
-        XCTAssertLessThanOrEqual(event.tsMs, wallNow,
-                                 "the writer is this machine — a future stamp is a broken clock")
-    }
-}
-
-/// 0.96 Return Truth — Glance width and Attention compact. (23.0: the rekey
-/// and story-honesty tests went with the remap and `RowNarrator`.)
-final class AttentionCompactTests: XCTestCase {
-    // MARK: P1 identity / compact
-
-    @MainActor
-    func testAttentionCompactKeepsUnresolvedRaise() {
-        var lines: [String] = []
-        for index in 0..<90 {
-            lines.append("copilot\tdone\t\(1_700_000_000_000 + index)\tok\tsess-\(index)\t/tmp\t\t\t\t")
+        for (offset, event) in events.enumerated() {
+            PulseHookReceiver.run(arguments: ["PulseBar", "--hook", "claude", event.0], stdin: event.1,
+                                  logURL: home.log, nowMs: t0 + Int64(offset), locate: here)
         }
-        lines.insert("copilot\tpermission\t1\tapprove\tkeep-me\t/tmp\t\t\t\t", at: 0)
-        let compacted = AttentionIO.compactLines(lines, cap: 80)
-        XCTAssertEqual(compacted.count, 80)
-        XCTAssertTrue(
-            compacted.contains(where: { $0.contains("keep-me") }),
-            "unresolved permission must survive the 80-line cap"
-        )
+        let chunk = try #require(EventLog.read(at: home.log, after: nil))
+        #expect(chunk.header.hasPrefix("# pulse-events v5 "))
+        let records = chunk.lines.compactMap { AttentionRecord(line: $0) }
+        let kinds = records.map { $0.kind }
+        let tools = records.map { $0.tool }
+        let stamps = records.map { $0.ms }
+        #expect(kinds == ["working", "tool", "tool", "tool"], "a session-less tool writes nothing")
+        #expect(tools == ["", "Edit", "Bash", "Bash"])
+        #expect(stamps == [t0, t0 + 1, t0 + 2, t0 + 4])
+        let target = records[1].message
+        #expect(target == "/repo/src/Main.swift")
+        let secret = records[3].message
+        #expect(!secret.contains("abc123secretvalue"), "\(secret)")
+        let attrs = try FileManager.default.attributesOfItem(atPath: home.log.path)
+        let mode = (attrs[.posixPermissions] as? NSNumber)?.intValue
+        #expect(mode == 0o600)
+    }
+
+    // MARK: - Reading from an offset
+
+    @Test func aReaderGetsOnlyWhatIsNewAndNeverAHalfLine() throws {
+        let home = Home()
+        EventLog.append(line("working", t0), at: home.log, nowMs: t0)
+        let first = try #require(EventLog.read(at: home.log, after: nil))
+        #expect(first.fresh)
+        #expect(first.lines.count == 1)
+        // Nothing new.
+        let none = try #require(EventLog.read(at: home.log, after: first.cursor))
+        #expect(!none.fresh)
+        #expect(none.lines.isEmpty)
+        // A writer mid-line: the partial line waits for the next read.
+        var bytes = try Data(contentsOf: home.log)
+        bytes.append(Data("claude\tturn\t\(t0 + 1)".utf8))
+        try bytes.write(to: home.log)
+        let partial = try #require(EventLog.read(at: home.log, after: first.cursor))
+        #expect(partial.lines.isEmpty)
+        #expect(partial.end == first.end)
+        // The next append starts on its own line.
+        EventLog.append(line("tool", t0 + 2, tool: "Read"), at: home.log, nowMs: t0 + 2)
+        let next = try #require(EventLog.read(at: home.log, after: first.cursor))
+        let kinds = next.lines.compactMap { AttentionRecord(line: $0)?.kind }
+        #expect(kinds == ["tool"], "the torn line is dropped, the new one is whole")
+    }
+
+    /// Fix 4: a missing file is a failed read (nil — the caller keeps its
+    /// state), not an empty world.
+    @Test func aMissingFileIsAFailedReadNotAnEmptyOne() {
+        let home = Home()
+        let fresh = EventLog.read(at: home.log, after: nil)
+        let later = EventLog.read(at: home.log, after: EventLog.Cursor(header: "# x", offset: 10))
+        #expect(fresh == nil)
+        #expect(later == nil)
+    }
+
+    @Test func aCursorFromAnotherGenerationReadsTheWholeFileAgain() throws {
+        let home = Home()
+        EventLog.append(line("working", t0), at: home.log, nowMs: t0)
+        let first = try #require(EventLog.read(at: home.log, after: nil))
+        let stale = EventLog.Cursor(header: "# pulse-events v5 gOLD", offset: first.end)
+        let again = try #require(EventLog.read(at: home.log, after: stale))
+        #expect(again.fresh)
+        #expect(again.lines == first.lines)
+        let past = EventLog.Cursor(header: first.header, offset: first.end + 10_000)
+        let shorter = try #require(EventLog.read(at: home.log, after: past))
+        #expect(shorter.fresh, "a file shorter than the cursor was rewritten")
+    }
+
+    /// One invalid byte (a hook cut off mid-character) never erases what
+    /// is there: appends never rewrite, and reads are lossy.
+    @Test func anInvalidByteDoesNotEraseOpenWaits() throws {
+        let home = Home()
+        var bytes = Data(AttentionProtocol.header(generation: "g1").utf8)
+        bytes.append(Data((line("permission", t0, message: "Bash: npm test") + "\n").utf8))
+        bytes.append(Data([0x63, 0x6f, 0xff, 0x0a]))
+        try bytes.write(to: home.log)
+        EventLog.append(line("done", t0, session: "s2", agent: "codex"), at: home.log, nowMs: t0)
+        let text = String(decoding: try Data(contentsOf: home.log), as: UTF8.self)
+        #expect(text.contains("claude\tpermission"))
+        #expect(text.contains("codex\tdone"))
+    }
+
+    // MARK: - Compaction
+
+    /// An append past the bound compacts: a new generation, the newest line
+    /// kept, and an open block kept however old.
+    @Test func anAppendPastTheBoundCompactsIntoANewGeneration() throws {
+        let home = Home()
+        let old = t0 - 5 * Self.hour
+        EventLog.append(line("permission", old, session: "keep-me", message: "Bash: make", tool: "Bash"), at: home.log, nowMs: old)
+        let before = try #require(EventLog.read(at: home.log, after: nil))
+        var ms = old + 1
+        let pad = String(repeating: "x", count: 180)
+        while home.size < EventLog.maxBytes - 400 {
+            EventLog.append(line("tool", ms, session: "busy", message: pad, tool: "Read"), at: home.log, nowMs: ms)
+            ms += 1
+        }
+        EventLog.append(line("tool", t0, session: "busy", message: pad, tool: "Read"), at: home.log, nowMs: t0)
+        EventLog.append(line("tool", t0 + 1, session: "busy", message: pad, tool: "Read"), at: home.log, nowMs: t0 + 1)
+        let after = try #require(EventLog.read(at: home.log, after: before.cursor))
+        #expect(after.fresh, "a new generation: the old cursor reads the whole file")
+        #expect(after.header != before.header)
+        #expect(home.size < EventLog.maxBytes)
+        let records = after.lines.compactMap { AttentionRecord(line: $0) }
+        let kept = records.contains { $0.session == "keep-me" && $0.kind == "permission" }
+        #expect(kept, "an open block is never dropped")
+        let newest = records.last?.ms
+        #expect(newest == t0 + 1, "the newest line is kept")
+    }
+
+    /// Compaction keeps a block together with what answers it, groups a
+    /// session-less line by agent and folder (fix 15), and forgets a
+    /// day-old session.
+    @Test func compactionKeepsPerSessionHistory() {
+        let now = t0
+        let base = now - 3 * Self.hour
+        var lines: [String] = []
+        // An answered block, then a long tail in the same session.
+        lines.append(line("permission", base, session: "a", message: "Bash: ls", tool: "Bash"))
+        lines.append(line("tool", base + 1_000, session: "a", tool: "Bash"))
+        for index in 0..<200 { lines.append(line("tool", base + 2_000 + Int64(index), session: "a", tool: "Read")) }
+        // An open block with parallel tools after it that do not answer it.
+        lines.append(line("permission", base + 10_000, session: "b", message: "Bash: make", tool: "Bash"))
+        for index in 0..<100 { lines.append(line("tool", base + 11_000 + Int64(index), session: "b", tool: "Read")) }
+        // Two session-less folders of one agent.
+        lines.append(line("permission", base + 20_000, session: "", message: "Allow?", cwd: "/one", agent: "gemini"))
+        for index in 0..<100 { lines.append(line("start", base + 21_000 + Int64(index), session: "", cwd: "/two", agent: "gemini")) }
+        // A session nobody has heard from for two days.
+        lines.append(line("turn", now - 2 * EventLog.retentionMs, session: "gone"))
+
+        let records = EventLog.compact(lines, nowMs: now, budget: 1 << 30).compactMap { AttentionRecord(line: $0) }
+        let a = records.filter { $0.session == "a" }
+        #expect(a.count == EventLog.linesPerSession, "a session keeps its last lines once nothing in it is open")
+        #expect(!a.contains { $0.kind == "permission" })
+        let b = records.filter { $0.session == "b" }
+        #expect(b.first?.kind == "permission", "an open block is kept, with every line after it")
+        #expect(b.count == 101)
+        let folder = records.contains { $0.agent == "gemini" && $0.cwd == "/one" }
+        #expect(folder, "a session-less wait is not pushed out by another folder's lines")
+        let gone = records.contains { $0.session == "gone" }
+        #expect(!gone)
+
+        // A tight budget still keeps the open blocks.
+        let tight = EventLog.compact(lines, nowMs: now, budget: 1_000).compactMap { AttentionRecord(line: $0) }
+        let openB = tight.contains { $0.session == "b" && $0.kind == "permission" }
+        let openOne = tight.contains { $0.cwd == "/one" && $0.kind == "permission" }
+        #expect(openB)
+        #expect(openOne)
+        // Recent lines all stay.
+        let recent = (0..<300).map { line("tool", now - 1_000 + Int64($0), session: "hot", tool: "Read") }
+        #expect(EventLog.compact(recent, nowMs: now, budget: 1 << 30).count == 300)
     }
 }
 
@@ -1491,8 +1744,8 @@ struct AttentionFixTests {
     @Test func theStopGraceDoesNotDependOnWhenTheFileIsRead() {
         let raise = now - 10 * Self.minute
         let text = [
-            ["claude", "permission", "\(raise)", "Bash: npm test", "s1", "/p", "", "", "", ""],
-            ["claude", "stop", "\(raise + 1_000)", "", "s1", "", "", "", "", ""],
+            ["claude", "permission", "\(raise)", "Bash: npm test", "s1", "/p", "", "", "", "", ""],
+            ["claude", "stop", "\(raise + 1_000)", "", "s1", "", "", "", "", "", ""],
         ].map { $0.joined(separator: "\t") }.joined(separator: "\n") + "\n"
         func read(at nowMs: Int64) -> String {
             var book = SessionBook()
@@ -1503,26 +1756,6 @@ struct AttentionFixTests {
         }
         #expect(read(at: raise + 2_000) == "blocked:permission")
         #expect(read(at: now) == read(at: raise + 2_000), "re-reading ten minutes later flipped the verdict")
-    }
-
-    // MARK: - 17 · one bad byte never erases the attention file
-
-    @Test func anInvalidByteDoesNotEraseOpenWaits() throws {
-        let home = Home()
-        let file = home.url.appendingPathComponent("attention.tsv")
-        try FileManager.default.createDirectory(at: home.url, withIntermediateDirectories: true)
-        var bytes = Data(AttentionIO.header.utf8)
-        bytes.append(Data("claude\tpermission\t\(now)\tBash: npm test\ts1\t/p\t\t\t\t\n".utf8))
-        bytes.append(Data([0x63, 0x6f, 0xff, 0x0a]))
-        try bytes.write(to: file)
-        AttentionIO.pathOverride = file
-        defer { AttentionIO.pathOverride = nil }
-
-        AttentionIO.appendRawLine("codex\tdone\t\(now)\t\ts2\t\t\t\t\t")
-        let written = try Data(contentsOf: file)
-        let text = String(decoding: written, as: UTF8.self)
-        #expect(text.contains("claude\tpermission"), "the rewrite used to start from an empty decode")
-        #expect(text.contains("codex\tdone"))
     }
 }
 

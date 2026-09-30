@@ -7,7 +7,7 @@ a DMG that crashed on launch, while every test passed and every gate was green.
 
 What went wrong: SwiftPM builds a *flat* resource bundle — Info.plist and the
 resource directories at the root, no Contents/. package.sh then created
-`PulseBar_PulseBar.bundle/Contents/Resources/` and copied a second set of
+the resource bundle's `Contents/Resources/` and copied a second set of
 resources in. CFBundle treats any directory containing Contents/ as a modern
 bundle, so it stopped reading the root and looked for Contents/Info.plist,
 which was never written. Bundle(url:) returns nil for a directory it cannot
@@ -24,7 +24,13 @@ import plistlib
 import sys
 from pathlib import Path
 
-BUNDLE_NAME = "PulseBar_PulseBar.bundle"
+BUNDLE_NAME = "PulseBar_PulseApp.bundle"
+
+# The QA driver (`PulseQA`) is a separate executable and never ships. These
+# strings exist only in its code — the flags that swap this Mac's sessions for
+# a fixture or photograph a surface — so finding one in the app's binary means
+# QA code was linked into the product.
+QA_ONLY_MARKERS = [b"--capture-surfaces=", b"--tray-fixture=", b"--capture-tray-panel="]
 
 # Resources the app asks Bundle.module for by name. Paths are relative to the
 # resource bundle root, which is where a flat SwiftPM bundle keeps them.
@@ -61,8 +67,20 @@ def main(argv: list[str]) -> int:
     contents = app / "Contents"
     resources = contents / "Resources"
 
-    if not (contents / "MacOS" / "PulseBar").is_file():
+    binary = contents / "MacOS" / "PulseBar"
+    if not binary.is_file():
         problems.append("Contents/MacOS/PulseBar is missing")
+    else:
+        data = binary.read_bytes()
+        for marker in QA_ONLY_MARKERS:
+            if marker in data:
+                problems.append(
+                    f"Contents/MacOS/PulseBar contains {marker.decode()!r} — QA code "
+                    "(PulseQA) was linked into the shipping app"
+                )
+    extra = sorted(p.name for p in (contents / "MacOS").glob("*") if p.name != "PulseBar")
+    if extra:
+        problems.append(f"Contents/MacOS/ carries more than the app: {', '.join(extra)}")
 
     app_plist = contents / "Info.plist"
     version = None

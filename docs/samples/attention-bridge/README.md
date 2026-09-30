@@ -1,7 +1,7 @@
 # Attention bridge samples
 
-Two minimal scripts that write Attention Protocol v4 (all ten columns) for
-one of Pulse's seven agents — see
+Two minimal scripts that append Attention Protocol v5 lines (all eleven
+columns) to the event log, `events.tsv`, for one of Pulse's seven agents — see
 [`docs/attention-protocol.md`](../../attention-protocol.md) and
 [`docs/attention-bridge.md`](../../attention-bridge.md). The installed hooks
 do this for real; these are for trying the tray by hand.
@@ -18,6 +18,8 @@ do this for real; these are for trying the tray by hand.
 ```
 
 `raise.sh` **prefers** `~/Library/Application Support/Pulse/pulse-hook`
-(native) and only falls back to a direct TSV append when the launcher is
-missing. Codex and Cursor never report a wait: a blocked kind for them is
+(native) and only falls back to a direct append when the launcher is
+missing. `clear.sh` appends directly. A direct append must write one whole
+line; a file that does not exist yet gets its header (with a generation)
+first. Codex and Cursor never report a wait: a blocked kind for them is
 refused, by `pulse-hook` and by the script.

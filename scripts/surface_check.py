@@ -1,54 +1,50 @@
 #!/usr/bin/env python3
-"""15.0 Witness: surfaces render values, not the store.
-
-17.0 added the tray row's face and the Observation rules below. 22.0
-removed the Workbench's Mission board and working-copy card with the
-orchestrator. 23.0 replaced the cards under a row and the Why card with one
-detail page (`DetailModel`) and one explanation (`Explain`), and gave the
-tray header, the notice, Settings and Diagnostics a value each.
+"""Surfaces render values, not the store — and QA code stays out of the app.
 
 A view that reaches into StatusStore can only be seen by running the whole
-app against real sessions, which is how 13.0 and 14.0 shipped surfaces
-nobody had looked at. The rendering views listed here take a value
-(`TrayRowModel`, `DetailModel`) and send intents; the models they render
-are pure. This gate fails if either grows a store reference back, and if a
-surface fixture is missing from the capture list.
+app against real sessions. The rendering views listed here take a value
+(`TrayRowModel`, `DetailModel`, `SettingsModel`…) and send intents; the
+models they render are pure. This gate fails if either grows a store
+reference back, if a surface fixture is missing from the capture list, if
+a QA file (fixtures, captures, the preview window) moves back into the app
+library — the shipping app links `PulseApp`, the QA driver is `PulseQA` — or
+if a row's why (`L10n` `explain*`, either language) says "hook": the tray
+speaks plain words ("Claude asked for permission · 4m ago").
 """
 import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-APP = ROOT / "PulseBar/Sources/PulseBar"
+APP = ROOT / "PulseBar/Sources/PulseApp"
+QA = ROOT / "PulseBar/Sources/PulseQA"
+# The QA driver's files. None of them may live in the app library.
+QA_FILES = [
+    "SurfaceFixtures.swift", "SurfaceCapture.swift", "StatusStoreFixture.swift",
+    "TrayPreviewWindowController.swift", "QADriver.swift",
+]
 
 # (file, struct) pairs that must never see the store.
 VIEWS = [
-    # 17.0: the tray row's face. 23.0: the header, the notice, the filter.
+    # The tray: a row, the header, the notice.
     ("TrayPanelViews.swift", "TrayRowFace"),
     ("TrayPanelViews.swift", "TrayHeaderFace"),
     ("TrayPanelViews.swift", "TrayNoticeFace"),
-    ("TrayPanelViews.swift", "TrayFilterField"),
-    # 23.0: one session in full and its facts (24.0 dropped the plan).
+    # One session in full, its facts, the lamp's shape.
     ("SessionDetailView.swift", "SessionDetailFace"),
     ("SessionDetailView.swift", "FactGrid"),
-    # 22.0: the session's last hour.
-    ("SessionDetailView.swift", "TimelineStripView"),
     ("SessionDetailView.swift", "LampShapeView"),
-    # 23.0: Settings and Diagnostics render values too.
+    # Settings (its Hooks section is the diagnostics).
     ("SettingsViews.swift", "SettingsFace"),
-    ("DiagnosticsViews.swift", "DiagnosticsFace"),
-    ("DiagnosticsViews.swift", "DiagnosticsAgentRow"),
-    ("DiagnosticsViews.swift", "ActivityLogView"),
-    # 19.0: the self-check.
-    ("DoctorViews.swift", "DoctorReportView"),
 ]
+# Pure models: no store, no UI framework. Paths are relative to APP, except
+# the fixtures, which live in the QA driver.
 PURE_FILES = [
-    "SurfaceFixtures.swift", "TrayRowModel.swift", "DetailModel.swift", "Explain.swift",
-    "LampExplanation.swift", "DoctorModel.swift",
-    # 23.0
-    "LampFace.swift", "TrayModels.swift", "TrayKeys.swift", "SettingsModel.swift",
-    "DiagnosticsModel.swift",
+    "TrayRowModel.swift", "DetailModel.swift", "Explain.swift", "LampFace.swift",
+    "TrayModels.swift", "TrayKeys.swift", "SettingsModel.swift", "TrayState.swift",
+    "WaitLedger.swift", "WaitingDelivery.swift",
 ]
+QA_PURE_FILES = ["SurfaceFixtures.swift"]
 STORE = re.compile(r"\b(StatusStore|store|AppServices)\b")
 # 19.0: the store is @Observable. A Combine-era wrapper coming back would
 # silently restore whole-store invalidation for whatever view used it.
@@ -88,19 +84,32 @@ def main() -> int:
             errors.append(f"{file}: struct {name} not found")
         elif STORE.search(code_only(body)):
             errors.append(f"{file}: {name} references the store — render a value and send intents")
-    for file in PURE_FILES:
-        source = code_only((APP / file).read_text())
+    for path in [APP / f for f in PURE_FILES] + [QA / f for f in QA_PURE_FILES]:
+        file = path.name
+        source = code_only(path.read_text())
         if STORE.search(source):
             errors.append(f"{file}: surface models must not reach the store")
         if re.search(r"^\s*import\s+(SwiftUI|AppKit)\b", source, re.M):
             errors.append(f"{file}: surface models must not import a UI framework")
-    for path in sorted(APP.glob("*.swift")):
+    for path in sorted(list(APP.glob("*.swift")) + list(QA.glob("*.swift"))):
         if COMBINE_ERA.search(code_only(path.read_text())):
-            errors.append(f"{path.name}: Combine-era observation — the store is @Observable (19.0)")
+            errors.append(f"{path.name}: Combine-era observation — the store is @Observable")
     for file, pattern in SCAN_FACT_FREE:
         if pattern.search(code_only((APP / file).read_text())):
             errors.append(f"{file}: reads a per-scan fact — every scan would redraw it")
-    fixtures = (APP / "SurfaceFixtures.swift").read_text()
+    for file in QA_FILES:
+        if (APP / file).exists():
+            errors.append(f"{file}: QA code is in the app library — it belongs to PulseQA")
+        if not (QA / file).exists():
+            errors.append(f"{file}: missing from PulseQA")
+    copy = (APP / "L10n.swift").read_text()
+    whys = re.findall(r'case \.(explain\w+):\s*return "((?:[^"\\]|\\.)*)"', copy)
+    if not whys:
+        errors.append("L10n.swift: no explain* strings found")
+    for key, value in whys:
+        if "hook" in value.lower():
+            errors.append(f"L10n.swift: .{key} says \"hook\" — a why is said in plain words")
+    fixtures = (QA / "SurfaceFixtures.swift").read_text()
     names = re.search(r"static let names = \[(.*?)\]", fixtures, re.S)
     listed = re.findall(r'"([a-z0-9-]+)"', names.group(1)) if names else []
     built = re.findall(r'Fixture\(name: "([a-z0-9-]+)"', fixtures)

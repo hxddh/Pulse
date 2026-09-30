@@ -154,7 +154,9 @@ package enum AgentProcesses {
     /// executable, and for an interpreter its script — and only at a path
     /// component boundary: `/opt/homebrew/bin/pinentry-mac` is not Pi, a
     /// `claude-*` helper is not Claude, and a file argument under a folder
-    /// named `opencode` is not OpenCode. The deny list reads the whole line.
+    /// named `opencode` is not OpenCode. The deny list reads the programs
+    /// too (`pi ./pipeline.ts` is Pi, not pip); only `argvDenyNeedles`
+    /// read the whole line.
     package static func match(args: String) -> AgentID? {
         let tokens = args.split(whereSeparator: \.isWhitespace).map(String.init)
         guard let exe = tokens.first else { return nil }
@@ -164,7 +166,8 @@ package enum AgentProcesses {
             programs.append(script)
         }
         for (id, rule) in rules {
-            if rule.denyNeedles.contains(where: { args.contains($0) }) { continue }
+            if rule.denyNeedles.contains(where: { needle in programs.contains { $0.contains(needle) } }) { continue }
+            if rule.argvDenyNeedles.contains(where: { args.contains($0) }) { continue }
             if rule.pathNeedles.contains(where: { needle in programs.contains { containsComponent($0, needle) } }) {
                 return id
             }
@@ -278,6 +281,52 @@ package enum AgentProcesses {
         return value.isEmpty || value == "??" ? "" : value
     }
 
+    // MARK: - Reused pids
+
+    /// What a live pid is now: its command line and when it started.
+    package struct Identity: Equatable, Sendable {
+        package var args: String
+        package var startedMs: Int64
+
+        package init(args: String, startedMs: Int64) {
+            self.args = args
+            self.startedMs = startedMs
+        }
+    }
+
+    /// A process that started this long after the event that named its pid
+    /// is still that process: the kernel's start time and the hook's clock
+    /// are read at different moments.
+    package static let startSlackMs: Int64 = 2_000
+
+    /// Whether a session's recorded pid is still the process that ran its
+    /// hook. Pure. False when the pid now runs a *different* agent, or a
+    /// process that started after the first event that named it (`since`) —
+    /// the pid was reused. An unknown identity (it could not be read) is
+    /// given the benefit of the doubt; so is a program no rule knows (the
+    /// hook records its direct parent when no ancestor is the agent).
+    package static func stillRuns(agent: AgentID, since: Int64, identity: Identity?) -> Bool {
+        guard let identity else { return true }
+        if since > 0, identity.startedMs > 0, identity.startedMs > since + startSlackMs { return false }
+        if let other = match(args: identity.args), other != agent { return false }
+        return true
+    }
+
+    /// The command line and start time of `pid`; nil when either cannot be
+    /// read (another user's process, one that just exited). `buffer` is
+    /// the `KERN_PROCARGS2` buffer (`argumentsMax()`), reused across calls;
+    /// an empty one is sized here.
+    package static func identity(of pid: Int32, buffer: inout [UInt8]) -> Identity? {
+        guard pid > 1 else { return nil }
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        if buffer.isEmpty { buffer = [UInt8](repeating: 0, count: argumentsMax()) }
+        let args = commandLine(path: executablePath(of: pid), argv: argv(of: pid, buffer: &buffer) ?? [])
+        let started = Int64(info.pbi_start_tvsec) * 1000 + Int64(info.pbi_start_tvusec) / 1000
+        return Identity(args: args, startedMs: started)
+    }
+
     /// Liveness only — no signal is sent.
     package static func isAlive(_ pid: Int32) -> Bool {
         guard pid > 1 else { return false }
@@ -312,11 +361,6 @@ package enum AgentProcesses {
         }
         guard ok, size > 0 else { return nil }
         return parseProcArgv(Array(buffer.prefix(size)))
-    }
-
-    /// The argv joined by spaces (`parseProcArgv`).
-    package static func parseProcArgs(_ bytes: [UInt8]) -> String? {
-        parseProcArgv(bytes).map { $0.joined(separator: " ") }
     }
 
     /// `KERN_PROCARGS2` bytes: argc (a 32-bit little-endian int), the exec

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Generic Attention Protocol v4 raise for one of Pulse's seven agents.
-# Prefers native pulse-hook (no Python); falls back to direct TSV append.
+# Generic Attention Protocol v5 raise for one of Pulse's seven agents.
+# Prefers native pulse-hook (no Python); falls back to a direct append to
+# the event log (events.tsv).
 # See docs/attention-protocol.md and docs/attention-bridge.md
 #
 # Codex and Cursor never report a wait (their hooks cannot say so honestly):
@@ -26,13 +27,12 @@ if [ -x "$HOOK" ]; then
   exit 0
 fi
 ms=$(($(date +%s) * 1000))
-header='# pulse-attention v4 (agent\tkind\tms\tmessage\tsession\tcwd\tfront\tpid\ttranscript\tlanding)'
-tsv="$PULSE/attention.tsv"
-if [ ! -f "$tsv" ] || ! grep -q 'pulse-attention v4' "$tsv" 2>/dev/null; then
-  printf '%s\n' "$header" > "$tsv.tmp"
-  mv "$tsv.tmp" "$tsv"
+log="$PULSE/events.tsv"
+if [ ! -s "$log" ]; then
+  printf '# pulse-events v5 g%s-%s (agent\tkind\tms\tmessage\tsession\tcwd\tfront\tpid\ttranscript\tlanding\ttool)\n' "$ms" "$$" >> "$log"
 fi
-# agent kind ms message session cwd front pid transcript landing
-printf '%s\t%s\t%s\t%s\t%s\t%s\t\t%s\t\t%s\n' \
-  "$agent" "$kind" "$ms" "$message" "$session" "${PWD}" "$PPID" "${TMUX_PANE:+tmux:$TMUX_PANE}" >> "$tsv"
-echo "Wrote $agent $kind → $tsv (session=$session)"
+# agent kind ms message session cwd front pid transcript landing tool — one
+# whole line, appended (the log is append-only).
+printf '%s\t%s\t%s\t%s\t%s\t%s\t\t%s\t\t%s\t\n' \
+  "$agent" "$kind" "$ms" "$message" "$session" "${PWD}" "$PPID" "${TMUX_PANE:+tmux:$TMUX_PANE}" >> "$log"
+echo "Wrote $agent $kind → $log (session=$session)"

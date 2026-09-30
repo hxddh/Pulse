@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import PulseBar
+@testable import PulseApp
 @testable import PulseCore
 @testable import PulseHarvest
 

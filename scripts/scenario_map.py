@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Scenario → test map for docs/scenarios.md (12.4).
+"""Scenario → test map for docs/scenarios.md.
 
 The acceptance scenarios used to live as a table inside EXPERIENCE.md. This
 keeps the map honest: every test suite named in the "证明" column must be a
-declared test type (23.0 regrouped the tests by component, so a suite is a
+declared test type (the tests are grouped by component, so a suite is a
 type, not a file), every method named in parentheses after it must exist in
 that type, every scenario ID is unique, and EXPERIENCE.md no longer carries
 the table.
@@ -21,9 +21,8 @@ SCENARIOS = ROOT / "docs" / "scenarios.md"
 TESTS = ROOT / "PulseBar" / "Tests" / "PulseBarTests"
 EXPERIENCE = ROOT / "EXPERIENCE.md"
 # A floor, so a row cannot vanish unnoticed; it follows the spec down when a
-# release removes scenarios with the features they specified (22.0, 23.0,
-# 24.0: the harvest scenarios went with the harvest).
-MIN_SCENARIOS = 55
+# release removes scenarios with the features they specified.
+MIN_SCENARIOS = 65
 
 
 def test_types() -> dict[str, set[str]]:

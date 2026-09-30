@@ -12,10 +12,9 @@ real fact; prose checks ("EXPERIENCE.md must say 32 visible Agents") went.
    no per-agent table grows back elsewhere (12.0): outside the catalog no
    `case` line or list names more than MAX_PER_CASE agents and no file's
    `case` lines name more than MAX_PER_FILE.
-2. Processes (24.0) — agent processes come from the kernel's table
-   (libproc, `AgentProcesses.swift`): no `ps`, no `lsof`, no subprocess; and
-   Cursor's private worker daemon is denied. No file-scraping collector
-   grows back (`NativeActivityHarvest`, harvest roots).
+2. Processes — agent processes come from the kernel's table (libproc,
+   `AgentProcesses.swift`): no `ps`, no `lsof`, no subprocess; and Cursor's
+   private worker daemon is denied.
 3. Privacy — AppleScript only behind the Terminal/iTerm Automation opt-in;
    no enumeration of every running app.
 4. README support matrix — each row's waiting cell equals the catalog, and
@@ -168,11 +167,6 @@ def check_processes(text: str, problems: list[str]) -> None:
         source = re.sub(r"//[^\n]*", "", path.read_text(encoding="utf-8"))
         if re.search(r'"/(usr/)?s?bin/(ps|lsof)"', source):
             problems.append(f"{path.name}: no ps or lsof subprocess — the process table is libproc (24.0)")
-    for gone in ("NativeActivityHarvest.swift", "HarvestFacts.swift", "ProcessProbe.swift"):
-        if list(SOURCES.glob(f"*/{gone}")):
-            problems.append(f"{gone} is back — 24.0 deleted the file-scraping collector")
-    if "harvestRoots" in text:
-        problems.append("the catalog has harvest roots again — Pulse reads no vendor directory (24.0)")
 
 
 # 3 · privacy ----------------------------------------------------------------

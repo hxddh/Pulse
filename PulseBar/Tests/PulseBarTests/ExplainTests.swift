@@ -1,7 +1,8 @@
 import Foundation
 import Testing
 import XCTest
-@testable import PulseBar
+@testable import PulseApp
+@testable import PulseQA
 @testable import PulseCore
 @testable import PulseHarvest
 
@@ -24,7 +25,7 @@ struct ExplainTests {
         row.source = .hooks
         row.liveProcess = true
         row.state = .running
-        row.eventMs = now - minute
+        row.lastEventMs = now - minute
         return row
     }
 
@@ -45,12 +46,28 @@ struct ExplainTests {
         #expect(text.contains("Claude"))
         #expect(text.contains(L10n.t(.explainKindPermission, .en)))
         #expect(text.contains(Explain.ago(now - 4 * minute, nowMs: now, lang: .en)))
-        #expect(!text.hasSuffix(L10n.t(.explainHookFront, .en)))
+        #expect(!text.hasSuffix(L10n.t(.explainAskedFront, .en)))
     }
 
     @Test func aWaitRaisedInFrontSaysWhyThereWasNoBanner() {
         let text = why(blocked(inFront: true))
-        #expect(text.hasSuffix(L10n.t(.explainHookFront, .en)))
+        #expect(text.hasSuffix(L10n.t(.explainAskedFront, .en)))
+    }
+
+    /// The why is plain words — who asked what, and when.
+    @Test func aWaitIsSaidInPlainWords() {
+        #expect(why(blocked()) == "Claude asked for permission · 4m ago")
+        #expect(why(blocked(), .zh) == "Claude 请求权限 · 4 分钟前")
+        var process = AgentRow(rowKey: RowIdentity.process(agent: .cursor, pid: 7), agent: .cursor)
+        process.state = .processOnly
+        #expect(why(process) == "Started before Pulse — details after its next step")
+        #expect(why(process, .zh) == "在 Pulse 之前启动——下一步之后显示详情")
+        for lang in [ResolvedLanguage.en, .zh] {
+            for key in L10n.Key.allCases where "\(key)".hasPrefix("explain") {
+                let text = L10n.t(key, lang).lowercased()
+                #expect(!text.contains("hook"), "\(key): \(text)")
+            }
+        }
     }
 
     @Test func aQuestionSaysInput() {
@@ -79,25 +96,25 @@ struct ExplainTests {
     /// silence and nothing the person could not have set.
     @Test func aStalledRowNamesTheSilence() {
         var row = session()
-        row.eventMs = now - 23 * minute
+        row.lastEventMs = now - 23 * minute
         row.isStalled = true
-        let quiet = DurationFormat.label(seconds: 23 * 60, lang: .en)
+        let quiet = DurationFormat.label(seconds: 23 * 60, lang: .en, spoken: true)
         let expected = String(format: L10n.t(.explainStalled, .en), quiet)
         #expect(why(row) == expected)
     }
 
     @Test func aStalledRowWithNoClockSaysSoRatherThanGuess() {
         var row = session()
-        row.eventMs = 0
+        row.lastEventMs = 0
         row.isStalled = true
         #expect(why(row) == L10n.t(.explainStalledUnknown, .en))
     }
 
-    @Test func aRunningRowSaysItsHookReportedWork() {
+    @Test func aRunningRowSaysItIsWorking() {
         let text = why(session())
-        #expect(text.hasPrefix("Claude's hook"), "\(text)")
+        #expect(text.hasPrefix("Claude is working"), "\(text)")
         var noClock = session()
-        noClock.eventMs = 0
+        noClock.lastEventMs = 0
         #expect(why(noClock) == L10n.t(.explainRunningNoClock, .en))
     }
 
@@ -121,7 +138,7 @@ struct ExplainTests {
         row.recentReason = .atPrompt
         #expect(why(row).hasPrefix("At its prompt"))
         row.recentReason = .quiet
-        #expect(why(row).contains("no process Pulse can see"))
+        #expect(why(row).contains("no process to watch"))
     }
 
     @Test func theSameRowAndInstantAlwaysSayTheSameThing() {
@@ -153,7 +170,7 @@ struct ExplainTests {
         var row = session(task: "")
         row.lastWord = "All tests pass."
         #expect(Explain.make(row, lang: .en, nowMs: now).headline == "All tests pass.")
-        row.eventMs = now - 45 * minute
+        row.lastEventMs = now - 45 * minute
         #expect(Explain.make(row, lang: .en, nowMs: now).headline == "pulse", "stale words fall back to the project")
     }
 
@@ -196,9 +213,9 @@ struct ExplainTests {
         let waiting = blocked()
         var other = session(.codex)
         other.rowKey = "codex|b"
-        let explanation = LampExplanation.make(rows: [waiting, other], glance: .waiting)
-        #expect(explanation.rule == .blocked)
-        let sentence = explanation.sentence(.en)
+        let rule = Explain.lampRule(rows: [waiting, other], glance: .waiting)
+        #expect(rule == .blocked)
+        let sentence = Explain.lampSentence(rule, lang: .en)
         #expect(sentence == L10n.t(.lampRuleBlocked, .en))
         #expect(!sentence.contains("\n"))
     }
@@ -207,18 +224,18 @@ struct ExplainTests {
         var process = AgentRow(rowKey: RowIdentity.process(agent: .cursor, pid: 3), agent: .cursor)
         process.liveProcess = true
         process.state = .processOnly
-        let explanation = LampExplanation.make(rows: [process], glance: .idle)
-        #expect(explanation.rule == .processOnly)
-        #expect(explanation.sentence(.zh) == L10n.t(.lampRuleProcessOnly, .zh))
+        let rule = Explain.lampRule(rows: [process], glance: .idle)
+        #expect(rule == .processOnly)
+        #expect(Explain.lampSentence(rule, lang: .zh) == L10n.t(.lampRuleProcessOnly, .zh))
     }
 
     @Test func aStalledLampNamesNoThreshold() {
         var stalled = session()
-        stalled.eventMs = now - 30 * minute
+        stalled.lastEventMs = now - 30 * minute
         stalled.isStalled = true
-        let explanation = LampExplanation.make(rows: [stalled], glance: .stalled)
-        #expect(explanation.rule == .stalled)
-        let sentence = explanation.sentence(.en)
+        let rule = Explain.lampRule(rows: [stalled], glance: .stalled)
+        #expect(rule == .stalled)
+        let sentence = Explain.lampSentence(rule, lang: .en)
         #expect(!sentence.contains("20"))
     }
 
@@ -227,8 +244,8 @@ struct ExplainTests {
         turn.state = .yourTurn(sinceMs: now - minute)
         var process = AgentRow(rowKey: RowIdentity.process(agent: .codex, pid: 4), agent: .codex)
         process.state = .processOnly
-        let explanation = LampExplanation.make(rows: [process, turn], glance: .idle)
-        #expect(explanation.rule == .yourTurn, "a finished turn outranks a bare process")
+        let rule = Explain.lampRule(rows: [process, turn], glance: .idle)
+        #expect(rule == .yourTurn, "a finished turn outranks a bare process")
     }
 
     // MARK: - The lamp's shape and tone, per state
@@ -283,12 +300,12 @@ struct ExplainTests {
         #expect(model.accessibilityLabel.contains("轮到你"))
     }
 
-    @Test func aProcessOnlyRowPointsAtDiagnostics() {
+    @Test func aProcessOnlyRowIsQuietGrey() {
         let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowProcessOnly(), lang: .en)
         #expect(model.lamp == LampFace(shape: .dotted, tone: .idle))
         #expect(model.secondLine == nil, "grey is not a warning")
-        let hasDiagnostics = model.menu.contains { $0.action == .diagnostics }
-        #expect(hasDiagnostics)
+        let actions = model.menu.map { $0.action }
+        #expect(actions == [.details, .mute], "details and mute; nothing to dismiss, nowhere to go")
         #expect(!model.canFocus)
     }
 
@@ -328,6 +345,20 @@ struct ExplainTests {
 
     // MARK: - The detail page
 
+    /// The detail page's times say the day when it is not today.
+    @Test func theClockSaysTheDayWhenItIsNotToday() throws {
+        let utc = try #require(TimeZone(identifier: "UTC"))
+        let hour: Int64 = 60 * minute
+        let day: Int64 = 24 * hour
+        // 2027-01-15 08:00 UTC, a Friday.
+        #expect(LogClock.label(ms: now - 3 * hour, nowMs: now, lang: .en, timeZone: utc) == "05:00")
+        #expect(LogClock.label(ms: now - 9 * hour, nowMs: now, lang: .en, timeZone: utc) == "Thu 23:00")
+        #expect(LogClock.label(ms: now - 2 * day, nowMs: now, lang: .en, timeZone: utc) == "Wed 08:00")
+        #expect(LogClock.label(ms: now - 2 * day, nowMs: now, lang: .zh, timeZone: utc) == "周三 08:00")
+        #expect(LogClock.label(ms: now - 10 * day, nowMs: now, lang: .en, timeZone: utc) == "1/5 08:00")
+        #expect(LogClock.label(ms: now - 10 * day, nowMs: now, lang: .zh, timeZone: utc) == "1/5 08:00")
+    }
+
     @Test func theDetailPageSaysTheSameWhyAsTheRow() {
         let row = SurfaceFixtures.rowPermission()
         let face = SurfaceFixtures.rowModel(row, lang: .en)
@@ -349,7 +380,7 @@ struct ExplainTests {
 
     @Test func staleWordsAreNotQuotedAsNow() {
         var row = session()
-        row.eventMs = now - 45 * minute
+        row.lastEventMs = now - 45 * minute
         row.lastWord = "old"
         let detail = DetailModel.make(row: row, lang: .en, nowMs: now)
         #expect(detail.lastMessage == nil)
@@ -383,7 +414,7 @@ final class ExplainErrorTests: XCTestCase {
         row.task = "Fix the auth module"
         row.liveProcess = true
         row.state = .running
-        row.eventMs = Int64(Date().timeIntervalSince1970 * 1000)
+        row.lastEventMs = Int64(Date().timeIntervalSince1970 * 1000)
         row.source = .hooks
         return row
     }
@@ -395,12 +426,12 @@ final class ExplainErrorTests: XCTestCase {
     func testALastErrorIsTheDetailPagesError() {
         var row = liveRow()
         row.lastErrorText = "npm ERR! missing script: test"
-        XCTAssertEqual(DetailModel.make(row: row, lang: .en, nowMs: row.eventMs).error, "npm ERR! missing script: test")
-        XCTAssertNil(DetailModel.make(row: liveRow(), lang: .en, nowMs: row.eventMs).error)
+        XCTAssertEqual(DetailModel.make(row: row, lang: .en, nowMs: row.lastEventMs).error, "npm ERR! missing script: test")
+        XCTAssertNil(DetailModel.make(row: liveRow(), lang: .en, nowMs: row.lastEventMs).error)
     }
 
     func testNoErrorsIsNoFault() {
-        let why = Explain.make(liveRow(), lang: .en, nowMs: liveRow().eventMs).why
+        let why = Explain.make(liveRow(), lang: .en, nowMs: liveRow().lastEventMs).why
         XCTAssertFalse(why.contains("error"), why)
     }
 }

@@ -5,14 +5,13 @@ import PulseCore
 /// can ask without depending on the app's row model; `AgentRow`'s
 /// static functions forward here, so there is still one vocabulary).
 package enum TitleHeuristics {
+    /// Placeholders the seven agents (and their UIs) use for an untitled
+    /// session — never a goal.
     package static let chromeTitles: Set<String> = [
         "-", "—", "none", "running", "active",
         "new session", "new chat", "untitled", "agent session", "chat",
-        "amp session", "amp thread", "pi session", "grok session",
-        "cursor session", "opencode session", "gemini session", "goose session",
-        "copilot session", "continue session", "warp session",
-        "windsurf session", "cline session", "roo session",
-        "cascade session", "aider session", "droid session", "kimi session",
+        "cursor session", "gemini session", "copilot session", "opencode session",
+        "pi session",
     ]
 
     package static func isChromeTitle(_ value: String) -> Bool {

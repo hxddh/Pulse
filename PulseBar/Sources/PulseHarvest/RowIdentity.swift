@@ -1,12 +1,12 @@
 import Foundation
 import PulseCore
 
-/// 23.0 · the one place a tray row's key is decided — and it never changes.
+/// The one place a tray row's key is decided — and it never changes.
 ///
 /// Each kind of row has its own key, fixed when the row is born, and a row
 /// never "upgrades" into another:
 ///
-/// - a **session** row (24.0: a hook named the session) is
+/// - a **session** row (a hook named the session) is
 ///   `agent|<vendor session id>`; an event that names no session is
 ///   `agent|hook:<hash of its cwd>`;
 /// - a **process-only** row (an agent process no session has claimed —
@@ -14,8 +14,8 @@ import PulseCore
 ///   It is ephemeral: once a session claims that process, the process-only
 ///   row simply is not built.
 ///
-/// Keys never carry a path: a path would land in `session-log.json`, which
-/// promises it holds none. FNV-1a keeps the hash stable across launches.
+/// Keys never carry a path: a key reaches `debug.log` and banners, which
+/// promise they hold none. FNV-1a keeps the hash stable across launches.
 package enum RowIdentity {
     /// A session the hooks named, or — with no session id — the folder the
     /// event came from.
@@ -28,16 +28,6 @@ package enum RowIdentity {
     /// A process seen with no session to attach to.
     package static func process(agent: AgentID, pid: Int) -> String {
         "\(agent.rawValue)|pid:\(pid)"
-    }
-
-    /// Whether a key names a process-only row.
-    package static func isProcessKey(_ key: String) -> Bool {
-        key.contains("|pid:")
-    }
-
-    /// Whether a key names a session-less (folder-keyed) session.
-    package static func isFolderKey(_ key: String) -> Bool {
-        key.contains("|hook:")
     }
 
     /// Short, process-independent digest. `Hasher` is seeded per launch and

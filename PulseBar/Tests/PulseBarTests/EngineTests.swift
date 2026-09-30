@@ -3,7 +3,7 @@ import AppKit
 import Observation
 import Testing
 import XCTest
-@testable import PulseBar
+@testable import PulseApp
 @testable import PulseCore
 @testable import PulseHarvest
 
@@ -34,16 +34,15 @@ struct ScanQuietTests {
     static var observed: [(String, PartialKeyPath<StatusStore>)] {
         [
             ("cachedAll", \StatusStore.cachedAll),
-            ("diagnostics", \StatusStore.diagnostics),
-            ("hookSelfTestResult", \StatusStore.hookSelfTestResult),
             ("hooksStatus", \StatusStore.hooksStatus),
             ("hotkeyRegistered", \StatusStore.hotkeyRegistered),
-            ("logRevision", \StatusStore.logRevision),
             ("loginItemApplied", \StatusStore.loginItemApplied),
             ("notifyAuthorized", \StatusStore.notifyAuthorized),
+            ("presentAgents", \StatusStore.presentAgents),
             ("rowActionNotices", \StatusStore.rowActionNotices),
             ("settings", \StatusStore.settings),
             ("settingsFocus", \StatusStore.settingsFocus),
+            ("setupConnected", \StatusStore.setupConnected),
             ("showAllAgents", \StatusStore.showAllAgents),
             ("snapshot", \StatusStore.snapshot),
             ("traySessionToken", \StatusStore.traySessionToken),
@@ -99,23 +98,42 @@ struct ScanQuietTests {
         #expect(fired.names == [], "\(fired.names)")
     }
 
-    /// 23.0: a wait that crossed while macOS had not yet allowed Pulse to
-    /// notify is owed a banner once; the session log changes (and
-    /// `logRevision` moves) only when the wait did.
-    @Test func anOwedBannerWhileUnauthorizedIsRecordedOnce() {
+    /// A wait that crossed while macOS had not yet allowed Pulse to notify
+    /// is owed a banner once; the ticks after it change nothing a view
+    /// draws, and owe it no second time.
+    @Test func anOwedBannerWhileUnauthorizedIsOwedOnce() {
         let store = quietStore()
         store.notifyAuthorized = nil
-        tick(store)
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        // The launch baseline: the event log replayed once, empty.
+        store.engine.landLog(EventLog.Chunk(header: "# g", lines: [], end: 0, fresh: true), nowMs: nowMs - 2_000)
         store.engine.apply(records: [
             AttentionRecord(agent: "claude", kind: "permission", ms: nowMs - 1_000, message: "Bash: npm test", session: "s-owed", cwd: "/w/app"),
         ], nowMs: nowMs)
-        let owed = store.sessionLog.queuedKeys
-        #expect(owed.count == 1, "the edge is owed its banner")
-        let fired = watch(store, [("logRevision", \StatusStore.logRevision)])
+        let owed = store.notifier.ledger.queuedKeys
+        #expect(owed == ["claude|s-owed"], "the edge is owed its banner")
+        // The snapshot moves (a wait under a minute is drawn in seconds);
+        // the rows do not.
+        let fired = watch(store, [("cachedAll", \StatusStore.cachedAll)])
         tick(store, at: nowMs + 1)
         tick(store, at: nowMs + 2)
-        #expect(fired.names == [], "the same owed wait is not news")
+        #expect(fired.names == [], "the same owed wait is not news: \(fired.names)")
+        let still = store.notifier.ledger.queuedKeys
+        #expect(still == owed)
+    }
+
+    /// A wait already in the event log when Pulse starts is the baseline:
+    /// the replay puts it on the list, and it is owed no banner.
+    @Test func aWaitRaisedBeforeLaunchIsOwedNoBanner() {
+        let store = quietStore()
+        store.notifyAuthorized = nil
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        let raise = AttentionRecord(agent: "claude", kind: "permission", ms: nowMs - 60_000, message: "Bash: make", session: "s-old", cwd: "/w/app")
+        store.engine.landLog(EventLog.Chunk(header: "# g", lines: [raise.line], end: 100, fresh: true), nowMs: nowMs)
+        let blocked = store.cachedAll.first?.isBlocked
+        #expect(blocked == true)
+        let owed = store.notifier.ledger.queuedKeys
+        #expect(owed.isEmpty)
     }
 
     @Test func aChangedWorldIsStillAnnounced() {
@@ -212,12 +230,9 @@ struct ScanQuietTests {
         var book = SessionBook()
         book.apply(AttentionRecord(agent: "claude", kind: "permission", ms: t0 - 10 * 60_000, message: "Bash: make", session: "s1", cwd: "/w", pid: 0), nowMs: t0)
         func project(at nowMs: Int64) -> PulseSnapshot {
-            let rows = SessionProjection.rows(
-                book: book, processes: [], transcripts: [:],
-                context: SessionProjection.Context(nowMs: nowMs)
-            ).rows
-            var snap = SnapshotBuilder.build(
-                rows: rows, previous: .init(), context: SnapshotBuilder.Context(nowMs: nowMs, lang: .en)
+            var snap = TrayState.project(
+                book: book, processes: [], summaries: [:],
+                context: TrayState.Context(nowMs: nowMs, lang: .en)
             ).snapshot
             snap.updatedAt = Date(timeIntervalSince1970: Double(nowMs) / 1000)
             return snap
@@ -269,63 +284,104 @@ struct ScanQuietTests {
     }
 }
 
-/// 24.0 · the engine's feed: the attention file is re-read whole, and only
-/// the lines it has not seen reach the book.
+/// 25.0 · the engine's feed: the event log replayed whole at launch, then
+/// read from its cursor; a rewritten log is read whole and only what was
+/// not applied is applied.
 @Suite("Event feed", .serialized)
 @MainActor
 struct EventFeedTests {
     private let t0 = Int64(Date().timeIntervalSince1970 * 1000)
 
-    private func file(_ records: [AttentionRecord]) -> String {
-        AttentionProtocol.header + records.map(\.line).joined(separator: "\n") + "\n"
+    private func chunk(_ records: [AttentionRecord], header: String = "# g1", fresh: Bool = true, end: Int? = nil) -> EventLog.Chunk {
+        let lines = records.map(\.line)
+        return EventLog.Chunk(header: header, lines: lines, end: end ?? lines.reduce(header.utf8.count + 1) { $0 + $1.utf8.count + 1 }, fresh: fresh)
     }
 
-    @Test func aLineIsAppliedOnceHoweverOftenTheFileIsRead() {
+    private func tool(_ name: String, _ ms: Int64, session: String = "s1") -> AttentionRecord {
+        AttentionRecord(agent: "claude", kind: "tool", ms: ms, session: session, cwd: "/w/app", tool: name)
+    }
+
+    @Test func aRewrittenLogDoesNotReapplyWhatItKept() {
         let store = StatusStore()
-        let raise = AttentionRecord(agent: "claude", kind: "permission", ms: t0 - 60_000, message: "Bash: npm test", session: "s1", cwd: "/w/app")
-        store.engine.landAttention(file([raise]), nowMs: t0)
+        let raise = AttentionRecord(agent: "claude", kind: "permission", ms: t0 - 60_000, message: "Bash: npm test", session: "s1", cwd: "/w/app", tool: "Bash")
+        store.engine.landLog(chunk([raise]), nowMs: t0)
         #expect(store.cachedAll.first?.isBlocked == true)
         // The person answers in the vendor's prompt: the tool runs.
-        store.engine.apply(activity: [
-            ActivitySpool.Event(agent: "claude", session: "s1", event: "tool", tool: "Bash", target: "", prompt: "", cwd: "/w/app", tsMs: t0 - 30_000),
-        ], nowMs: t0)
+        let answer = tool("Bash", t0 - 30_000)
+        store.engine.landLog(chunk([answer], fresh: false), nowMs: t0)
         #expect(store.cachedAll.first?.state == .running)
-        // The same file again must not raise the answered wait a second time.
-        store.engine.landAttention(file([raise]), nowMs: t0 + 1_000)
+        // A compaction rewrote the log (a new generation) and kept both:
+        // the block is not raised a second time.
+        store.engine.landLog(chunk([raise, answer], header: "# g2"), nowMs: t0 + 1_000)
         #expect(store.cachedAll.first?.state == .running, "a line already applied is not news")
+        #expect(store.engine.logCursor?.header == "# g2")
     }
 
-    @Test func aCompactedFileDoesNotReplayWhatItKept() {
+    /// Fix 4: a failed read, or an empty one, never resets what was applied
+    /// — the next read of the same log does not replay an answered block.
+    @Test func aFailedOrEmptyReadKeepsWhatWasApplied() {
         let store = StatusStore()
-        let start = AttentionRecord(agent: "codex", kind: "start", ms: t0 - 120_000, session: "c1", cwd: "/w/app")
-        let turn = AttentionRecord(agent: "codex", kind: "turn", ms: t0 - 60_000, session: "c1", cwd: "/w/app")
-        store.engine.landAttention(file([start, turn]), nowMs: t0)
-        #expect(store.cachedAll.first?.isYourTurn == true)
-        // Compaction dropped the start; the turn is the same line, not a new one.
-        store.engine.landAttention(file([turn]), nowMs: t0 + 1_000)
-        #expect(store.cachedAll.first?.isYourTurn == true)
-        #expect(store.engine.book.sessions.count == 1)
+        let raise = AttentionRecord(agent: "claude", kind: "permission", ms: t0 - 60_000, message: "Bash: make", session: "s1", cwd: "/w/app", tool: "Bash")
+        let answer = tool("Bash", t0 - 30_000)
+        store.engine.landLog(chunk([raise, answer]), nowMs: t0)
+        #expect(store.cachedAll.first?.state == .running)
+        let cursor = store.engine.logCursor
+        store.engine.logReadFailed()
+        store.engine.landLog(EventLog.Chunk(header: "", lines: [], end: 0, fresh: true), nowMs: t0 + 500)
+        #expect(store.engine.logCursor == cursor, "an empty read moves nothing")
+        // The whole log read again (a new cursor would be fresh too).
+        store.engine.landLog(chunk([raise, answer]), nowMs: t0 + 1_000)
+        #expect(store.cachedAll.first?.state == .running, "the answered block stays answered")
     }
 
-    @Test func theLastEventPerAgentOutlivesCompaction() {
+    /// Fix 2: approved, a long turn of tools, then a relaunch. The new
+    /// engine replays the whole log before it projects: not red, and no
+    /// banner owed for anything.
+    @Test func aRelaunchReplaysTheLogAndIsNotRed() {
+        var records = [
+            AttentionRecord(agent: "claude", kind: "working", ms: t0 - 50 * 60_000, session: "s1", cwd: "/w/app"),
+            AttentionRecord(agent: "claude", kind: "permission", ms: t0 - 49 * 60_000, message: "Bash: npm test", session: "s1", cwd: "/w/app", tool: "Bash"),
+            tool("Bash", t0 - 48 * 60_000),
+        ]
+        for minute in 0..<40 { records.append(tool(minute % 2 == 0 ? "Read" : "Edit", t0 - Int64(47 - minute) * 60_000)) }
+        records.append(AttentionRecord(agent: "claude", kind: "turn", ms: t0 - 60_000, session: "s1", cwd: "/w/app"))
+        let relaunched = StatusStore()
+        relaunched.notifyAuthorized = nil
+        relaunched.engine.landLog(chunk(records), nowMs: t0)
+        let row = relaunched.cachedAll.first
+        #expect(row?.isBlocked == false)
+        #expect(row?.isYourTurn == true)
+        #expect(relaunched.snapshot.glance != .waiting)
+        let owed = relaunched.notifier.ledger.queuedKeys
+        #expect(owed.isEmpty)
+    }
+
+    /// Fix 3: parallel tools written before the answering one, all in one
+    /// read — every line is applied, the answer too.
+    @Test func parallelToolsBeforeTheAnswerInOneRead() {
+        let store = StatusStore()
+        let raise = AttentionRecord(agent: "claude", kind: "permission", ms: t0 - 10_000, message: "Bash: npm test", session: "s1", cwd: "/w/app", tool: "Bash")
+        store.engine.landLog(chunk([raise]), nowMs: t0)
+        store.engine.landLog(chunk([tool("Read", t0 - 9_000), tool("Grep", t0 - 8_500), tool("Bash", t0 - 8_000), tool("Read", t0 - 7_900)], fresh: false), nowMs: t0)
+        #expect(store.cachedAll.first?.state == .running)
+    }
+
+    @Test func theLastEventPerAgentIsKept() {
         let store = StatusStore()
         let early = AttentionRecord(agent: "gemini", kind: "turn", ms: t0 - 60_000, session: "g1")
-        store.engine.landAttention(file([early]), nowMs: t0)
-        store.engine.landAttention(file([]), nowMs: t0 + 1_000)
+        store.engine.landLog(chunk([early]), nowMs: t0)
+        store.engine.landLog(chunk([], header: "# g2"), nowMs: t0 + 1_000)
+        #expect(store.engine.latestHookEventMs[.gemini] == t0 - 60_000)
+        // A dismissal's own `done` is not the agent speaking.
+        store.engine.apply(records: [AttentionRecord(agent: "gemini", kind: "done", ms: t0, session: "g1")], nowMs: t0)
         #expect(store.engine.latestHookEventMs[.gemini] == t0 - 60_000)
     }
 
-    /// 24.0: the self-check's "hooks reach Pulse" counts activity events
-    /// too, and remembers them past the attention file's 80 lines.
-    @Test func anActivityEventIsAHookEventToo() {
+    /// Settings' "last event" counts tool lines too.
+    @Test func aToolLineIsAHookEventToo() {
         let store = StatusStore()
-        store.engine.apply(activity: [
-            ActivitySpool.Event(agent: "claude", session: "s1", event: "tool", tool: "Read", target: "", prompt: "", cwd: "/w", tsMs: t0 - 5_000),
-        ], nowMs: t0)
+        store.engine.apply(records: [tool("Read", t0 - 5_000)], nowMs: t0)
         #expect(store.engine.latestHookEventMs[.claude] == t0 - 5_000)
-        #expect(store.engine.latestHookEvents[.claude]?.kind == "activity")
-        let facts = DoctorProbe.gather(home: FileManager.default.temporaryDirectory, nowMs: t0, lastFire: store.engine.latestHookEvents)
-        #expect(facts.lastFire["claude"]?.tsMs == t0 - 5_000)
     }
 
     /// A turn held inside a block's grace lands on the tick, with no event
@@ -334,7 +390,7 @@ struct EventFeedTests {
         let store = StatusStore()
         let raise = AttentionRecord(agent: "gemini", kind: "permission", ms: t0 - 10_000, message: "Allow?", session: "g1", cwd: "/w/app")
         let turn = AttentionRecord(agent: "gemini", kind: "turn", ms: t0 - 7_000, session: "g1", cwd: "/w/app")
-        store.engine.landAttention(file([raise, turn]), nowMs: t0)
+        store.engine.landLog(chunk([raise, turn]), nowMs: t0)
         #expect(store.cachedAll.first?.isBlocked == true, "inside the grace")
         store.engine.project(nowMs: t0 + 15_000)
         #expect(store.cachedAll.first?.isYourTurn == true, "the tick lands the held turn")

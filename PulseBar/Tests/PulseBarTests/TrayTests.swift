@@ -2,7 +2,8 @@ import Foundation
 import AppKit
 import Testing
 import XCTest
-@testable import PulseBar
+@testable import PulseApp
+@testable import PulseQA
 @testable import PulseCore
 @testable import PulseHarvest
 
@@ -26,9 +27,8 @@ final class BestEffortWorkspaceTests: XCTestCase {
     }
 }
 
-/// 23.0 · the tray as values: the keyboard reducer, the frozen order, the
-/// header and its freshness, the one notice, the row's second line, where a
-/// banner click goes, and the Settings page's sections.
+/// The tray as values: the keyboard reducer, the frozen order, the header,
+/// the one notice, the row's second line and where a banner click goes.
 @Suite("Tray interaction")
 struct TrayInteractionTests {
     let now: Int64 = 1_800_000_000_000
@@ -41,7 +41,7 @@ struct TrayInteractionTests {
         row.project = "app"
         row.liveProcess = true
         row.state = .running
-        row.eventMs = now - minute
+        row.lastEventMs = now - minute
         row.source = .hooks
         return row
     }
@@ -81,21 +81,21 @@ struct TrayInteractionTests {
     }
 
     @Test func returnGoesToTheTerminalWhenItCan() {
-        let state = TrayKeys.State(query: "", selected: "a", detail: nil)
+        let state = TrayKeys.State(selected: "a", detail: nil)
         let outcome = press(state, [.enter])
         #expect(outcome.effect == .focus("a"))
         #expect(outcome.state.detail == nil)
     }
 
     @Test func returnOpensTheDetailWhenThereIsNoHandle() {
-        let state = TrayKeys.State(query: "", selected: "b", detail: nil)
+        let state = TrayKeys.State(selected: "b", detail: nil)
         let outcome = press(state, [.enter])
         #expect(outcome.effect == nil)
         #expect(outcome.state.detail == "b")
     }
 
     @Test func rightAndSpaceOpenTheDetail() {
-        let state = TrayKeys.State(query: "", selected: "c", detail: nil)
+        let state = TrayKeys.State(selected: "c", detail: nil)
         let right = press(state, [.right])
         #expect(right.state.detail == "c")
         let space = press(state, [.space])
@@ -105,7 +105,7 @@ struct TrayInteractionTests {
     // MARK: - Keys: the detail page
 
     @Test func leftAndEscapeLeaveTheDetailAndKeepTheSelection() {
-        let open = TrayKeys.State(query: "", selected: nil, detail: "b")
+        let open = TrayKeys.State(selected: nil, detail: "b")
         let left = press(open, [.left])
         #expect(left.state.detail == nil)
         #expect(left.state.selected == "b")
@@ -116,165 +116,86 @@ struct TrayInteractionTests {
     }
 
     @Test func theDetailPageTakesCommandDAndCommandMAndReturn() {
-        let open = TrayKeys.State(query: "", selected: "a", detail: "a")
+        let open = TrayKeys.State(selected: "a", detail: "a")
         let dismiss = press(open, [.dismiss])
         #expect(dismiss.effect == .dismiss("a"))
         let mute = press(open, [.mute])
         #expect(mute.effect == .toggleMute("a"))
         let go = press(open, [.enter])
         #expect(go.effect == .focus("a"))
-        let letter = press(open, [.character("d")])
-        #expect(letter.effect == nil, "a bare D is a letter, never a dismiss")
-        let typing = press(open, [.character("x")])
-        #expect(typing.state.query == "", "the detail page has no filter")
-        #expect(typing.handled)
     }
 
     @Test func dismissOnADetailThatIsNotAWaitDoesNothing() {
-        let open = TrayKeys.State(query: "", selected: "b", detail: "b")
+        let open = TrayKeys.State(selected: "b", detail: "b")
         let outcome = press(open, [.dismiss])
         #expect(outcome.effect == nil)
     }
 
-    // MARK: - Keys: type to filter
+    // MARK: - Keys: the list
 
-    @Test func typingFiltersAndBackspaceOnlyEditsTheFilter() {
-        let typed = press(TrayKeys.State(), [.character("l"), .character("o"), .character("g")])
-        #expect(typed.state.query == "log")
-        let edited = press(typed.state, [.backspace])
-        #expect(edited.state.query == "lo")
-        #expect(edited.effect == nil, "⌫ never acts on a row")
-        let emptied = press(edited.state, [.backspace, .backspace, .backspace])
-        #expect(emptied.state.query == "")
-        #expect(emptied.effect == nil)
-    }
-
-    @Test func backspaceOnASelectedWaitDoesNotDismissIt() {
-        let state = TrayKeys.State(query: "", selected: "a", detail: nil)
-        let outcome = press(state, [.backspace])
-        #expect(outcome.effect == nil)
-        #expect(outcome.state == state)
-    }
-
-    @Test func spaceTypesWhileFiltering() {
-        let state = TrayKeys.State(query: "fix", selected: "a", detail: nil)
-        let outcome = press(state, [.space, .character("l")])
-        #expect(outcome.state.query == "fix l")
-        #expect(outcome.state.detail == nil)
-    }
-
-    @Test func escapeClearsTheFilterThenClosesThePanel() {
-        let filtering = TrayKeys.State(query: "zzz", selected: nil, detail: nil)
-        let first = press(filtering, [.escape])
-        #expect(first.state.query == "")
-        #expect(first.effect == nil)
-        let second = press(first.state, [.escape])
-        #expect(second.effect == .closePanel)
-    }
-
-    /// The bug: with no matches the list was replaced and its key handlers
-    /// went with it. The reducer does not care what is on screen.
-    @Test func escapeWorksWithNoResults() {
-        let filtering = TrayKeys.State(query: "nothing matches", selected: nil, detail: nil)
-        let outcome = press(filtering, [.escape], rows: [])
-        #expect(outcome.handled)
-        #expect(outcome.state.query == "")
-        let down = press(filtering, [.down], rows: [])
+    @Test func escapeOnTheListClosesThePanel() {
+        let outcome = press(TrayKeys.State(selected: "a", detail: nil), [.escape])
+        #expect(outcome.effect == .closePanel)
+        let empty = press(TrayKeys.State(), [.escape], rows: [])
+        #expect(empty.effect == .closePanel, "Esc works on an empty list too")
+        let down = press(TrayKeys.State(), [.down], rows: [])
         #expect(down.state.selected == nil)
     }
 
-    /// 23.0 bug: the tray opens with a row selected, so typing "deploy" or
-    /// "main" to filter dismissed the selected wait or muted its agent on
-    /// the first letter. Letters always filter; the commands carry ⌘.
-    @Test func lettersAlwaysFilterEvenWithAWaitSelected() {
-        let onWait = TrayKeys.State(query: "", selected: "a", detail: nil)
-        let typedD = press(onWait, [.character("d")])
-        #expect(typedD.effect == nil, "D on a selected wait is a letter")
-        #expect(typedD.state.query == "d")
-        let typedM = press(onWait, [.character("M")])
-        #expect(typedM.effect == nil, "M on a selected row is a letter")
-        #expect(typedM.state.query == "M")
-        let word = press(onWait, [.character("d"), .character("e"), .character("p")])
-        #expect(word.effect == nil)
-        #expect(word.state.query == "dep")
-    }
-
     @Test func commandDAndCommandMActOnTheSelectedRow() {
-        let onWait = TrayKeys.State(query: "", selected: "a", detail: nil)
+        let onWait = TrayKeys.State(selected: "a", detail: nil)
         let dismiss = press(onWait, [.dismiss])
         #expect(dismiss.effect == .dismiss("a"))
         let mute = press(onWait, [.mute])
         #expect(mute.effect == .toggleMute("a"))
 
-        let onRunning = TrayKeys.State(query: "", selected: "b", detail: nil)
+        let onRunning = TrayKeys.State(selected: "b", detail: nil)
         let notAWait = press(onRunning, [.dismiss])
         #expect(notAWait.effect == nil, "⌘D is not a dismiss on a row that is not waiting")
-        #expect(notAWait.state.query == "")
-
-        let filtering = TrayKeys.State(query: "co", selected: "a", detail: nil)
-        let whileFiltering = press(filtering, [.dismiss])
-        #expect(whileFiltering.effect == .dismiss("a"), "⌘D works while filtering too")
-        #expect(whileFiltering.state.query == "co")
 
         let nothingSelected = press(TrayKeys.State(), [.mute])
         #expect(nothingSelected.effect == nil)
     }
 
     @Test func commandKeysWorkEverywhere() {
-        let detail = TrayKeys.State(query: "", selected: nil, detail: "a")
+        let detail = TrayKeys.State(selected: nil, detail: "a")
         let refresh = press(detail, [.refresh])
         #expect(refresh.effect == .refresh)
-        let settings = press(TrayKeys.State(query: "abc"), [.settings])
+        let settings = press(TrayKeys.State(), [.settings])
         #expect(settings.effect == .openSettings)
-        #expect(settings.state.query == "abc")
+        let quit = press(detail, [.quit])
+        #expect(quit.effect == .quit)
     }
 
-    @Test func aFilterSelectsItsFirstMatch() {
-        let typed = TrayKeys.State(query: "c", selected: nil, detail: nil)
-        let filtered = [TrayKeys.Row(key: "c")]
-        let normalized = TrayKeys.normalize(typed, rows: filtered)
-        #expect(normalized.selected == "c")
-        let gone = TrayKeys.State(query: "", selected: "zz", detail: nil)
+    @Test func aSelectionWhoseRowLeftMovesToTheFirstRow() {
+        let gone = TrayKeys.State(selected: "zz", detail: nil)
         let moved = TrayKeys.normalize(gone, rows: rows)
         #expect(moved.selected == "a", "a selection whose row left moves to the first row")
         let none = TrayKeys.normalize(TrayKeys.State(), rows: rows)
-        #expect(none.selected == nil, "no filter, no selection: nothing is invented")
+        #expect(none.selected == nil, "no selection: nothing is invented")
     }
 
+    /// A bare letter is not the tray's: the tray opens with a row selected,
+    /// and a bare D or M must never dismiss or mute.
     @Test func eventsBecomeKeys() {
-        let esc = TrayKeys.key(keyCode: 53, characters: "\u{1b}", command: false, control: false, option: false)
+        let esc = TrayKeys.key(keyCode: 53, characters: "\u{1b}", command: false)
         #expect(esc == .escape)
-        let backspace = TrayKeys.key(keyCode: 51, characters: "\u{7f}", command: false, control: false, option: false)
-        #expect(backspace == .backspace)
-        let refresh = TrayKeys.key(keyCode: 15, characters: "r", command: true, control: false, option: false)
+        let refresh = TrayKeys.key(keyCode: 15, characters: "r", command: true)
         #expect(refresh == .refresh)
-        let copy = TrayKeys.key(keyCode: 8, characters: "c", command: true, control: false, option: false)
+        let copy = TrayKeys.key(keyCode: 8, characters: "c", command: true)
         #expect(copy == nil, "⌘C stays the system's")
-        let dismiss = TrayKeys.key(keyCode: 2, characters: "d", command: true, control: false, option: false)
+        let dismiss = TrayKeys.key(keyCode: 2, characters: "d", command: true)
         #expect(dismiss == .dismiss)
-        let dismissByDelete = TrayKeys.key(keyCode: 51, characters: "\u{7f}", command: true, control: false, option: false)
+        let dismissByDelete = TrayKeys.key(keyCode: 51, characters: "\u{7f}", command: true)
         #expect(dismissByDelete == .dismiss)
-        let mute = TrayKeys.key(keyCode: 46, characters: "m", command: true, control: false, option: false)
+        let mute = TrayKeys.key(keyCode: 46, characters: "m", command: true)
         #expect(mute == .mute)
-        let bareD = TrayKeys.key(keyCode: 2, characters: "d", command: false, control: false, option: false)
-        #expect(bareD == .character("d"))
-        let letter = TrayKeys.key(keyCode: 0, characters: "a", command: false, control: false, option: false)
-        #expect(letter == .character("a"))
-        let function = TrayKeys.key(keyCode: 122, characters: "\u{F704}", command: false, control: false, option: false)
-        #expect(function == nil, "a function key is not text")
-        let controlled = TrayKeys.key(keyCode: 0, characters: "a", command: false, control: true, option: false)
-        #expect(controlled == nil)
-    }
-
-    @Test func theFilterSearchesEveryRetainedRow() {
-        var codex = session("codex|1", .codex)
-        codex.task = "Ship the offline queue"
-        let claude = session("claude|1")
-        let matches = TrayKeys.filter([claude, codex], query: "offline")
-        let keys = matches.map { $0.rowKey }
-        #expect(keys == ["codex|1"])
-        let all = TrayKeys.filter([claude, codex], query: "  ")
-        #expect(all.count == 2)
+        let bareD = TrayKeys.key(keyCode: 2, characters: "d", command: false)
+        #expect(bareD == nil, "a bare D is never a dismiss")
+        let backspace = TrayKeys.key(keyCode: 51, characters: "\u{7f}", command: false)
+        #expect(backspace == nil)
+        let space = TrayKeys.key(keyCode: 49, characters: " ", command: false)
+        #expect(space == .space)
     }
 
     // MARK: - The frozen order
@@ -337,77 +258,31 @@ struct TrayInteractionTests {
 
     // MARK: - The header
 
-    private func header(
-        rows: [AgentRow], scanAgoMs: Int64?, interval: Double? = 2, lastScanInterval: Double? = nil,
-        asleep: Bool = false, lang: ResolvedLanguage = .en
-    ) -> TrayHeaderModel {
-        TrayHeaderModel.make(TrayHeaderModel.Input(
-            rows: rows,
-            lang: lang,
-            nowMs: now,
-            lastScanMs: scanAgoMs.map { now - $0 },
-            intervalSeconds: interval,
-            lastScanIntervalSeconds: lastScanInterval,
-            asleep: asleep
-        ))
-    }
-
-    /// 23.0 bug: opening the tray shortens the interval at once, and the
-    /// header judged the scan on screen — scheduled a minute apart — by the
-    /// new two seconds: orange "not updated" on every open.
-    @Test func openingTheTrayDoesNotFlashTheHeaderOrange() {
-        let opened = header(rows: [session("r")], scanAgoMs: 50_000, interval: 2, lastScanInterval: 60)
-        #expect(!opened.stale, "the last scan was due by the minute that scheduled it")
-        let late = header(rows: [session("r")], scanAgoMs: 125_000, interval: 2, lastScanInterval: 60)
-        #expect(late.stale, "past twice that interval it is late")
-    }
-
     @Test func theHeaderCountsWhatMattersInTone() {
         var stalled = session("s")
         stalled.isStalled = true
         var turn = session("t")
         turn.state = .yourTurn(sinceMs: now - minute)
-        let model = header(rows: [blocked("w1"), blocked("w2"), session("r"), stalled, turn], scanAgoMs: 8_000)
+        let model = TrayHeaderModel.make(rows: [blocked("w1"), blocked("w2"), session("r"), stalled, turn], lang: .en)
         let labels = model.counts.map { "\($0.count) \($0.label)" }
         #expect(labels == ["2 need you", "1 running", "1 stalled", "1 your turn"])
         let tones = model.counts.map { $0.tone }
         #expect(tones == [.waiting, .running, .attention, .idle])
-        #expect(model.freshness == String(format: L10n.t(.headerUpdatedAgo, .en), "8s"))
-        #expect(!model.stale)
     }
 
     @Test func oneWaitIsSingular() {
-        let model = header(rows: [blocked("w")], scanAgoMs: 1_000)
+        let model = TrayHeaderModel.make(rows: [blocked("w")], lang: .en)
         let labels = model.counts.map { $0.label }
         #expect(labels == [L10n.t(.waiting1, .en)])
-        #expect(model.freshness == L10n.t(.headerUpdatedNow, .en))
-    }
-
-    @Test func aLateScanSaysSoInsteadOfItsFreshness() {
-        let model = header(rows: [session("r")], scanAgoMs: 4 * minute, interval: 5)
-        #expect(model.stale)
-        #expect(model.freshness == String(format: L10n.t(.headerNotUpdated, .en), "4m"))
-    }
-
-    @Test func staleMeansTwiceTheIntervalAndNeverSooner() {
-        let justLate = header(rows: [], scanAgoMs: 31_000, interval: 2)
-        #expect(justLate.stale, "past the thirty-second floor")
-        let notYet = header(rows: [], scanAgoMs: 25_000, interval: 2)
-        #expect(!notYet.stale, "the floor keeps an open tray from flashing orange")
-        let slow = header(rows: [], scanAgoMs: 50_000, interval: 30)
-        #expect(!slow.stale, "a 30 s cadence is late only after a minute")
-        let asleep = header(rows: [], scanAgoMs: 1_000, asleep: true)
-        #expect(asleep.stale, "asleep or locked: nothing is being read")
     }
 
     @Test func anEmptyHeaderSaysWhatIsTrue() {
-        let none = header(rows: [], scanAgoMs: nil)
+        let none = TrayHeaderModel.make(rows: [], lang: .en)
         #expect(none.counts.isEmpty)
         #expect(none.title == L10n.t(.noAgents, .en))
-        #expect(none.freshness == L10n.t(.headerUpdating, .en))
         var process = AgentRow(rowKey: RowIdentity.process(agent: .codex, pid: 1), agent: .codex)
         process.state = .processOnly
-        let grey = header(rows: [process], scanAgoMs: 1_000, lang: .zh)
+        let grey = TrayHeaderModel.make(rows: [process], lang: .zh)
         #expect(grey.title == "1 " + L10n.t(.processOnlyN, .zh))
     }
 
@@ -415,27 +290,42 @@ struct TrayInteractionTests {
 
     private func notice(
         notify: Bool = true, authorized: Bool? = true, banner: Bool = false,
-        hooks: Bool = false
+        unconnected: [AgentID] = [], connected: [AgentID]? = nil
     ) -> TrayNoticeModel? {
         TrayNoticeModel.pick(TrayNoticeModel.Input(
             lang: .en, notifyOnWaiting: notify, notifyAuthorized: authorized,
-            bannerFailed: banner, hooksMissing: hooks
+            bannerFailed: banner, unconnected: unconnected, justConnected: connected
         ))
     }
 
     @Test func atMostOneNoticeInItsOrder() {
-        let all = notice(authorized: false, banner: true, hooks: true)
-        #expect(all?.kind == .notificationsDenied)
-        #expect(all?.action == .openNotificationSettings)
-        let notAsked = notice(authorized: nil, hooks: true)
+        let all = notice(authorized: false, banner: true, unconnected: [.claude])
+        #expect(all?.kind == .setup, "connecting comes before notifications")
+        #expect(all?.action == .connect)
+        let followUp = notice(authorized: false, unconnected: [.gemini], connected: [.claude])
+        #expect(followUp?.kind == .setupDone)
+        #expect(followUp?.action == .dismissSetup)
+        let denied = notice(authorized: false, banner: true)
+        #expect(denied?.kind == .notificationsDenied)
+        #expect(denied?.action == .openNotificationSettings)
+        let notAsked = notice(authorized: nil)
         #expect(notAsked?.kind == .notificationsOff)
         #expect(notAsked?.action == .enableNotifications)
-        let hooks = notice(hooks: true)
-        #expect(hooks?.kind == .hooksMissing)
-        #expect(hooks?.action == .installHooks)
+        let banner = notice(banner: true)
+        #expect(banner?.kind == .bannerFailed)
         #expect(notice() == nil)
         let optedOut = notice(notify: false, authorized: false)
         #expect(optedOut == nil, "notifications turned off in Pulse are not a problem")
+    }
+
+    @Test func theSetupCardNamesTheAgentsAndItsRemainingSteps() {
+        let card = notice(unconnected: [.claude, .codex])
+        #expect(card?.text == String(format: L10n.t(.setupFound, .en), "Claude, Codex"))
+        #expect(card?.steps.isEmpty == true)
+        let codex = notice(connected: [.claude, .codex])
+        #expect(codex?.steps == [L10n.t(.setupStepCodex, .en), L10n.t(.setupStepRestart, .en)])
+        let claudeOnly = notice(connected: [.claude])
+        #expect(claudeOnly?.steps == [L10n.t(.setupStepRestart, .en)], "the Codex step only when Codex was connected")
     }
 
     // MARK: - The row's second line
@@ -497,7 +387,7 @@ struct TrayInteractionTests {
         let store = StatusStore()
         store.installPreviewFixture("status-waiting")
         let ui = TrayUI(store: store)
-        ui.open(selectMostUrgent: false)
+        ui.open()
         store.requestTrayReveal(rowKey: "gone|nowhere", detail: true)
         ui.applyPendingReveal()
         #expect(ui.keys.detail == nil)
@@ -509,7 +399,7 @@ struct TrayInteractionTests {
         let store = StatusStore()
         store.installPreviewFixture("waiting")
         let ui = TrayUI(store: store)
-        ui.open(selectMostUrgent: false)
+        ui.open()
         let rows = store.allRowsForDisplay
         try #require(rows.count >= 2)
         ui.showDetail(rows[0].rowKey)
@@ -519,15 +409,43 @@ struct TrayInteractionTests {
         #expect(ui.keys.selected == rows[1].rowKey)
     }
 
+    /// One gesture — a menu-bar click and the shortcut open the same
+    /// way, on the oldest wait.
     @MainActor
-    @Test func theHotkeyOpensOnTheMostUrgentRow() {
+    @Test func everyOpenSelectsTheOldestWait() {
         let store = StatusStore()
         store.installPreviewFixture("waiting")
         let ui = TrayUI(store: store)
-        ui.open(selectMostUrgent: true)
-        let first = ui.displayRows.first?.rowKey
-        #expect(ui.keys.selected == first)
-        #expect(first != nil)
+        ui.open()
+        let oldest = ui.displayRows.filter(\.isBlocked).min { ($0.wait?.sinceMs ?? 0) < ($1.wait?.sinceMs ?? 0) }
+        #expect(oldest != nil)
+        #expect(ui.keys.selected == oldest?.rowKey)
+    }
+
+    @Test func theInitialSelectionIsTheOldestWaitElseTheFirstRow() {
+        func blocked(_ key: String, since: Int64) -> AgentRow {
+            var row = AgentRow(rowKey: key, agent: .claude)
+            row.state = .blocked(RowWait(kind: "Permission", sinceMs: since))
+            return row
+        }
+        var running = AgentRow(rowKey: "run", agent: .codex)
+        running.state = .running
+        let rows = [running, blocked("new", since: 9_000), blocked("unknown", since: 0), blocked("old", since: 1_000)]
+        #expect(TrayUI.initialSelection(rows) == "old")
+        #expect(TrayUI.initialSelection([running, blocked("unknown", since: 0)]) == "unknown")
+        #expect(TrayUI.initialSelection([running]) == "run")
+        #expect(TrayUI.initialSelection([]) == nil)
+    }
+
+    /// The shortcuts offered leave the editors' own alone.
+    @Test func theShortcutsOfferedDoNotClashWithEditors() {
+        let labels = HotkeyChoice.allCases.map(\.label)
+        #expect(labels.contains("⌃⌥Space"))
+        #expect(labels.contains("⌥⌘P"))
+        #expect(!labels.contains("⌘⇧P"), "VS Code / Cursor's command palette")
+        #expect(!labels.contains("⌘⇧U"))
+        #expect(HotkeyChoice(rawValue: "cmd_shift_p") == nil, "a saved clashing choice reads as off")
+        #expect(PulseSettings().hotkey == .off, "still opt-in")
     }
 }
 
@@ -658,8 +576,8 @@ final class AccessibilityLocalizationTests: XCTestCase {
     }
 
     func testSnapshotCarriesTheResolvedLabelSoTheViewNeedsNoLanguage() {
-        let ctx = SnapshotBuilder.Context(nowMs: 1_700_000_000_000, lang: .zh)
-        let result = SnapshotBuilder.build(rows: [], previous: .init(), context: ctx)
+        let ctx = TrayState.Context(nowMs: 1_700_000_000_000, lang: .zh)
+        let result = TrayState.assemble(rows: [], context: ctx)
         XCTAssertEqual(result.snapshot.accessibilityLabel, L10n.t(.a11yIdle, .zh))
     }
 
@@ -720,10 +638,9 @@ final class AccessibilityLocalizationTests: XCTestCase {
     }
 }
 
-/// 15.0 · Witness — the product's rules asserted on the surface values
-/// `SurfaceCapture` photographs, not on the store behind them. 23.0: the
-/// tray row, header, notice and filter, the detail page, Settings,
-/// Diagnostics and the self-check.
+/// The product's rules asserted on the surface values `PulseQA`'s
+/// `SurfaceCapture` photographs, not on the store behind them: the tray row,
+/// header, notice, the detail page and Settings.
 final class SurfaceModelTests: XCTestCase {
 
     // MARK: - The fixture list the capture script reads
@@ -840,12 +757,10 @@ struct LandingPlanTests {
         row.landingPlan = LandingPlan.make(handle: LandingHandle("tmux:%1"), cwd: "", allowAutomation: false)
         #expect(Explain.focusTitle(row, lang: .en) == "Go to terminal")
         #expect(Explain.focusTitle(row, lang: .zh) == "前往终端")
-        #expect(row.landsExactly)
-        #expect(StatusStore.supportFocus(in: [row]) == .exact)
+        #expect(row.landingPlan.precision == .exact)
         var app = row
         app.landingPlan = LandingPlan(steps: [.activateOwner(pid: 9)])
-        #expect(StatusStore.supportFocus(in: [row, app]) == .app, "exact only when every row is")
-        #expect(StatusStore.supportFocus(in: []) == nil)
+        #expect(Explain.focusTitle(app, lang: .en) == "Open app")
     }
 }
 
@@ -878,6 +793,25 @@ final class L10nTests: XCTestCase {
 
     func testDurationUnitsAreLocalized() {
         XCTAssertNotEqual(L10n.t(.durMin, .en), L10n.t(.durMin, .zh), "zh tray showed English units")
+        XCTAssertEqual(DurationFormat.label(seconds: 240, lang: .zh, spoken: true), "4 分钟", "a sentence says 分钟")
+        XCTAssertEqual(DurationFormat.label(seconds: 240, lang: .en, spoken: true), "4m")
+    }
+
+    /// One term per concept and one punctuation — 设置 (not 偏好设置),
+    /// 「」 quotes, an unspaced "——"; no developer path or "unsigned" in
+    /// what a person reads.
+    func testTheCopyIsConsistent() {
+        for key in L10n.Key.allCases {
+            let zh = L10n.t(key, .zh)
+            let en = L10n.t(key, .en)
+            XCTAssertFalse(zh.contains("偏好设置"), "\(key): \(zh)")
+            XCTAssertFalse(zh.contains("“") || zh.contains("”"), "\(key): \(zh)")
+            XCTAssertFalse(zh.contains(" ——") || zh.contains("—— "), "\(key): \(zh)")
+            XCTAssertFalse(en.contains("package.sh") || zh.contains("package.sh"), "\(key)")
+            XCTAssertFalse(en.localizedCaseInsensitiveContains("unsigned"), "\(key): \(en)")
+        }
+        XCTAssertEqual(L10n.t(.waitingSummaryTitle, .en), "%d agents need you")
+        XCTAssertEqual(L10n.t(.settings, .zh), "设置…")
     }
 }
 
@@ -894,8 +828,8 @@ final class LocalizedCopyTests: XCTestCase {
     }
 }
 
-/// Duration wording moved off `StatusStore` so `SnapshotBuilder` — which is
-/// pure and has no store — could put the elapsed wait in the menu bar.
+/// Duration wording lives off `StatusStore` so `TrayState` — which is pure
+/// and has no store — can put the elapsed wait in the menu bar.
 final class DurationFormatTests: XCTestCase {
     func testUnitsCrossOverAtTheRightPlaces() {
         XCTAssertEqual(DurationFormat.label(seconds: 2, lang: .en), "now")
@@ -930,10 +864,9 @@ final class GlanceTitleTests: XCTestCase {
 
     @MainActor
     func testIdleGlanceStaysEmpty() {
-        let r = SnapshotBuilder.build(
+        let r = TrayState.assemble(
             rows: [],
-            previous: .init(),
-            context: SnapshotBuilder.Context(nowMs: 1_700_000_000_000, lang: .en)
+            context: TrayState.Context(nowMs: 1_700_000_000_000, lang: .en)
         )
         XCTAssertEqual(r.snapshot.glance, .idle)
         XCTAssertEqual(r.snapshot.title, "")
@@ -950,9 +883,9 @@ final class DetailPlanTests: XCTestCase {
         // minutes where the story line had already withdrawn it. Every
         // surface reads this one rule.
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
-        row.eventMs = now - 5 * 60 * 1000
+        row.lastEventMs = now - 5 * 60 * 1000
         XCTAssertTrue(row.selfReportFresh(at: now))
-        row.eventMs = now - 31 * 60 * 1000
+        row.lastEventMs = now - 31 * 60 * 1000
         XCTAssertFalse(row.selfReportFresh(at: now), "the headline and the detail page share this gate")
     }
 
@@ -960,7 +893,7 @@ final class DetailPlanTests: XCTestCase {
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
         row.lastWord = "Waiting for your review."
         row.state = .running
-        row.eventMs = now
+        row.lastEventMs = now
         let detail = DetailModel.make(row: row, lang: .en, nowMs: now)
         XCTAssertEqual(detail.lastMessage, "Waiting for your review.")
         XCTAssertFalse(row.isBlocked, "words never write Waiting")
@@ -1009,7 +942,7 @@ final class RowActionNoticeTests: XCTestCase {
         row.task = "Fix the auth module"
         row.liveProcess = true
         row.state = .running
-        row.eventMs = Int64(Date().timeIntervalSince1970 * 1000)
+        row.lastEventMs = Int64(Date().timeIntervalSince1970 * 1000)
         row.source = .hooks
         return row
     }
@@ -1022,7 +955,7 @@ final class RowActionNoticeTests: XCTestCase {
         let row = liveRow()
         XCTAssertNil(s.rowActionNotice(row))
         s.noteRowAction(row.rowKey, s.tr(.focusFailed))
-        XCTAssertEqual(s.rowActionNotice(row), s.tr(.focusFailed))
+        XCTAssertEqual(s.rowActionNotice(row)?.text, s.tr(.focusFailed))
 
         var other = liveRow()
         other.rowKey = "codex|s2"

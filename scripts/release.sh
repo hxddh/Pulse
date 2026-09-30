@@ -32,7 +32,7 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 2
 fi
 
-MODELS="PulseBar/Sources/PulseBar/Models.swift"
+MODELS="PulseBar/Sources/PulseApp/Models.swift"
 CURRENT="$(sed -n 's/.*static let semver = "\([^"]*\)".*/\1/p' "$MODELS")"
 echo "current: $CURRENT"
 echo "release: $VERSION"
@@ -64,7 +64,7 @@ fi
 python3 - "$VERSION" <<'PY'
 import pathlib, re, sys
 version = sys.argv[1]
-p = pathlib.Path("PulseBar/Sources/PulseBar/Models.swift")
+p = pathlib.Path("PulseBar/Sources/PulseApp/Models.swift")
 text = p.read_text()
 new = re.sub(r'static let semver = "[^"]*"', f'static let semver = "{version}"', text, count=1)
 if new != text:

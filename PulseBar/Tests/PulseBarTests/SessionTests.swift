@@ -1,22 +1,20 @@
 import Foundation
 import Testing
 import XCTest
-@testable import PulseBar
+@testable import PulseApp
 @testable import PulseCore
 @testable import PulseHarvest
 
-// Sessions (24.0): the event reducer (SessionBook), its projection into rows
-// (SessionProjection), the thin snapshot (SnapshotBuilder), row identity, and
-// what a row carries.
+// Sessions: the event reducer (SessionBook), its projection into the tray
+// (TrayState), row identity, and what a row carries.
 
-/// One vendor hook event as `pulse-hook` writes it — the attention line, the
-/// activity event, both, or nothing — by the receiver's own reading of the
-/// vendor's event name and payload (`PulseHookReceiver.interpret`). The
-/// truth tables below replay recorded sequences through it.
+/// One vendor hook event as `pulse-hook` writes it — one v5 line, or
+/// nothing — by the receiver's own reading of the vendor's event name and
+/// payload (`PulseHookReceiver.interpret`, then `.record`). The truth tables
+/// below replay recorded sequences through it.
 enum HookFeed {
     struct Written {
         var lines: [AttentionRecord] = []
-        var activity: [ActivitySpool.Event] = []
     }
 
     static func write(
@@ -32,39 +30,16 @@ enum HookFeed {
     ) -> Written {
         guard let reading = PulseHookReceiver.interpret(agent: agent, event: event, payload: payload) else { return Written() }
         if case .blocked = reading.action, agent.waitingSource == .none { return Written() }
-        var out = Written()
-        // The tool name as the receiver's `writeActivity` stores it.
-        let tool = PulseHookReceiver.string(payload, keys: ["tool_name", "toolName"])
-        func activity(_ kind: String) -> ActivitySpool.Event {
-            ActivitySpool.Event(agent: agent.rawValue, session: session, event: kind, tool: kind == "tool" ? tool : "", target: "", prompt: "", cwd: cwd, tsMs: ms)
+        var full = payload
+        full["session_id"] = session
+        full["cwd"] = cwd
+        if !transcript.isEmpty { full["transcript_path"] = transcript }
+        guard var record = PulseHookReceiver.record(agent: agent, reading: reading, payload: full, nowMs: ms) else {
+            return Written()
         }
-        let kind: AttentionKind
-        var message = ""
-        switch reading.action {
-        case .ignore:
-            return out
-        case .activity:
-            out.activity.append(activity("tool"))
-            return out
-        case .prompt:
-            out.activity.append(activity("prompt"))
-            kind = .working
-        case .start: kind = .start
-        case .blocked(let blocked):
-            kind = blocked
-            message = reading.ask.isEmpty ? PulseHookReceiver.genericMessage(from: payload) : reading.ask
-        case .turn:
-            kind = .turn
-            message = PulseHookReceiver.genericMessage(from: payload)
-        case .idle: kind = .idle
-        case .resolved: kind = .done
-        case .end: kind = .end
-        }
-        out.lines.append(AttentionRecord(
-            agent: agent.rawValue, kind: kind.rawValue, ms: ms, message: message,
-            session: session, cwd: cwd, front: front, pid: pid, transcript: transcript
-        ))
-        return out
+        record.pid = pid
+        if let kind = AttentionProtocol.kind(record.kind), kind.isOpen { record.front = front }
+        return Written(lines: [record])
     }
 
     static func word(_ state: SessionBook.State?) -> String {
@@ -107,7 +82,6 @@ struct SessionBookTests {
             if event != "tick" {
                 let written = HookFeed.write(agent, event, payload, at: ms)
                 for line in written.lines { book.apply(line, nowMs: ms) }
-                for activity in written.activity { book.apply(activity: activity, nowMs: ms) }
             }
             book.settleHeldTurns(nowMs: ms)
             states.append(HookFeed.word(book.sessions["\(agent.rawValue)|s1"]?.state))
@@ -285,9 +259,9 @@ struct SessionBookTests {
         #expect(run.states == ["working", "blocked:permission", "blocked:permission", "turn"])
     }
 
-    /// The Stop line is applied before the answering tool's activity (the
-    /// engine reads the attention file, then the spool): the held turn still
-    /// ends the session's turn once the answer lands.
+    /// The Stop line lands before the answering tool's line (two hooks
+    /// racing for the log's lock): the held turn still ends the session's
+    /// turn once the answer lands.
     @Test func aHeldTurnLandsWhenTheAnswerArrivesAfterIt() {
         var book = SessionBook()
         let raise = HookFeed.write(.claude, "PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "npm test"]], at: t0)
@@ -295,7 +269,7 @@ struct SessionBookTests {
         let tool = HookFeed.write(.claude, "PostToolUse", ["tool_name": "Bash"], at: t0 + 4 * second)
         for line in raise.lines + stop.lines { book.apply(line, nowMs: t0 + 9 * second) }
         #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "blocked:permission")
-        for event in tool.activity { book.apply(activity: event, nowMs: t0 + 9 * second) }
+        for line in tool.lines { book.apply(line, nowMs: t0 + 9 * second) }
         #expect(book.sessions["claude|s1"]?.state == .yourTurn(sinceMs: t0 + 8 * second))
     }
 
@@ -316,7 +290,7 @@ struct SessionBookTests {
     @Test func aBlockThatNamesNoToolIsAnsweredByAnyTool() {
         var book = SessionBook()
         book.apply(AttentionRecord(agent: "copilot", kind: "permission", ms: t0, message: "Allow bash?", session: "s1"), nowMs: t0)
-        book.apply(activity: ActivitySpool.Event(agent: "copilot", session: "s1", event: "tool", tool: "bash", target: "", prompt: "", cwd: "", tsMs: t0 + second), nowMs: t0 + second)
+        book.apply(AttentionRecord(agent: "copilot", kind: "tool", ms: t0 + second, session: "s1", tool: "bash"), nowMs: t0 + second)
         #expect(HookFeed.word(book.sessions["copilot|s1"]?.state) == "working")
         #expect(SessionBook.blockedTool("Bash: npm test") == "Bash")
         #expect(SessionBook.blockedTool("AskUserQuestion") == "AskUserQuestion")
@@ -461,14 +435,14 @@ struct SessionBookTests {
     @Test func activityBeforeTheRaiseOrInAnotherSessionDoesNotAnswerIt() {
         var book = SessionBook()
         book.apply(AttentionRecord(agent: "claude", kind: "permission", ms: t0, session: "s1"), nowMs: t0)
-        func event(_ session: String, _ ms: Int64) -> ActivitySpool.Event {
-            ActivitySpool.Event(agent: "claude", session: session, event: "tool", tool: "Bash", target: "", prompt: "", cwd: "", tsMs: ms)
+        func event(_ session: String, _ ms: Int64) -> AttentionRecord {
+            AttentionRecord(agent: "claude", kind: "tool", ms: ms, session: session, tool: "Bash")
         }
-        book.apply(activity: event("s1", t0 - 1_000), nowMs: t0)
-        #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "blocked:permission", "the PreToolUse before the raise")
-        book.apply(activity: event("s2", t0 + 1_000), nowMs: t0 + 1_000)
+        book.apply(event("s1", t0 - 1_000), nowMs: t0)
+        #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "blocked:permission", "a tool line stamped before the raise")
+        book.apply(event("s2", t0 + 1_000), nowMs: t0 + 1_000)
         #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "blocked:permission", "another session's tool")
-        book.apply(activity: event("s1", t0 + 2_000), nowMs: t0 + 2_000)
+        book.apply(event("s1", t0 + 2_000), nowMs: t0 + 2_000)
         #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "working", "answered in the vendor's prompt")
     }
 
@@ -483,16 +457,126 @@ struct SessionBookTests {
         #expect(book.sessions.isEmpty)
     }
 
-    @Test func theSpoolReadAgainIsNotNews() {
+    /// 25.0: a tool line is an event like any other — it introduces a
+    /// working session; one that names no session makes nothing.
+    @Test func aToolLineIsWorkAndASessionlessOneIsNothing() {
         var book = SessionBook()
-        let event = ActivitySpool.Event(agent: "pi", session: "p", event: "tool", tool: "", target: "", prompt: "", cwd: "/w", tsMs: t0)
-        let changed5 = book.apply(activity: event, nowMs: t0)
+        let changed5 = book.apply(AttentionRecord(agent: "pi", kind: "tool", ms: t0, session: "p", cwd: "/w"), nowMs: t0)
         #expect(changed5)
-        let changed6 = book.apply(activity: event, nowMs: t0 + 1_000)
-        #expect(!changed6)
-        let stale = ActivitySpool.Event(agent: "pi", session: "q", event: "tool", tool: "", target: "", prompt: "", cwd: "/w", tsMs: t0 - 2 * 60 * minute)
-        let changed7 = book.apply(activity: stale, nowMs: t0)
-        #expect(!changed7, "a day-old spool file introduces nothing")
+        #expect(HookFeed.word(book.sessions["pi|p"]?.state) == "working")
+        #expect(book.sessions["pi|p"]?.activityMs == t0)
+        let changed6 = book.apply(AttentionRecord(agent: "pi", kind: "tool", ms: t0, session: "", cwd: "/w"), nowMs: t0)
+        #expect(!changed6, "a tool with no session has no row to belong to")
+        #expect(book.sessions.count == 1)
+    }
+
+    // MARK: - 25.0 audit fixes
+
+    /// Fix 3: every line is applied. Parallel tools written around the
+    /// answering one — before it and after it — no longer hide it (the spool
+    /// kept only the newest event per session).
+    @Test func parallelToolsAroundTheAnswerDoNotHideIt() {
+        var book = SessionBook()
+        let lines = [
+            AttentionRecord(agent: "claude", kind: "permission", ms: t0, message: "Bash: npm test", session: "s1", tool: "Bash"),
+            AttentionRecord(agent: "claude", kind: "tool", ms: t0 + 1 * second, message: "/w/a.swift", session: "s1", tool: "Read"),
+            AttentionRecord(agent: "claude", kind: "tool", ms: t0 + 2 * second, message: "/w/b.swift", session: "s1", tool: "Grep"),
+            AttentionRecord(agent: "claude", kind: "tool", ms: t0 + 3 * second, message: "npm test", session: "s1", tool: "Bash"),
+            AttentionRecord(agent: "claude", kind: "tool", ms: t0 + 3 * second + 200, message: "/w/c.swift", session: "s1", tool: "Read"),
+        ]
+        for (index, line) in lines.enumerated() {
+            book.apply(line, nowMs: t0 + 4 * second)
+            if index == 2 {
+                #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "blocked:permission", "parallel tools are not the answer")
+            }
+        }
+        #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "working")
+    }
+
+    /// Fix 1: Claude's PostToolUseFailure (a tool that ran and failed) is
+    /// activity for that tool, and answers the block raised for it.
+    @Test func aFailedToolAnswersItsPermission() {
+        let run = playAt(.claude, [
+            (0, "PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "npm test"]]),
+            (4 * second, "PostToolUseFailure", ["tool_name": "Bash", "tool_input": ["command": "npm test"], "error": "exit 1"]),
+        ])
+        #expect(run.states == ["blocked:permission", "working"])
+        let installed = AgentID.claude.spec.hooks.events.map(\.name)
+        #expect(installed.contains("PostToolUseFailure"))
+        #expect(!installed.contains("PermissionDenied"), "its output can ask for a retry")
+    }
+
+    /// Fix 9: Claude's AskUserQuestion says the question, ExitPlanMode the
+    /// plan — not the tool's name.
+    @Test func claudeAsksSayWhatIsAsked() {
+        let question = HookFeed.write(.claude, "PermissionRequest", [
+            "tool_name": "AskUserQuestion",
+            "tool_input": ["questions": [["question": "Which database should the cache use?", "header": "DB"]]],
+        ], at: t0).lines.first
+        #expect(question?.kind == "question")
+        #expect(question?.message == "Which database should the cache use?")
+        #expect(question?.tool == "AskUserQuestion")
+        let plan = HookFeed.write(.claude, "PermissionRequest", [
+            "tool_name": "ExitPlanMode",
+            "tool_input": ["plan": "## Move the cache to Redis\n\n1. Add the client\n2. Swap the store"],
+        ], at: t0).lines.first
+        #expect(plan?.kind == "permission")
+        #expect(plan?.message == "Move the cache to Redis")
+    }
+
+    /// Fix 9: a generic ask first (Claude's Notification can land before
+    /// its PermissionRequest), the specific one after: the specific one
+    /// wins, the first clock stays. The other way round keeps the first.
+    @Test func aMoreSpecificReRaiseReplacesAGenericAsk() {
+        let run = playAt(.claude, [
+            (0, "Notification", ["notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash"]),
+            (2 * second, "PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "npm test"]]),
+        ])
+        guard case .blocked(let block) = run.book.sessions["claude|s1"]?.state else {
+            Issue.record("not blocked")
+            return
+        }
+        #expect(block.ask == "Bash: npm test")
+        #expect(block.tool == "Bash")
+        #expect(block.sinceMs == t0)
+        #expect(SessionBook.askSpecificity("", tool: "") == 0)
+        #expect(SessionBook.askSpecificity("Bash", tool: "Bash") == 1)
+        #expect(SessionBook.askSpecificity("Claude needs your input", tool: "") == 1)
+        #expect(SessionBook.askSpecificity("Which database?", tool: "AskUserQuestion") == 2)
+    }
+
+    /// Fix 5: the first event that names a pid is the clock a reused pid is
+    /// judged against.
+    @Test func theBookRemembersWhenItFirstHeardAPid() {
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: "claude", kind: "start", ms: t0, session: "s1", pid: 500), nowMs: t0)
+        book.apply(AttentionRecord(agent: "claude", kind: "tool", ms: t0 + minute, session: "s1", pid: 500, tool: "Read"), nowMs: t0 + minute)
+        #expect(book.sessions["claude|s1"]?.pidSinceMs == t0)
+        // A resume in a new process: the new pid's clock starts again.
+        book.apply(AttentionRecord(agent: "claude", kind: "start", ms: t0 + 2 * minute, session: "s1", pid: 600), nowMs: t0 + 2 * minute)
+        #expect(book.sessions["claude|s1"]?.pid == 600)
+        #expect(book.sessions["claude|s1"]?.pidSinceMs == t0 + 2 * minute)
+        // A reused pid ends the session like a dead one.
+        book.endSessions(whoseProcessIsGone: { session in
+            !AgentProcesses.stillRuns(
+                agent: session.agent, since: session.pidSinceMs,
+                identity: AgentProcesses.Identity(args: "/usr/bin/vim notes.md", startedMs: t0 + 10 * minute)
+            )
+        })
+        #expect(book.sessions["claude|s1"]?.state == .ended(atMs: t0 + 2 * minute))
+        #expect(book.livePids.isEmpty)
+    }
+
+    /// Fix 10: a pid of 1 (the hook's parent had exited) is never a
+    /// session's process.
+    @Test func pidOneIsUnknown() {
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "s1", pid: 1), nowMs: t0)
+        #expect(book.sessions["claude|s1"]?.pid == 0)
+        #expect(book.livePids.isEmpty)
+        #expect(AttentionRecord(agent: "claude", kind: "working", ms: t0, pid: 1).line.split(separator: "\t", omittingEmptySubsequences: false)[7] == "")
+        #expect(AttentionProtocol.parsePid("1") == 0)
+        #expect(AttentionProtocol.parsePid("4242") == 4242)
     }
 
     @Test func aStampFromTheFutureIsRefused() {
@@ -519,10 +603,10 @@ struct SessionBookTests {
     }
 }
 
-/// 24.0 · the book as rows: process-only discovery, the time rules, and what
-/// a transcript and a landing add.
-@Suite("Session projection")
-struct SessionProjectionTests {
+/// The book as rows: process-only discovery, the time rules, and what a
+/// transcript and a landing add.
+@Suite("Tray projection")
+struct TrayStateTests {
     let t0: Int64 = 1_800_000_000_000
     let minute: Int64 = 60_000
 
@@ -531,12 +615,10 @@ struct SessionProjectionTests {
         processes: [AgentProcesses.Hit] = [],
         transcripts: [String: TranscriptSummary] = [:],
         at nowMs: Int64? = nil
-    ) -> SessionProjection.Output {
-        SessionProjection.rows(
-            book: book, processes: processes, transcripts: transcripts,
-            context: SessionProjection.Context(
-                nowMs: nowMs ?? t0
-            )
+    ) -> TrayState.SessionRows {
+        TrayState.sessionRows(
+            book: book, processes: processes, summaries: transcripts,
+            context: TrayState.Context(nowMs: nowMs ?? t0)
         )
     }
 
@@ -580,7 +662,7 @@ struct SessionProjectionTests {
 
     @Test func aKnownPidStaysRunningWhileTheProcessLives() throws {
         let b = book([AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "s1", pid: 40)])
-        let row = try #require(rows(b, at: t0 + 120 * minute).rows.first)
+        let row = try #require(rows(b, at: t0 + 100 * minute).rows.first)
         #expect(row.state == .running)
         #expect(row.liveProcess)
     }
@@ -591,9 +673,9 @@ struct SessionProjectionTests {
         let row = try #require(rows(b, at: t0 + 31 * minute).rows.first)
         #expect(row.state == .recent)
         #expect(row.recentReason == .quiet)
-        #expect(row.stateSinceMs == t0 + SessionProjection.idleBoundMs)
+        #expect(row.stateSinceMs == t0 + TrayState.idleBoundMs)
         let why = Explain.why(row, lang: .en, nowMs: t0 + 31 * minute)
-        #expect(why.contains("no process Pulse can see"), "\(why)")
+        #expect(why.contains("no process to watch"), "\(why)")
     }
 
     @Test func aTurnIsOwedForHalfAnHour() throws {
@@ -616,11 +698,48 @@ struct SessionProjectionTests {
         #expect(rows(b, at: t0 + 25 * 60 * minute).staleHidden.isEmpty, "a session that went quiet yesterday is not news")
     }
 
-    @Test func aLiveSessionAtItsPromptStaysListed() throws {
-        let b = book([AttentionRecord(agent: "claude", kind: "start", ms: t0, session: "s1", pid: 60)])
-        let row = try #require(rows(b, at: t0 + 120 * minute).rows.first)
+    /// Fix 6: one Cursor IDE or OpenCode server process runs many
+    /// sessions all day. Its live pid keeps a working or blocked session
+    /// listed — never one that is idle, whose turn aged out, or that is
+    /// recent: those leave after the recent window like any other.
+    @Test func aLiveProcessKeepsOnlyWorkOrAWaitListed() throws {
+        let b = book([
+            AttentionRecord(agent: "opencode", kind: "start", ms: t0, session: "o1", pid: 60),
+            AttentionRecord(agent: "opencode", kind: "turn", ms: t0, session: "o2", pid: 60),
+            AttentionRecord(agent: "opencode", kind: "working", ms: t0, session: "o3", pid: 60),
+            AttentionRecord(agent: "opencode", kind: "permission", ms: t0, message: "bash: ls", session: "o4", pid: 60),
+        ])
+        let early = rows(b, at: t0 + 40 * minute)
+        #expect(early.rows.count == 4, "inside the recent window every one is listed")
+        let later = rows(b, at: t0 + 100 * minute)
+        let keys = later.rows.map(\.rowKey).sorted()
+        #expect(keys == ["opencode|o3", "opencode|o4"])
+        #expect(later.staleHidden == [.opencode: 2])
+        let live = later.rows.filter { $0.liveProcess }.count
+        #expect(live == 2)
+    }
+
+    /// Fix 7: an interrupted turn sends no Stop. From an agent that reports
+    /// its tools, silence is a stall for a while — then, past
+    /// `silentBoundMs`, the session is recent and says why: never an
+    /// endless orange.
+    @Test func anInterruptedTurnStallsThenGoesQuiet() throws {
+        let b = book([
+            AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "s1", pid: 41),
+            AttentionRecord(agent: "claude", kind: "tool", ms: t0 + minute, session: "s1", pid: 41, tool: "Bash"),
+        ])
+        let stalled = try #require(rows(b, at: t0 + 30 * minute).rows.first)
+        #expect(stalled.state == .running)
+        #expect(stalled.isStalled)
+        let silent = t0 + minute + TrayState.silentBoundMs + minute
+        let row = try #require(rows(b, at: silent).rows.first)
         #expect(row.state == .recent)
-        #expect(row.recentReason == .atPrompt)
+        #expect(!row.isStalled)
+        #expect(row.recentReason == .silent)
+        #expect(row.stateSinceMs == t0 + minute + TrayState.silentBoundMs)
+        let why = Explain.why(row, lang: .en, nowMs: silent)
+        #expect(why.hasPrefix("Nothing heard for"), "\(why)")
+        #expect(rows(b, at: silent + TrayState.recentWindowMs).rows.isEmpty, "and it leaves the list, process or not")
     }
 
     @Test func theTranscriptSummaryFillsTheRow() throws {
@@ -645,13 +764,13 @@ struct SessionProjectionTests {
         #expect(row.landing.tty == "ttys009")
         #expect(row.landing.term == "WarpTerminal")
         #expect(row.landingPlan.steps.first == LandingStep.tmuxPane(pane: "%3", socket: "", hostBundleIDs: ["dev.warp.Warp-Stable", "dev.warp.Warp"]))
-        #expect(row.landsExactly)
+        #expect(row.landingPlan.precision == .exact)
     }
 
     @Test func aStallNeedsAnAgentThatReportsItsWork() throws {
         var b = book([AttentionRecord(agent: "codex", kind: "working", ms: t0, session: "c1", pid: 80)])
         #expect(try #require(rows(b, at: t0 + 40 * minute).rows.first).isStalled == false, "no activity events: silence is not evidence")
-        b.apply(activity: ActivitySpool.Event(agent: "codex", session: "c1", event: "tool", tool: "", target: "", prompt: "", cwd: "", tsMs: t0 + minute), nowMs: t0 + minute)
+        b.apply(AttentionRecord(agent: "codex", kind: "tool", ms: t0 + minute, session: "c1"), nowMs: t0 + minute)
         #expect(try #require(rows(b, at: t0 + 40 * minute).rows.first).isStalled)
     }
 
@@ -668,7 +787,7 @@ struct SessionProjectionTests {
         #expect(!AgentID.opencode.reportsToolActivity)
         for agent in [AgentID.cursor, .opencode] {
             var b = book([AttentionRecord(agent: agent.rawValue, kind: "working", ms: t0, session: "x1", pid: 81)])
-            b.apply(activity: ActivitySpool.Event(agent: agent.rawValue, session: "x1", event: "tool", tool: "", target: "", prompt: "", cwd: "", tsMs: t0 + minute), nowMs: t0 + minute)
+            b.apply(AttentionRecord(agent: agent.rawValue, kind: "tool", ms: t0 + minute, session: "x1"), nowMs: t0 + minute)
             let row = try #require(rows(b, at: t0 + 40 * minute).rows.first)
             #expect(row.state == .running)
             #expect(!row.isStalled, "\(agent.rawValue)")
@@ -684,8 +803,9 @@ struct SessionProjectionTests {
     }
 }
 
-/// The thin end: rows in, the tray's snapshot out.
-final class SnapshotBuilderTests: XCTestCase {
+/// Rows in, the tray out: the order, the window, the lamp, the title and
+/// the Waiting edges.
+final class TrayAssembleTests: XCTestCase {
     private let now: Int64 = 1_700_000_000_000
 
     private func row(_ key: String, _ agent: AgentID = .claude, state: RowState = .running, task: String = "") -> AgentRow {
@@ -693,7 +813,7 @@ final class SnapshotBuilderTests: XCTestCase {
         r.sessionID = key
         r.task = task
         r.state = state
-        r.eventMs = now - 1_000
+        r.lastEventMs = now - 1_000
         return r
     }
 
@@ -704,13 +824,15 @@ final class SnapshotBuilderTests: XCTestCase {
     private func build(
         _ rows: [AgentRow],
         staleHidden: [AgentID: Int] = [:],
-        previous: SnapshotBuilder.Previous = .init(),
+        previousWaits: [String: Int64] = [:],
         showAll: Bool = false,
-        maxRows: Int = SnapshotBuilder.maxVisibleRows
-    ) -> SnapshotBuilder.Result {
-        SnapshotBuilder.build(
-            rows: rows, staleHidden: staleHidden, previous: previous,
-            context: SnapshotBuilder.Context(nowMs: now, lang: .en, maxVisibleRows: maxRows, showAllAgents: showAll)
+        maxRows: Int = TrayState.maxVisibleRows
+    ) -> TrayState {
+        TrayState.assemble(
+            rows: rows, staleHidden: staleHidden,
+            context: TrayState.Context(
+                nowMs: now, lang: .en, maxVisibleRows: maxRows, showAllAgents: showAll, previousWaits: previousWaits
+            )
         )
     }
 
@@ -775,24 +897,24 @@ final class SnapshotBuilderTests: XCTestCase {
     }
 
     func testFirstSightOfAWaitIsReportedAsNew() {
-        XCTAssertEqual(build([blocked("a")]).newlyWaiting.map(\.rowKey), ["a"])
+        XCTAssertEqual(build([blocked("a")]).newlyBlocked.map(\.rowKey), ["a"])
     }
 
     func testAWaitAlreadyKnownIsNotReportedAgain() {
         let wait = blocked("a")
-        let previous = SnapshotBuilder.Previous(rows: [wait], waitingKeys: ["a"], waitingSince: ["a": wait.wait?.sinceMs ?? 0])
-        XCTAssertTrue(build([wait], previous: previous).newlyWaiting.isEmpty)
+        XCTAssertTrue(build([wait], previousWaits: ["a": wait.wait?.sinceMs ?? 0]).newlyBlocked.isEmpty)
     }
 
     func testASecondAskOnAWaitingRowIsANewEdge() {
-        let first = blocked("a", sinceAgoMs: 120_000)
-        let previous = SnapshotBuilder.Previous(rows: [first], waitingKeys: ["a"], waitingSince: ["a": now - 120_000])
-        XCTAssertEqual(build([blocked("a", sinceAgoMs: 30_000)], previous: previous).newlyWaiting.map(\.rowKey), ["a"])
+        let second = build([blocked("a", sinceAgoMs: 30_000)], previousWaits: ["a": now - 120_000])
+        XCTAssertEqual(second.newlyBlocked.map(\.rowKey), ["a"])
     }
 
-    func testResolvedWaitsAreReported() {
-        let previous = SnapshotBuilder.Previous(rows: [blocked("a")], waitingKeys: ["a"])
-        XCTAssertEqual(build([row("a")], previous: previous).resolvedWaits.map(\.rowKey), ["a"])
+    /// The next projection's `previousWaits`: when each open wait was raised.
+    func testTheOpenWaitsAreHandedOn() {
+        let r = build([blocked("a", sinceAgoMs: 60_000), row("b")])
+        XCTAssertEqual(r.waitingSince, ["a": now - 60_000])
+        XCTAssertTrue(build([row("a")], previousWaits: ["a": now - 60_000]).waitingSince.isEmpty, "a resolved wait is gone")
     }
 
     /// 21.0/24.0: "N older not shown" counts only sessions that went quiet
@@ -803,18 +925,17 @@ final class SnapshotBuilderTests: XCTestCase {
         book.apply(AttentionRecord(agent: "claude", kind: "end", ms: now - 2 * 60 * minute, session: "x"), nowMs: now)
         book.apply(AttentionRecord(agent: "claude", kind: "working", ms: now - 3 * 60 * minute, session: "y"), nowMs: now)
         book.apply(AttentionRecord(agent: "codex", kind: "working", ms: now - 30 * 60 * minute, session: "z"), nowMs: now)
-        let output = SessionProjection.rows(
-            book: book, processes: [], transcripts: [:],
-            context: SessionProjection.Context(nowMs: now)
+        let r = TrayState.project(
+            book: book, processes: [], summaries: [:],
+            context: TrayState.Context(nowMs: now, lang: .en)
         )
-        let r = build(output.rows, staleHidden: output.staleHidden)
         XCTAssertEqual(r.snapshot.staleHidden, 1, "the end line made no session; y went quiet today; z yesterday")
         XCTAssertEqual(r.snapshot.staleHiddenAgents, [.claude])
     }
 
     func testTheGlanceTooltipIsInTheResolvedLanguage() {
-        let en = SnapshotBuilder.build(rows: [blocked("a")], previous: .init(), context: .init(nowMs: now, lang: .en)).snapshot.tooltip
-        let zh = SnapshotBuilder.build(rows: [blocked("a")], previous: .init(), context: .init(nowMs: now, lang: .zh)).snapshot.tooltip
+        let en = TrayState.assemble(rows: [blocked("a")], context: .init(nowMs: now, lang: .en)).snapshot.tooltip
+        let zh = TrayState.assemble(rows: [blocked("a")], context: .init(nowMs: now, lang: .zh)).snapshot.tooltip
         XCTAssertNotEqual(en, zh)
     }
 }
@@ -826,9 +947,6 @@ struct RowIdentityTests {
         #expect(RowIdentity.session(agent: .claude, session: "abc") == "claude|abc")
         #expect(RowIdentity.process(agent: .codex, pid: 7) == "codex|pid:7")
         #expect(RowIdentity.session(agent: .claude, session: "", cwd: "/w").hasPrefix("claude|hook:"))
-        #expect(RowIdentity.isProcessKey("codex|pid:7"))
-        #expect(!RowIdentity.isProcessKey("codex|abc"))
-        #expect(RowIdentity.isFolderKey(RowIdentity.session(agent: .gemini, session: "", cwd: "/w")))
     }
 
     @Test func theHashIsStableAcrossLaunches() {
@@ -854,11 +972,13 @@ struct RowIdentityTests {
     @Test func whenTheSessionSpeaksTheProcessRowSimplyGoes() {
         let t0: Int64 = 1_800_000_000_000
         let hit = AgentProcesses.Hit(agent: .claude, pid: 4242, cwd: "/w/app")
-        let context = SessionProjection.Context(nowMs: t0)
+        let context = TrayState.Context(nowMs: t0)
         var book = SessionBook()
-        #expect(SessionProjection.rows(book: book, processes: [hit], transcripts: [:], context: context).rows.map(\.rowKey) == ["claude|pid:4242"])
+        let before = TrayState.project(book: book, processes: [hit], summaries: [:], context: context).rows.map(\.rowKey)
+        #expect(before == ["claude|pid:4242"])
         book.apply(AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "abc", pid: 4242), nowMs: t0)
-        #expect(SessionProjection.rows(book: book, processes: [hit], transcripts: [:], context: context).rows.map(\.rowKey) == ["claude|abc"])
+        let after = TrayState.project(book: book, processes: [hit], summaries: [:], context: context).rows.map(\.rowKey)
+        #expect(after == ["claude|abc"])
     }
 }
 
@@ -873,7 +993,7 @@ final class AgentRowTests: XCTestCase {
     func testPlaceholderTitlesAreNotTreatedAsSessions() {
         for junk in [
             "-", "—", "Running", "Active", "none", "Agent session", "Chat",
-            "Amp session", "OpenCode session", "Windsurf session", "Cline session",
+            "Cursor session", "OpenCode session", "Gemini session", "Pi session",
         ] {
             let r = row { $0.task = junk }
             XCTAssertNil(r.usefulTask, "\(junk) is not a real session title")
@@ -972,7 +1092,7 @@ final class RowContextTests: XCTestCase {
         var r = AgentRow(rowKey: "k", agent: .claude)
         r.cwd = cwd
         r.project = project
-        r.eventMs = eventMs
+        r.lastEventMs = eventMs
         return r
     }
 
@@ -1020,7 +1140,7 @@ final class RowPresentationTests: XCTestCase {
         var r = AgentRow(rowKey: "k", agent: .claude)
         r.cwd = cwd
         r.project = project
-        r.eventMs = eventMs
+        r.lastEventMs = eventMs
         r.liveProcess = live
         r.state = live ? .running : .recent
         return r
@@ -1121,12 +1241,10 @@ final class StallThresholdTests: XCTestCase {
 final class ChromeVocabularyTests: XCTestCase {
     // MARK: - One chrome vocabulary, not three
 
-    /// 0.98 collapsed the collector's two copies. The third lived in
-    /// `usefulTask`, was case-sensitive where the collector lowercases, and had
-    /// never learned `Cascade session`.
+    /// `usefulTask` once had its own case-sensitive copy of the list.
     @MainActor
     func testChromeTitlesAreRejectedWhateverTheirCase() {
-        for title in ["Cascade session", "CASCADE SESSION", "cascade session",
+        for title in ["Copilot session", "COPILOT SESSION", "copilot session",
                       "New Chat", "new chat", "Running", "running", "  Untitled  "] {
             var row = AgentRow(rowKey: "k", agent: .copilot)
             row.task = title
@@ -1138,7 +1256,7 @@ final class ChromeVocabularyTests: XCTestCase {
     /// and none reaches a row as a goal.
     @MainActor
     func testCollectorAndRowShareOneVocabulary() {
-        for title in AgentRow.chromeTitles {
+        for title in TitleHeuristics.chromeTitles {
             XCTAssertTrue(
                 AgentRow.isChromeTitle(title.uppercased()),
                 "\(title) must be chrome in either case"

@@ -41,7 +41,7 @@ public enum AgentID: String, CaseIterable, Identifiable, Hashable, Sendable {
     ]
 
     /// Agents whose hook never reports a blocked session — they show running
-    /// and your turn only. Single source for Settings, Diagnostics and L10n.
+    /// and your turn only. Single source for Settings and L10n.
     public static var waitingNoneAgents: [AgentID] {
         priority.filter { $0.waitingSource == .none }
     }
@@ -162,7 +162,13 @@ public struct HookContract: Sendable {
 public struct AgentProcessRule: Sendable {
     public var basenames: [String]
     public var pathNeedles: [String]
+    /// Fragments of the program itself — the executable, or an
+    /// interpreter's script — that say it is not the agent (never the
+    /// arguments: `pi ./pipeline.ts` is Pi).
     public var denyNeedles: [String]
+    /// Fragments of the whole command line that say it is not the agent: an
+    /// argument (`--worker-dir`), or a path with a space in it.
+    public var argvDenyNeedles: [String] = []
     /// Some real CLIs intentionally use a short executable name (`pi`).
     /// Their exact basename is useful evidence after the deny list has run;
     /// length alone must not make a live agent vanish.
@@ -198,15 +204,20 @@ public enum AgentCatalog {
             // The native install's `~/.local/bin/claude` links into
             // `~/.local/share/claude/versions/<version>`, the path the kernel
             // reports for the running binary.
-            process: AgentProcessRule(basenames: ["claude"], pathNeedles: ["/.local/bin/claude", "/bin/claude", "/.local/share/claude/versions/"], denyNeedles: ["Claude.app", "chrome-native-host"]),
+            process: AgentProcessRule(basenames: ["claude"], pathNeedles: ["/.local/bin/claude", "/bin/claude", "/.local/share/claude/versions/"], denyNeedles: [], argvDenyNeedles: ["Claude.app", "chrome-native-host"]),
             // Every entry runs `async: true`: an async hook cannot block or
             // decide anything (code.claude.com/docs/en/hooks, "Run hooks in
-            // the background"). PostToolUse, not PreToolUse, marks activity.
+            // the background"). PostToolUse, not PreToolUse, marks activity;
+            // PostToolUseFailure is the same for a tool that failed —
+            // a denied or failed call still answers the block raised for it.
+            // PermissionDenied is not installed: its output can ask for a
+            // retry, so it is not observe-only.
             hooks: HookContract(format: .claudeSettings, path: ".claude/settings.json", home: ".claude", events: [
                 HookEvent("SessionStart"),
                 HookEvent("SessionEnd"),
                 HookEvent("UserPromptSubmit"),
                 HookEvent("PostToolUse"),
+                HookEvent("PostToolUseFailure"),
                 HookEvent("PermissionRequest"),
                 HookEvent("Notification", matcher: "permission_prompt|idle_prompt|agent_needs_input|elicitation_dialog|elicitation_url_dialog|elicitation_complete|elicitation_response"),
                 HookEvent("Stop"),
@@ -223,7 +234,7 @@ public enum AgentCatalog {
             // turn; they never say blocked.
             waiting: .none,
             aliases: [],
-            process: AgentProcessRule(basenames: ["codex"], pathNeedles: ["/opt/homebrew/bin/codex", "/bin/codex", "Resources/codex"], denyNeedles: ["Codex Framework", "crashpad", "computer-use", "codex-code-mode-host"]),
+            process: AgentProcessRule(basenames: ["codex"], pathNeedles: ["/opt/homebrew/bin/codex", "/bin/codex", "Resources/codex"], denyNeedles: [], argvDenyNeedles: ["Codex Framework", "crashpad", "computer-use", "codex-code-mode-host"]),
             // PostToolUse runs `async` (codex-rs/hooks engine/discovery.rs:
             // only SessionEnd is forced synchronous), so it cannot change
             // what Codex does; it is the per-tool activity the stall rule
@@ -251,7 +262,8 @@ public enum AgentCatalog {
             process: AgentProcessRule(
                 basenames: ["Cursor", "cursor", "cursor-agent", "cursor_agent"],
                 pathNeedles: ["Cursor.app/Contents/MacOS/Cursor", "cursor-agent", "anysphere.cursor-agent"],
-                denyNeedles: ["crashpad", "CursorUIViewService", "worker start", "--worker-dir"]
+                denyNeedles: [],
+                argvDenyNeedles: ["crashpad", "CursorUIViewService", "worker start", "--worker-dir"]
             ),
             // Observe-only events: `beforeSubmitPrompt` can stop a prompt
             // (`continue: false`), so it is not installed.
@@ -270,6 +282,8 @@ public enum AgentCatalog {
             // a blocking user-facing prompt (a confirm, a select, an input).
             waiting: .hooks,
             aliases: [],
+            // Pi's deny list is the program's own name (`pip`, `pihole`…):
+            // an argument such as `./pipeline.ts` does not make Pi not Pi.
             process: AgentProcessRule(basenames: ["pi"], pathNeedles: ["pi-coding-agent", "/opt/homebrew/bin/pi", "/usr/local/bin/pi", "/.local/bin/pi"], denyNeedles: ["pip", "pip3", "pihole", "pickle", "pypi", "pixel", "piano"], allowBareBasename: true),
             hooks: HookContract(format: .piExtension, path: ".pi/agent/extensions/pulse.js", home: ".pi", events: [
                 HookEvent("session_start"),
@@ -289,7 +303,7 @@ public enum AgentCatalog {
             // grant anything (google-gemini/gemini-cli docs/hooks/reference.md).
             waiting: .hooks,
             aliases: [],
-            process: AgentProcessRule(basenames: ["gemini", "gemini-cli"], pathNeedles: ["/bin/gemini", "gemini-cli", "@google/gemini-cli"], denyNeedles: ["Gemini.app"]),
+            process: AgentProcessRule(basenames: ["gemini", "gemini-cli"], pathNeedles: ["/bin/gemini", "gemini-cli", "@google/gemini-cli"], denyNeedles: [], argvDenyNeedles: ["Gemini.app"]),
             // BeforeAgent, AfterAgent and AfterTool act only on exit 2 or a
             // `decision` / `continue` in stdout; Pulse's hook prints nothing
             // and exits 0 (docs/hooks/reference.md, "Global hook
@@ -315,7 +329,8 @@ public enum AgentCatalog {
             process: AgentProcessRule(
                 basenames: ["copilot"],
                 pathNeedles: ["/bin/copilot", "github/gh-copilot", "@github/copilot", "copilot-cli"],
-                denyNeedles: ["crashpad", "language-server", "copilot-language-server", "Copilot.Helper", "Copilot for Xcode"]
+                denyNeedles: [],
+                argvDenyNeedles: ["crashpad", "language-server", "copilot-language-server", "Copilot.Helper", "Copilot for Xcode"]
             ),
             // postToolUse / postToolUseFailure: empty output keeps the tool's
             // own result (hooks-reference.md, "postToolUse output"); the

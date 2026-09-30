@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Mac-only Observation Truth fixture captures for Pulse 0.51+.
+# Mac-only status fixture captures: the tray panel and the menu-bar lamp for
+# each status-* fixture, drawn by `PulseQA`.
 #
 #   ./scripts/qa_observation_truth.sh
 #
@@ -7,18 +8,21 @@
 # Fails if any expected PNG is missing (CI-friendly).
 #
 # Optional env:
+#   PULSE_QA=path                    (a built PulseQA; default: build it)
 #   PULSE_QA_APPEARANCE=light|dark   (default light)
 #   PULSE_QA_LANGUAGE=zh|en         (default zh)
 #   PULSE_QA_TIMEOUT_SECONDS=N      (default 14)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-if [[ -n "${PULSE_APP:-}" ]]; then
-  APP="$PULSE_APP"
-elif [[ -x "$ROOT/zig-out/package/Pulse.app/Contents/MacOS/PulseBar" ]]; then
-  APP="$ROOT/zig-out/package/Pulse.app/Contents/MacOS/PulseBar"
+# The QA driver is its own executable (`PulseQA`): the shipping app carries no
+# fixture and no capture. Built in the debug configuration — it reaches the
+# app's internals through `@testable import`.
+if [[ -n "${PULSE_QA:-}" ]]; then
+  APP="$PULSE_QA"
 else
-  APP="/Applications/Pulse.app/Contents/MacOS/PulseBar"
+  swift build --package-path "$ROOT/PulseBar" --product PulseQA >&2
+  APP="$(swift build --package-path "$ROOT/PulseBar" --product PulseQA --show-bin-path)/PulseQA"
 fi
 OUT="${PULSE_QA_OUT:-$ROOT/zig-out/qa-observation-truth}"
 APPEARANCE="${PULSE_QA_APPEARANCE:-light}"
@@ -30,7 +34,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 2
 fi
 if [[ ! -x "$APP" ]]; then
-  echo "error: Pulse binary not found at $APP" >&2
+  echo "error: PulseQA binary not found at $APP" >&2
   exit 2
 fi
 
@@ -38,11 +42,13 @@ mkdir -p "$OUT"
 echo "Observation Truth captures → $OUT (app=$APP appearance=$APPEARANCE language=$LANGUAGE)"
 
 quit_pulse() {
-  osascript -e 'tell application id "com.pulse.app" to quit' >/dev/null 2>&1 || true
+  # One Pulse per Mac (SingleInstanceGuard): a running app would keep the
+  # driver from starting.
   pkill -x PulseBar >/dev/null 2>&1 || true
+  pkill -x PulseQA >/dev/null 2>&1 || true
   # Brief settle; avoid a fixed multi-second sleep on the happy path.
   for _ in 1 2 3 4 5 6; do
-    if ! pgrep -x PulseBar >/dev/null 2>&1; then
+    if ! pgrep -x PulseQA >/dev/null 2>&1 && ! pgrep -x PulseBar >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.2

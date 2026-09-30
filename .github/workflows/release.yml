@@ -49,7 +49,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          CODE="$(sed -n 's/.*static let semver = "\([^"]*\)".*/\1/p' PulseBar/Sources/PulseBar/Models.swift)"
+          CODE="$(sed -n 's/.*static let semver = "\([^"]*\)".*/\1/p' PulseBar/Sources/PulseApp/Models.swift)"
 
           case "${{ github.event_name }}" in
             push)
