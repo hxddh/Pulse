@@ -51,8 +51,10 @@ extension StatusStore {
             loginNote: login.note,
             language: settings.language,
             terminalAutomation: settings.allowTerminalAutomation,
-            hotkey: settings.hotkey,
-            hotkeyTaken: settings.hotkey != .off && !hotkeyRegistered,
+            hotkeyLabel: settings.hotkey?.label,
+            hotkeyRecording: hotkeyRecorder.recording,
+            hotkeyProblem: hotkeyRecorder.problem
+                ?? (settings.hotkey != nil && !hotkeyRegistered && !hotkeyRecorder.recording ? .cantUse : nil),
             notifications: notifications,
             notifyOnWaiting: notifications == .allowed && settings.notifyOnWaiting,
             mutedAgents: SettingsModel.sortedMuted(settings.mutedAgents),
@@ -87,7 +89,12 @@ extension StatusStore {
         case .openLoginItems: LoginItem.openSystemSettings()
         case .setLanguage(let language): set(\.language, language)
         case .setTerminalAutomation(let on): set(\.allowTerminalAutomation, on)
-        case .setHotkey(let choice): set(\.hotkey, choice)
+        case .recordHotkey: startRecordingHotkey()
+        case .stopRecordingHotkey: stopRecordingHotkey()
+        case .clearHotkey:
+            stopRecordingHotkey()
+            set(\.hotkey, nil)
+            if hotkeyRecorder.problem != nil { hotkeyRecorder.problem = nil }
         case .enableNotifications: requestNotificationAuthorization()
         case .openNotificationSettings: openSystemNotificationSettings()
         case .setNotifyOnWaiting(let on):
@@ -187,12 +194,6 @@ struct SettingsFace: View {
         return Binding(get: { value }, set: { send(.setLanguage($0)) })
     }
 
-    private var hotkeyBinding: Binding<HotkeyChoice> {
-        let send = self.send
-        let value = model.hotkey
-        return Binding(get: { value }, set: { send(.setHotkey($0)) })
-    }
-
     // MARK: Rows
 
     @ViewBuilder
@@ -225,19 +226,43 @@ struct SettingsFace: View {
                 Text(t(.terminalAutomationHint))
             }
         case .shortcut:
-            Picker(selection: hotkeyBinding) {
-                Text(t(.shortcutOff)).tag(HotkeyChoice.off)
-                Divider()
-                ForEach(HotkeyChoice.allCases.filter { $0 != .off }) { choice in
-                    Text(choice.label).tag(choice)
+            LabeledContent {
+                HStack(spacing: PulseTheme.Space.xs) {
+                    Button {
+                        send(model.hotkeyRecording ? .stopRecordingHotkey : .recordHotkey)
+                    } label: {
+                        Text(SettingsModel.shortcutTitle(model))
+                            .frame(minWidth: 120)
+                    }
+                    .buttonStyle(.bordered)
+                    if model.hotkeyLabel != nil, !model.hotkeyRecording {
+                        Button { send(.clearHotkey) } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel(t(.shortcutClear))
+                    }
                 }
             } label: {
                 Text(t(.revealShortcut))
             }
-            if model.hotkeyTaken {
+            if model.hotkeyRecording, model.hotkeyProblem == nil {
+                Text(t(.shortcutRecordingHint))
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
+            }
+            switch model.hotkeyProblem {
+            case .needsModifier?:
+                Label(t(.shortcutNeedsModifier), systemImage: "keyboard")
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
+            case .cantUse?:
                 Label(t(.hotkeyTaken), systemImage: "exclamationmark.triangle")
                     .font(PulseTheme.Font.caption)
                     .foregroundStyle(PulseTheme.Tone.attention.color)
+            case nil:
+                EmptyView()
             }
         case .notifications:
             switch model.notifications {

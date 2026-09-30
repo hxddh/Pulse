@@ -26,7 +26,7 @@ enum PulseTheme {
     enum Radius {
         /// Inner blocks, fields inside a card.
         static let inner: CGFloat = 6
-        /// Rows' hover/selection fill and every card.
+        /// The selected row's fill and every card.
         static let card: CGFloat = 10
         /// The tray panel and floating surfaces.
         static let panel: CGFloat = 14
@@ -36,7 +36,6 @@ enum PulseTheme {
 
     enum Fill {
         static let subtle: Double = 0.04
-        static let hover: Double = 0.06
         static let selected: Double = 0.10
         /// A notice's tinted surface.
         static let waitTint: Double = 0.07

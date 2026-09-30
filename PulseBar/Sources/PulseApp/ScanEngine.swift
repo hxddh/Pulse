@@ -483,7 +483,6 @@ final class ScanEngine {
                 nowMs: nowMs,
                 lang: model.lang,
                 allowAutomation: model.settings.allowTerminalAutomation,
-                showAllAgents: model.showAllAgents,
                 previousWaits: lastWaits
             )
         )

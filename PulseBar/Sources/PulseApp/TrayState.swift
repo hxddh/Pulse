@@ -25,8 +25,6 @@ import Foundation
 ///   process does not keep it listed:
 ///   one Cursor or OpenCode process runs many sessions all day.
 struct TrayState: Equatable {
-    /// Rows shown before the "and N more" fold.
-    static let maxVisibleRows = 12
     static let idleBoundMs: Int64 = 30 * 60 * 1000
     static let recentWindowMs: Int64 = 45 * 60 * 1000
     /// A working session with no event for this long is recent, whatever
@@ -46,15 +44,13 @@ struct TrayState: Equatable {
         var allowAutomation = false
         /// Seconds of silence that make a working session stalled; 0 off.
         var stalledSeconds: Double = AgentRow.stalledSeconds
-        var maxVisibleRows: Int = TrayState.maxVisibleRows
-        var showAllAgents = false
         /// The previous projection's open waits (`waitingSince`): a row not
         /// in it, or one whose wait is a new raise, is a Waiting edge.
         var previousWaits: [String: Int64] = [:]
     }
 
-    /// Every row, in the tray's order (the visible window is
-    /// `snapshot.rows`).
+    /// Every row, in the tray's order (`snapshot.rows` carries the same
+    /// list: the tray lists every session and scrolls).
     var rows: [AgentRow] = []
     /// The glance, the menu-bar title and tooltip, the counts, the window.
     var snapshot = PulseSnapshot()
@@ -66,8 +62,6 @@ struct TrayState: Equatable {
     /// Rows that became blocked since the previous projection — reported,
     /// not acted on: `WaitNotifier` owns notification policy.
     var newlyBlocked: [AgentRow] = []
-    /// `showAllAgents` after collapsing it when the list got short again.
-    var showAllAgents = false
 
     /// The book and the processes, as the tray.
     static func project(
@@ -285,8 +279,7 @@ struct TrayState: Equatable {
         }
 
         state.rows = all
-        state.showAllAgents = context.showAllAgents && all.count > context.maxVisibleRows
-        state.snapshot = snapshot(rows: all, showAll: state.showAllAgents, context: context)
+        state.snapshot = snapshot(rows: all, context: context)
         state.activity = activity(rows: all)
         for row in all {
             guard let wait = row.wait, state.waitingSince[row.rowKey] == nil else { continue }
@@ -326,7 +319,6 @@ struct TrayState: Equatable {
     /// The glance, the counts, the tooltip and the lamp for a row list.
     private static func snapshot(
         rows all: [AgentRow],
-        showAll: Bool,
         context: Context
     ) -> PulseSnapshot {
         let lang = context.lang
@@ -335,7 +327,8 @@ struct TrayState: Equatable {
 
         var snap = PulseSnapshot()
         snap.counts = counts
-        window(rows: all, showAll: showAll, maxVisible: context.maxVisibleRows, into: &snap)
+        snap.rows = all
+        snap.totalCount = all.count
 
         // The lamp. Red when anything is blocked; orange only for a stalled
         // session; green for a running session; grey otherwise — a finished
@@ -451,23 +444,6 @@ struct TrayState: Equatable {
             if recent > 0 { bits.append(recent == 1 ? t(.recent1) : "\(recent) \(t(.recentN))") }
             return bits.isEmpty ? t(.noAgents) : bits.joined(separator: " · ")
         }
-    }
-
-    /// Fold the row list down to what the tray shows.
-    static func window(
-        rows: [AgentRow],
-        showAll: Bool,
-        maxVisible: Int,
-        into snap: inout PulseSnapshot
-    ) {
-        if showAll || rows.count <= maxVisible {
-            snap.rows = rows
-            snap.hiddenCount = 0
-        } else {
-            snap.rows = Array(rows.prefix(maxVisible))
-            snap.hiddenCount = rows.count - maxVisible
-        }
-        snap.totalCount = rows.count
     }
 }
 

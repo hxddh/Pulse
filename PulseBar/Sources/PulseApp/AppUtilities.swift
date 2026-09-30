@@ -28,7 +28,8 @@ enum LoginItem {
         do {
             if enabled {
                 try SMAppService.mainApp.register()
-            } else if state != .off {
+            } else if state.isOn {
+                // Off, or never found: nothing to unregister.
                 try SMAppService.mainApp.unregister()
             }
         } catch {
@@ -65,15 +66,22 @@ enum LoginItem {
         return arguments.contains { $0.hasSuffix("/PulseBar") || $0.hasSuffix("Pulse.app") }
     }
 
+    /// Whether the LaunchAgent an earlier version wrote is there and is
+    /// Pulse's own — the person had turned "Open at login" on.
+    static func hasLegacyAgent(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Bool {
+        let url = legacyAgentURL(home: home)
+        guard let data = SafeRead.regularFile(atPath: url.path, limit: 64 * 1024) else { return false }
+        return isPulsesOwnAgent(data)
+    }
+
     /// Unload and delete the LaunchAgent an earlier version wrote, when it
-    /// is there and is Pulse's own. Returns whether it was — the person had
-    /// turned "Open at login" on, and the caller registers Pulse with macOS
-    /// instead, so the choice is kept.
+    /// is there and is Pulse's own. Called only once macOS has taken the
+    /// login item in its place (`LoginAdoption`), so the person's choice is
+    /// never lost. Returns whether it was removed.
+    @discardableResult
     static func retireLegacyAgent(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Bool {
         let url = legacyAgentURL(home: home)
-        guard let data = SafeRead.regularFile(atPath: url.path, limit: 64 * 1024),
-              isPulsesOwnAgent(data)
-        else { return false }
+        guard hasLegacyAgent(home: home) else { return false }
         _ = shell("/bin/launchctl", ["unload", url.path])
         do {
             try FileManager.default.removeItem(at: url)

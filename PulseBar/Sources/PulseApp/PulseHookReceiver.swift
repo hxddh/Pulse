@@ -9,7 +9,7 @@ enum HookAction: Equatable {
     /// The agent is working (a tool ran, a reply streamed): a `tool` line.
     case activity
     /// Work goes on, but no tool ran — a status, a retry, a recoverable
-    /// error: a `tool` line marked `status` (`AttentionRecord.statusTool`),
+    /// error: a `tool` line marked `:status` (`AttentionRecord.statusTool`),
     /// never a step and never the answer to a block.
     case status
     /// The agent cannot continue until the user acts.
@@ -112,7 +112,8 @@ enum PulseHookReceiver {
     /// pid, landing) are added — nil when it writes nothing. Pure.
     static func record(agent: AgentID, reading: HookReading, payload: [String: Any], nowMs: Int64) -> AttentionRecord? {
         let context = HookContext(payload: payload)
-        let tool = cleanField(string(payload, keys: ["tool_name", "toolName"]), limit: 64)
+        // A vendor's tool never spells one of Pulse's `:` markers.
+        let tool = AttentionRecord.vendorTool(cleanField(string(payload, keys: ["tool_name", "toolName"]), limit: 64))
         let kind: AttentionKind
         var message = ""
         var toolColumn = ""

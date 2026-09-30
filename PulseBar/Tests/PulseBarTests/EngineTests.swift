@@ -35,6 +35,7 @@ struct ScanQuietTests {
         [
             ("cachedAll", \StatusStore.cachedAll),
             ("hooksStatus", \StatusStore.hooksStatus),
+            ("hotkeyRecorder", \StatusStore.hotkeyRecorder),
             ("hotkeyRegistered", \StatusStore.hotkeyRegistered),
             ("loginItem", \StatusStore.loginItem),
             ("notifyAuthorized", \StatusStore.notifyAuthorized),
@@ -43,7 +44,6 @@ struct ScanQuietTests {
             ("settings", \StatusStore.settings),
             ("settingsFocus", \StatusStore.settingsFocus),
             ("setupConnected", \StatusStore.setupConnected),
-            ("showAllAgents", \StatusStore.showAllAgents),
             ("snapshot", \StatusStore.snapshot),
             ("traySessionToken", \StatusStore.traySessionToken),
             ("updateStatus", \StatusStore.updateStatus),
@@ -223,7 +223,7 @@ struct ScanQuietTests {
         defer { loop.cancel() }
 
         store.settings.notifyOnWaiting.toggle()
-        store.showAllAgents.toggle()
+        store.hotkeyRegistered.toggle()
         for _ in 0..<10 { await Task.yield() }
         #expect(loop.deliveries == 0, "a settings write does not touch the lamp")
 

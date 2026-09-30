@@ -3,8 +3,9 @@ import SwiftUI
 /// One session, in full, inside the tray.
 ///
 /// The row is one line; everything a person reads *after* deciding to look
-/// lives here, one keystroke (→ or Space) away and one keystroke (← or Esc)
-/// back. The store builds a `DetailModel` and this view hands it to
+/// lives here, one click (the row's "›", or ⌥-click) or one keystroke (→ or
+/// Space) away and one keystroke (← or Esc) back. The store builds a
+/// `DetailModel` and this view hands it to
 /// `SessionDetailFace`, which renders the value and sends intents — so a
 /// fixture can draw it (`SurfaceCapture`).
 @MainActor
@@ -20,10 +21,11 @@ struct SessionDetailView: View {
     }
 }
 
-/// Renders a `DetailModel` and nothing else: the header (back, lamp,
-/// agent · project, state and age), then the ask with Go and Dismiss, the
-/// why, the recent steps, the last message, the error and the facts — each
-/// block only when it has something to say.
+/// Renders a `DetailModel` and nothing else: the header (back, lamp, the
+/// agent's icon and the headline — the page's title), then the ask with Go
+/// and Dismiss, the landing notice (with its "Turn on"), the why, the recent
+/// steps, the last message, the error and the facts (this turn, the
+/// folder) — each block only when it has something to say.
 struct SessionDetailFace: View {
     let model: DetailModel
     /// Off for a fixture capture, which measures the whole page.
@@ -62,23 +64,22 @@ struct SessionDetailFace: View {
             .accessibilityLabel(t(.detailBack))
             LampShapeView(lamp: model.lamp, size: TrayChrome.lampSize + 1)
             AgentIconView(id: model.agent)
-            Text(model.project.isEmpty ? model.agentName : "\(model.agentName) · \(model.project)")
-                .font(PulseTheme.Font.label)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            // The headline, once: the page's title. Two lines hold the
+            // row's whole headline (`TrayRowModel.headlineLimit`).
+            Text(model.headline)
+                .font(model.headlineQuiet ? PulseTheme.Font.heroQuiet : PulseTheme.Font.hero)
+                .foregroundStyle(model.headlineQuiet ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                .lineLimit(2)
+                .truncationMode(.tail)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
             if model.muted {
                 Image(systemName: "bell.slash")
                     .font(PulseTheme.Font.caption)
                     .foregroundStyle(.tertiary)
                     .accessibilityLabel(t(.mutedWord))
             }
-            Spacer(minLength: PulseTheme.Space.s)
-            Text(model.age.isEmpty ? model.state : "\(model.state) · \(model.age)")
-                .font(PulseTheme.Font.caption)
-                .foregroundStyle(model.lamp.tone == .idle ? AnyShapeStyle(.secondary) : AnyShapeStyle(model.lamp.tone.color))
-                .monospacedDigit()
-                .lineLimit(1)
-                .fixedSize()
         }
         .padding(.horizontal, PulseTheme.Space.s)
         .padding(.vertical, PulseTheme.Space.s)
@@ -88,11 +89,6 @@ struct SessionDetailFace: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: PulseTheme.Space.m) {
-            Text(model.headline)
-                .font(model.headlineQuiet ? PulseTheme.Font.heroQuiet : PulseTheme.Font.hero)
-                .foregroundStyle(model.headlineQuiet ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
             if let ask = model.ask {
                 Text(ask)
                     .font(PulseTheme.Font.bodyEmphasis)
@@ -104,15 +100,25 @@ struct SessionDetailFace: View {
                 actions
             }
             if let notice = model.notice {
-                Text(notice)
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(.secondary)
+                HStack(alignment: .firstTextBaseline, spacing: PulseTheme.Space.s) {
+                    Text(notice.text)
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if notice.offersAutomation {
+                        Button(t(.turnOnAutomation)) { send(.turnOnAutomation) }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    }
+                }
+            }
+            if let why = model.why {
+                Text(why)
+                    .font(PulseTheme.Font.body)
+                    .foregroundStyle(model.lamp.tone == .attention ? AnyShapeStyle(PulseTheme.Tone.attention.color) : AnyShapeStyle(.secondary))
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text(model.why)
-                .font(PulseTheme.Font.body)
-                .foregroundStyle(model.lamp.tone == .attention ? AnyShapeStyle(PulseTheme.Tone.attention.color) : AnyShapeStyle(.secondary))
-                .fixedSize(horizontal: false, vertical: true)
             if !model.steps.isEmpty {
                 section(t(.stepHeading)) {
                     FactGrid(facts: model.steps)

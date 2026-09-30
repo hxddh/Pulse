@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "27.0.0"
+    static let semver = "28.0.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -417,10 +417,8 @@ struct PulseSnapshot: Equatable {
     /// needs you · 2 running").
     var headerTitle: String = ""
     var rows: [AgentRow] = []
-    /// Every row of the *whole* list counted once by its state, not only
-    /// the window shown.
+    /// Every row counted once by its state.
     var counts = TrayState.Counts()
-    var hiddenCount: Int = 0
     /// The menu-bar lamp's shape and tone (`LampFace.glance`).
     var lamp: LampFace = .idle
     var totalCount: Int = 0

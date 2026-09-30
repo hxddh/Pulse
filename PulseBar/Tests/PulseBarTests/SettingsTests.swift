@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import Carbon.HIToolbox
 import Testing
 @testable import PulseApp
 @testable import PulseQA
@@ -37,7 +39,7 @@ struct PulseSettingsTests {
         var original = PulseSettings()
         original.launchAtLogin = true
         original.language = .zh
-        original.hotkey = .optionCommandP
+        original.hotkey = Hotkey(keyCode: 35, modifiers: Hotkey.Modifier.command | Hotkey.Modifier.option)
         original.notifyOnWaiting = false
         original.mutedAgents = [.claude, .codex]
         original.allowTerminalAutomation = true
@@ -56,7 +58,7 @@ struct PulseSettingsTests {
     @Test func defaultsAreTheQuietOnes() {
         let d = PulseSettings()
         #expect(!d.launchAtLogin)
-        #expect(d.hotkey == .off, "the global shortcut is opt-in")
+        #expect(d.hotkey == nil, "the global shortcut is opt-in")
         #expect(d.notifyOnWaiting)
         #expect(!d.allowTerminalAutomation)
         #expect(d.updateCheckEnabled)
@@ -76,9 +78,30 @@ struct PulseSettingsTests {
              "updateCheckEnabled": false, "mutedAgents": ["claude", "not_an_agent", "codex"]}
             """)
         #expect(decoded.language == .auto)
-        #expect(decoded.hotkey == .off, "an unknown shortcut registers nothing")
+        #expect(decoded.hotkey == nil, "an unknown shortcut registers nothing")
         #expect(!decoded.updateCheckEnabled)
         #expect(decoded.mutedAgents == [.claude, .codex])
+    }
+
+    /// The two presets the setting used to offer are read once as their
+    /// keys and saved under the new key; the old name is never written.
+    @Test func theOldPresetNamesMigrateToTheirKeys() throws {
+        let space = try decode(#"{"hotkey": "ctrl_opt_space"}"#)
+        let controlOption = Hotkey.Modifier.control | Hotkey.Modifier.option
+        #expect(space.hotkey == Hotkey(keyCode: 49, modifiers: controlOption))
+        let p = try decode(#"{"hotkey": "cmd_opt_p"}"#)
+        let commandOption = Hotkey.Modifier.command | Hotkey.Modifier.option
+        #expect(p.hotkey == Hotkey(keyCode: 35, modifiers: commandOption))
+        let off = try decode(#"{"hotkey": "off"}"#)
+        #expect(off.hotkey == nil)
+        let data = try JSONEncoder().encode(space)
+        let text = String(decoding: data, as: UTF8.self)
+        #expect(text.contains("\"globalShortcut\""), "\(text)")
+        #expect(!text.contains("ctrl_opt_space"), "the old name is not written back")
+        let newWins = try decode(#"{"hotkey": "ctrl_opt_space", "globalShortcut": {"keyCode": 1, "modifiers": 256}}"#)
+        #expect(newWins.hotkey == Hotkey(keyCode: 1, modifiers: Hotkey.Modifier.command), "the new key wins over the old")
+        let cleared = try decode(#"{"hotkey": "ctrl_opt_space", "globalShortcut": null}"#)
+        #expect(cleared.hotkey == nil, "a cleared shortcut stays cleared")
     }
 
     @Test func aWrongTypeCostsOnlyThatField() throws {
@@ -335,12 +358,34 @@ struct SettingsModelTests {
         #expect(!LoginItem.isPulsesOwnAgent(otherLabel))
         #expect(!LoginItem.isPulsesOwnAgent(Data("not a plist".utf8)))
     }
+
+    /// The LaunchAgent earlier versions wrote is adopted by registering
+    /// Pulse with macOS first: only once macOS has taken it does the plist
+    /// go. When macOS refuses, the plist (which still opens Pulse at
+    /// login) and the setting stay, and Settings says macOS did not take it.
+    @Test func theLegacyLaunchAgentGoesOnlyOnceMacOSHasTakenTheLoginItem() {
+        let taken = LoginAdoption.decide(hadLegacyAgent: true, state: .enabled)
+        let pending = LoginAdoption.decide(hadLegacyAgent: true, state: .requiresApproval)
+        let refused = LoginAdoption.decide(hadLegacyAgent: true, state: .off)
+        let notFound = LoginAdoption.decide(hadLegacyAgent: true, state: .unavailable)
+        let none = LoginAdoption.decide(hadLegacyAgent: false, state: .off)
+        let noneOn = LoginAdoption.decide(hadLegacyAgent: false, state: .enabled)
+        #expect(taken == .retireLegacyAndSync)
+        #expect(pending == .retireLegacyAndSync, "waiting for approval is taken: macOS holds it")
+        #expect(refused == .keepLegacy, "a failed register never loses the person's choice")
+        #expect(notFound == .keepLegacy)
+        #expect(none == .sync)
+        #expect(noneOn == .sync)
+        // Kept: the setting stays on, so the line says macOS did not take it.
+        let line = SettingsModel.loginLine(asked: true, state: .off)
+        #expect(line.note == .failed)
+    }
 }
 
 /// A settings change applies only what that setting needs: a mute or a
 /// notification switch touches nothing outside the file; the shortcut
 /// re-registers only for the shortcut; the language and Terminal
-/// automation re-project.
+/// automation re-project, and the language re-installs the main menu.
 @Suite("Setting effects")
 struct SettingEffectTests {
     @Test func eachSettingAppliesOnlyWhatItNeeds() {
@@ -350,7 +395,7 @@ struct SettingEffectTests {
             change(&next)
             return StatusStore.effects(from: base, to: next)
         }
-        let hotkey = effects { $0.hotkey = .optionCommandP }
+        let hotkey = effects { $0.hotkey = Hotkey.legacy("cmd_opt_p") }
         let login = effects { $0.launchAtLogin = true }
         let updates = effects { $0.updateCheckEnabled = false }
         let language = effects { $0.language = .zh }
@@ -361,7 +406,7 @@ struct SettingEffectTests {
         #expect(hotkey == [.hotkey])
         #expect(login == [.loginItem])
         #expect(updates == [.updateCheck])
-        #expect(language == [.bannerCategory, .reproject])
+        #expect(language == [.bannerCategory, .mainMenu, .reproject])
         #expect(automation == [.reproject])
         #expect(mute.isEmpty)
         #expect(notify.isEmpty)
@@ -372,6 +417,20 @@ struct SettingEffectTests {
             $0.allowTerminalAutomation = true
         }
         #expect(both == [.loginItem, .reproject])
+    }
+
+    /// The main menu is in the menu bar while Settings is open, and the
+    /// language is picked there: a language change re-installs it, or its
+    /// titles stay in the old language until Settings opens again.
+    @Test func aLanguageChangeReinstallsTheMainMenu() {
+        var next = PulseSettings()
+        next.language = .zh
+        let language = StatusStore.effects(from: PulseSettings(), to: next)
+        #expect(language.contains(.mainMenu))
+        var other = PulseSettings()
+        other.allowTerminalAutomation = true
+        let automation = StatusStore.effects(from: PulseSettings(), to: other)
+        #expect(!automation.contains(.mainMenu), "only the language")
     }
 
     /// The setup card's "Open at login" checkbox is the same setting as the
@@ -527,6 +586,19 @@ struct UninstallPlanTests {
         #expect(!en.contains(L10n.t(.uninstallLogin, .en)))
     }
 
+    /// The confirmation names the login item from macOS's read, or — not
+    /// read yet — from the setting. Either way the removal always asks
+    /// macOS to unregister (`finishUninstall`): the read may be stale.
+    @Test func theLoginItemIsNamedEvenBeforeMacOSIsRead() {
+        let folder = home.appendingPathComponent("Library/Application Support/Pulse")
+        let unreadAsked = UninstallPlan.make(installed: [], loginItem: nil, asked: true, folder: folder, home: home)
+        let unreadNotAsked = UninstallPlan.make(installed: [], loginItem: nil, asked: false, folder: folder, home: home)
+        let readOff = UninstallPlan.make(installed: [], loginItem: .off, asked: true, folder: folder, home: home)
+        #expect(unreadAsked.loginItem)
+        #expect(!unreadNotAsked.loginItem)
+        #expect(!readOff.loginItem, "macOS's answer wins once read")
+    }
+
     /// The folder holds the record a byte-for-byte removal needs: it goes
     /// only when no hook of Pulse's is left anywhere.
     @Test func theFolderGoesOnlyWhenEveryHookIsOut() {
@@ -542,5 +614,88 @@ struct UninstallPlanTests {
         let no = kept.map(UninstallPlan.hooksRemoved)
         #expect(yes == [true, true])
         #expect(no == [false, false, false, false, false])
+    }
+}
+
+/// The global shortcut is recorded, not picked from presets: the next key
+/// combination with ⌘, ⌃ or ⌥ — Esc cancels, Delete clears — shown in
+/// macOS's glyphs, stored as a key code and a Carbon mask, and refused when
+/// macOS keeps it.
+@Suite("Shortcut recorder")
+struct ShortcutRecorderTests {
+    let command = Hotkey.Modifier.command
+    let shift = Hotkey.Modifier.shift
+    let option = Hotkey.Modifier.option
+    let control = Hotkey.Modifier.control
+
+    @Test func theModifierBitsAreCarbons() {
+        #expect(Hotkey.Modifier.command == UInt32(cmdKey))
+        #expect(Hotkey.Modifier.shift == UInt32(shiftKey))
+        #expect(Hotkey.Modifier.option == UInt32(optionKey))
+        #expect(Hotkey.Modifier.control == UInt32(controlKey))
+        #expect(Hotkey.KeyCode.space == UInt32(kVK_Space))
+        #expect(Hotkey.KeyCode.escape == UInt32(kVK_Escape))
+        #expect(Hotkey.KeyCode.delete == UInt32(kVK_Delete))
+        let flags: NSEvent.ModifierFlags = [.command, .option]
+        let mask = HotkeyCapture.carbonModifiers(flags)
+        #expect(mask == command | option)
+    }
+
+    @Test func aShortcutNeedsCommandControlOrOption() {
+        let bare = HotkeyRecorder.reduce(keyCode: 0, modifiers: 0)
+        #expect(bare == .needsModifier, "a bare key is never global")
+        let shifted = HotkeyRecorder.reduce(keyCode: 0, modifiers: shift)
+        #expect(shifted == .needsModifier, "⇧ alone is typing")
+        let taken = HotkeyRecorder.reduce(keyCode: 49, modifiers: control | option)
+        #expect(taken == .record(Hotkey(keyCode: 49, modifiers: control | option)))
+        let withShift = HotkeyRecorder.reduce(keyCode: 35, modifiers: command | shift)
+        #expect(withShift == .record(Hotkey(keyCode: 35, modifiers: command | shift)))
+    }
+
+    @Test func escapeCancelsAndDeleteClears() {
+        let escape = HotkeyRecorder.reduce(keyCode: Hotkey.KeyCode.escape, modifiers: 0)
+        #expect(escape == .cancel)
+        let delete = HotkeyRecorder.reduce(keyCode: Hotkey.KeyCode.delete, modifiers: 0)
+        #expect(delete == .clear)
+        let forward = HotkeyRecorder.reduce(keyCode: Hotkey.KeyCode.forwardDelete, modifiers: 0)
+        #expect(forward == .clear)
+        let commandDelete = HotkeyRecorder.reduce(keyCode: Hotkey.KeyCode.delete, modifiers: command)
+        #expect(commandDelete == .record(Hotkey(keyCode: Hotkey.KeyCode.delete, modifiers: command)), "with a modifier it is a shortcut")
+    }
+
+    @Test func theGlyphsAreMacOSsOwnOrder() {
+        #expect(Hotkey(keyCode: 49, modifiers: control | option).label == "⌃⌥Space")
+        #expect(Hotkey(keyCode: 35, modifiers: command | option).label == "⌥⌘P")
+        #expect(Hotkey(keyCode: 1, modifiers: command | shift | option | control).label == "⌃⌥⇧⌘S")
+        #expect(Hotkey(keyCode: 96, modifiers: control).label == "⌃F5")
+        #expect(Hotkey(keyCode: 126, modifiers: option).label == "⌥↑")
+        #expect(Hotkey.keyName(200) == "#200", "an unknown key is still named")
+        let noise = Hotkey(keyCode: 0, modifiers: command | 0x0001_0000)
+        #expect(noise.modifiers == command, "only the four modifier bits are kept")
+    }
+
+    @Test func macOSsOwnShortcutsAreRefused() {
+        let spotlight = Hotkey(keyCode: 49, modifiers: command)
+        #expect(!HotkeyRecorder.usable(spotlight, systemTaken: []), "⌘Space is Spotlight's")
+        let quit = Hotkey(keyCode: 12, modifiers: command)
+        #expect(!HotkeyRecorder.usable(quit, systemTaken: []))
+        let free = Hotkey(keyCode: 49, modifiers: control | option)
+        #expect(HotkeyRecorder.usable(free, systemTaken: []))
+        #expect(!HotkeyRecorder.usable(free, systemTaken: [free]), "the system's own list refuses it too")
+        let bare = Hotkey(keyCode: 0, modifiers: 0)
+        #expect(!HotkeyRecorder.usable(bare, systemTaken: []))
+    }
+
+    @Test func theSettingsRowSaysWhatTheRecorderIsDoing() {
+        var model = SurfaceFixtures.settings(lang: .en)
+        #expect(SettingsModel.shortcutTitle(model) == "⌃⌥Space")
+        model.hotkeyLabel = nil
+        #expect(SettingsModel.shortcutTitle(model) == L10n.t(.shortcutRecord, .en))
+        let recording = SurfaceFixtures.settingsShortcutRecording(lang: .zh)
+        #expect(SettingsModel.shortcutTitle(recording) == L10n.t(.shortcutRecording, .zh))
+        let refused = SurfaceFixtures.settingsShortcutRefused(lang: .en)
+        #expect(refused.hotkeyProblem == .cantUse)
+        #expect(SurfaceFixtures.names.contains("settings-shortcut-recording"))
+        #expect(SurfaceFixtures.names.contains("settings-shortcut-refused"))
     }
 }

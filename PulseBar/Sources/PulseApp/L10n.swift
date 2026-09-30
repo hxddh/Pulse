@@ -79,8 +79,6 @@ enum L10n {
         case .runningN: return "running"
         case .recent1: return "1 recent"
         case .recentN: return "recent"
-        case .andMore: return "and %d more…"
-        case .showLess: return "Show less"
         case .settings: return "Settings…"
         case .quit: return "Quit Pulse"
         case .general: return "General"
@@ -129,7 +127,7 @@ enum L10n {
         case .openNotificationSettings: return "Open System Settings"
         case .uninstallHooks: return "Remove all"
         case .revealShortcut: return "Open or close Pulse"
-        case .hotkeyTaken: return "Another app already owns this shortcut — pick a different one."
+        case .hotkeyTaken: return "Can't use this shortcut — macOS or another app already uses it."
         case .emptyHint: return "When a connected agent starts working, its session appears here."
         case .checkForUpdates: return "Check for updates"
         case .checkNow: return "Check now"
@@ -152,7 +150,13 @@ enum L10n {
         case .waitingSummaryTitle: return "%d agents need you"
         case .updatePreview: return "Preview build · ad-hoc signed · not notarized"
         case .yourTurn: return "Your turn"
-        case .shortcutOff: return "Off"
+        case .shortcutRecord: return "Record Shortcut"
+        case .shortcutRecording: return "Type shortcut…"
+        case .shortcutRecordingHint: return "Press a combination with ⌘, ⌃ or ⌥. Esc cancels, Delete clears."
+        case .shortcutNeedsModifier: return "Add ⌘, ⌃ or ⌥ — a single key can't be a global shortcut."
+        case .shortcutClear: return "Clear shortcut"
+        case .notifIgnore: return "Ignore"
+        case .turnOnAutomation: return "Turn on"
         case .settingsHooksTitle: return "Agent hooks"
         case .updateFailedBadFeed: return "Update feed address is invalid"
         case .updateFailedNetwork: return "Could not reach GitHub"
@@ -180,7 +184,6 @@ enum L10n {
         case .explainKindInput: return "asked a question"
         case .explainKindWaiting: return "is waiting for you"
         case .detailFolder: return "Folder"
-        case .detailStarted: return "Started"
         case .processOnly: return "Process only"
         case .processOnlyN: return "process only"
         case .waiting1: return "needs you"
@@ -226,7 +229,7 @@ enum L10n {
         case .setupStepRestart: return "Sessions already running appear after their next step"
         case .terminalAutomation: return "Go to the exact Terminal or iTerm tab"
         case .terminalAutomationHint: return "Pulse selects the tab with AppleScript; macOS asks you once, the first time."
-        case .focusAppOnlyAutomation: return "Opened the app — to land on the exact tab, turn on “Go to the exact Terminal or iTerm tab” in Settings"
+        case .focusAppOnlyAutomation: return "Opened the app — turn on “Go to the exact Terminal or iTerm tab” to land on the tab itself (macOS asks once)"
         case .durSecSpoken: return "%ds"
         case .durMinSpoken: return "%dm"
         case .durHourSpoken: return "%dh"
@@ -278,8 +281,6 @@ enum L10n {
         case .runningN: return "运行中"
         case .recent1: return "1 个最近会话"
         case .recentN: return "最近"
-        case .andMore: return "另有 %d 个…"
-        case .showLess: return "收起"
         case .settings: return "设置…"
         case .quit: return "退出 Pulse"
         case .general: return "通用"
@@ -328,7 +329,7 @@ enum L10n {
         case .openNotificationSettings: return "打开系统设置"
         case .uninstallHooks: return "全部移除"
         case .revealShortcut: return "打开或关闭 Pulse"
-        case .hotkeyTaken: return "该快捷键已被其他应用占用，请换一个。"
+        case .hotkeyTaken: return "不能使用这个快捷键——macOS 或其他应用已经在用它。"
         case .emptyHint: return "已连接的 Agent 开始工作时，会话会出现在这里。"
         case .checkForUpdates: return "检查更新"
         case .checkNow: return "立即检查"
@@ -351,7 +352,13 @@ enum L10n {
         case .waitingSummaryTitle: return "%d 个 Agent 需要你"
         case .updatePreview: return "预览版 · ad-hoc 签名 · 未公证"
         case .yourTurn: return "轮到你"
-        case .shortcutOff: return "关闭"
+        case .shortcutRecord: return "录制快捷键"
+        case .shortcutRecording: return "请按下快捷键…"
+        case .shortcutRecordingHint: return "须包含 ⌘、⌃ 或 ⌥。Esc 取消，Delete 清除。"
+        case .shortcutNeedsModifier: return "加上 ⌘、⌃ 或 ⌥——单个键不能做全局快捷键。"
+        case .shortcutClear: return "清除快捷键"
+        case .notifIgnore: return "忽略"
+        case .turnOnAutomation: return "开启"
         case .settingsHooksTitle: return "Agent 的 hooks"
         case .updateFailedBadFeed: return "更新源地址无效"
         case .updateFailedNetwork: return "无法连接 GitHub"
@@ -379,7 +386,6 @@ enum L10n {
         case .explainKindInput: return "提了一个问题"
         case .explainKindWaiting: return "在等你"
         case .detailFolder: return "目录"
-        case .detailStarted: return "开始于"
         case .processOnly: return "仅进程"
         case .processOnlyN: return "仅进程"
         case .waiting1: return "需要你"
@@ -425,7 +431,7 @@ enum L10n {
         case .setupStepRestart: return "已在运行的会话会在它们的下一步之后出现"
         case .terminalAutomation: return "前往确切的 Terminal 或 iTerm 标签页"
         case .terminalAutomationHint: return "Pulse 用 AppleScript 选中标签页；第一次前往时 macOS 会询问你一次。"
-        case .focusAppOnlyAutomation: return "已打开应用——要直接落到那个标签页，在设置里打开「前往确切的 Terminal 或 iTerm 标签页」"
+        case .focusAppOnlyAutomation: return "已打开应用——开启「前往确切的 Terminal 或 iTerm 标签页」就能直接落到那个标签页（macOS 会问一次）"
         case .durSecSpoken: return "%d 秒"
         case .durMinSpoken: return "%d 分钟"
         case .durHourSpoken: return "%d 小时"
@@ -472,7 +478,6 @@ enum L10n {
     enum Key: CaseIterable {
         case noAgents, noAgentsDetected, needsYou, waitingN, runningN
         case recent1, recentN, recent
-        case andMore, showLess
         case settings, quit
         case focusExact, focusApp, focusOpenTray, dismissWait
         case focusFailed, focusAppOnly
@@ -505,7 +510,9 @@ enum L10n {
         case waitingSummaryTitle
         case updatePreview
         case yourTurn
-        case shortcutOff
+        case shortcutRecord, shortcutRecording, shortcutRecordingHint, shortcutNeedsModifier, shortcutClear
+        case notifIgnore
+        case turnOnAutomation
         case settingsHooksTitle
         case settingsHookAbsent, settingsReportHint
         case settingsHookInstalled, settingsHookLastEvent, settingsHookLastEventNow, settingsHookNoEvent, settingsHookNoWait
@@ -535,7 +542,6 @@ enum L10n {
         case explainKindInput
         case explainKindWaiting
         case detailFolder
-        case detailStarted
         case processOnly
         case processOnlyN
         case waiting1

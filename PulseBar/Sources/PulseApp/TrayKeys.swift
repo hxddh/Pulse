@@ -17,9 +17,12 @@ import Foundation
 /// | ⌘D / ⌘⌫        | dismiss the selected wait              | dismiss         |
 /// | ⌘M             | mute / unmute the selected agent       | mute / unmute   |
 /// | ⌘R ⌘, ⌘Q       | refresh · settings · quit              | same            |
+/// | ⌘W             | close (as Esc here)                    | close           |
 ///
 /// A bare letter is not the tray's: the tray opens with a row selected, and a
-/// bare D or M must never dismiss or mute; the commands carry ⌘.
+/// bare D or M must never dismiss or mute; the commands carry ⌘. ⌘W is the
+/// tray's too: left to the system it would reach `performClose:` on the
+/// borderless panel, which has no close button, and beep.
 enum TrayKeys {
     enum Key: Equatable {
         case up, down, left, right, space, enter, escape
@@ -33,6 +36,8 @@ enum TrayKeys {
         case settings
         /// ⌘Q
         case quit
+        /// ⌘W
+        case close
     }
 
     struct State: Equatable {
@@ -85,6 +90,7 @@ enum TrayKeys {
         case .refresh: return done(.refresh)
         case .settings: return done(.openSettings)
         case .quit: return done(.quit)
+        case .close: return done(.closePanel)
         default: break
         }
 
@@ -135,7 +141,7 @@ enum TrayKeys {
         case .mute:
             guard let selected else { return done() }
             return done(.toggleMute(selected.key))
-        case .refresh, .settings, .quit:
+        case .refresh, .settings, .quit, .close:
             return done()
         }
     }
@@ -168,6 +174,7 @@ enum TrayKeys {
             case "r": return .refresh
             case ",": return .settings
             case "q": return .quit
+            case "w": return .close
             case "d": return .dismiss
             case "m": return .mute
             default: return nil
@@ -182,6 +189,45 @@ enum TrayKeys {
         case 126: return .up
         case 49: return .space
         default: return nil
+        }
+    }
+}
+
+/// What a response to a "needs you" banner asks for: its "Ignore" button
+/// dismisses the waits it names — the tray's ⌘D, the same `done` line with
+/// Pulse's `:dismiss` marker, never an answer to the vendor; macOS's own
+/// dismissal (the ✕, a swipe) is nothing; a click on the banner or its
+/// "Go" goes (`BannerRoute`). Pure.
+enum BannerIntent: Equatable {
+    case go
+    case ignore
+    case nothing
+
+    /// The banner's buttons, by their `UNNotificationAction` ids.
+    static let goActionID = "pulse.focus"
+    static let ignoreActionID = "pulse.ignore"
+
+    /// `dismissActionID`: the system's own dismiss id
+    /// (`UNNotificationDismissActionIdentifier`), passed in so this stays
+    /// free of the framework.
+    static func decide(actionID: String, dismissActionID: String) -> BannerIntent {
+        switch actionID {
+        case ignoreActionID: return .ignore
+        case dismissActionID: return .nothing
+        default: return .go
+        }
+    }
+
+    /// The rows an "Ignore" dismisses: every wait the banner names (one, or
+    /// a summary's several) that is still open now. A wait answered, ended
+    /// or already dismissed meanwhile is left alone.
+    static func ignoreTargets(rowKey: String, summaryRowKeys: [String], rows: [AgentRow]) -> [AgentRow] {
+        var named = summaryRowKeys
+        if !rowKey.isEmpty, !named.contains(rowKey) { named.insert(rowKey, at: 0) }
+        var seen = Set<String>()
+        return named.compactMap { key in
+            guard seen.insert(key).inserted else { return nil }
+            return rows.first { $0.rowKey == key && $0.isBlocked }
         }
     }
 }

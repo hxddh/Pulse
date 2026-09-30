@@ -70,10 +70,10 @@ struct ReportTests {
     /// The shortcut and Terminal automation are in the report.
     @Test func theReportSaysTheShortcutAndTerminalAutomation() {
         var chosen = input()
-        chosen.hotkey = .controlOptionSpace
+        chosen.hotkey = Hotkey.legacy("ctrl_opt_space")
         chosen.hotkeyRegistered = false
         let text = SettingsModel.report(chosen)
-        #expect(text.contains("shortcut: ctrl_opt_space, registered: no — taken"), "\(text)")
+        #expect(text.contains("shortcut: ⌃⌥Space, registered: no — taken"), "\(text)")
         #expect(text.contains("terminal automation: allowed\n"), "\(text)")
         let off = SettingsModel.report(input())
         #expect(off.contains("shortcut: off\n"), "\(off)")

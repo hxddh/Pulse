@@ -11,9 +11,11 @@ import Foundation
 struct PulseSettings: Equatable, Codable, Sendable {
     var launchAtLogin = false
     var language: AppLanguage = .auto
-    /// Carbon global-hotkey registration can trigger an Apple Events privacy
-    /// request on unsigned builds, so it stays opt-in: `.off` until chosen.
-    var hotkey: HotkeyChoice = .off
+    /// The global shortcut that opens the tray, recorded in Settings: a key
+    /// code and a Carbon modifier mask (`globalShortcut` on disk). Opt-in:
+    /// nil until the person records one. The old `hotkey` preset names are
+    /// read once as their keys (`Hotkey.legacy`) and never written again.
+    var hotkey: Hotkey?
     var notifyOnWaiting = true
     /// Muted agents still appear in the tray; they just stop notifying.
     var mutedAgents: Set<AgentID> = []
@@ -31,7 +33,10 @@ struct PulseSettings: Equatable, Codable, Sendable {
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case launchAtLogin, language, hotkey, notifyOnWaiting, mutedAgents
+        case launchAtLogin, language, globalShortcut, notifyOnWaiting, mutedAgents
+        /// The retired preset name ("ctrl_opt_space", "cmd_opt_p"): read,
+        /// migrated to `globalShortcut`, never written.
+        case hotkey
         case allowTerminalAutomation, updateCheckEnabled, hooksNudgeOff
     }
 
@@ -46,7 +51,11 @@ struct PulseSettings: Equatable, Codable, Sendable {
         }
         launchAtLogin = bool(.launchAtLogin, d.launchAtLogin)
         language = string(.language).flatMap(AppLanguage.init(rawValue:)) ?? d.language
-        hotkey = string(.hotkey).flatMap(HotkeyChoice.init(rawValue:)) ?? d.hotkey
+        if c.contains(.globalShortcut) {
+            hotkey = try? c.decodeIfPresent(Hotkey.self, forKey: .globalShortcut)
+        } else {
+            hotkey = string(.hotkey).flatMap(Hotkey.legacy) ?? d.hotkey
+        }
         notifyOnWaiting = bool(.notifyOnWaiting, d.notifyOnWaiting)
         let muted = (try? c.decodeIfPresent([String].self, forKey: .mutedAgents)) ?? []
         mutedAgents = Set(muted.compactMap(AgentID.init(rawValue:)))
@@ -59,7 +68,7 @@ struct PulseSettings: Equatable, Codable, Sendable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(launchAtLogin, forKey: .launchAtLogin)
         try c.encode(language.rawValue, forKey: .language)
-        try c.encode(hotkey.rawValue, forKey: .hotkey)
+        try c.encodeIfPresent(hotkey, forKey: .globalShortcut)
         try c.encode(notifyOnWaiting, forKey: .notifyOnWaiting)
         try c.encode(mutedAgents.map(\.rawValue).sorted(), forKey: .mutedAgents)
         try c.encode(allowTerminalAutomation, forKey: .allowTerminalAutomation)
@@ -70,7 +79,7 @@ struct PulseSettings: Equatable, Codable, Sendable {
     /// One-line summary for the debug log.
     var debugDescription: String {
         "notifyWait=\(notifyOnWaiting) lang=\(language.rawValue) login=\(launchAtLogin) "
-            + "hotkey=\(hotkey.rawValue) terminalAutomation=\(allowTerminalAutomation) "
+            + "hotkey=\(hotkey?.label ?? "off") terminalAutomation=\(allowTerminalAutomation) "
             + "muted=\(mutedAgents.count) updates=\(updateCheckEnabled) "
             + "hooksNudgeOff=\(hooksNudgeOff)"
     }
