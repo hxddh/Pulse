@@ -99,6 +99,8 @@ struct SessionBook: Equatable {
         var lastEventMs: Int64 = 0
         /// The newest activity (a `tool` line, or a prompt).
         var activityMs: Int64 = 0
+        /// The newest tool event — the only evidence a silence can be a stall.
+        var toolMs: Int64 = 0
         /// What the latest turn line carried (a vendor's last words, when
         /// its hook sends them) — the only words an agent with no transcript
         /// has.
@@ -170,6 +172,7 @@ struct SessionBook: Equatable {
             Self.answer(&session, at: ms)
         case .tool:
             session.activityMs = max(session.activityMs, ms)
+            session.toolMs = max(session.toolMs, ms)
             // Work goes on — unless it is older than the state it would
             // end, or a different tool than the one a block is about.
             if ms > session.stateSinceMs || before == nil {

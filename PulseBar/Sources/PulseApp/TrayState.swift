@@ -160,7 +160,7 @@ struct TrayState: Equatable {
             // every tool call; the others are silent through every long turn.
             row.isStalled = row.state == .running
                 && session.agent.reportsToolActivity
-                && session.activityMs > 0
+                && session.toolMs > 0
                 && AgentRow.stalled(lastActivityMs: session.lastEventMs, nowMs: nowMs, threshold: context.stalledSeconds)
             out.rows.append(row)
         }
