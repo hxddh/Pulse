@@ -4,11 +4,12 @@ import Foundation
 ///
 /// The row is one line; this is what a person reads after deciding to look,
 /// in the order it is worth reading: the ask (and what to do about it), the
-/// why, the agent's last message, the last error and a few plain facts (the
-/// message, model and error come from the session's transcript, read when
-/// this opens). How Pulse reads the session is folded away at the bottom.
-/// Nothing is shown as a placeholder: a fact Pulse does not have is not a
-/// row.
+/// why, the recent steps, the agent's last message, the last error and a few
+/// plain facts — all from the session's own events, in the words the row
+/// uses (`TrayRowModel`). How Pulse reads a session is not on the page; it is
+/// in Settings → Hooks → "Copy report". Nothing is shown as a placeholder: a
+/// fact Pulse does not have is not a row. Tokens, context, cost, model and
+/// plan are never shown — a decision.
 struct DetailModel: Equatable {
     struct Fact: Equatable {
         var label: String
@@ -25,21 +26,22 @@ struct DetailModel: Equatable {
     /// The short project name; "" when unknown.
     var project: String
     var lamp: LampFace
-    /// `Explain.state` — "Needs you", "Running", "Your turn"…
+    /// `TrayRowModel.stateText` — "Needs you", "Running", "Your turn"…
     var state: String
     /// How long a wait has been open, else when the session last moved.
     var age: String
-    /// `Explain.headline`.
+    /// `TrayRowModel.headline`.
     var headline: String
     var headlineQuiet: Bool
     /// The full question of a blocked row.
     var ask: String?
     var why: String
+    /// Up to `SessionBook.maxSteps` recent steps, newest first: how long
+    /// ago, and "tool · target".
+    var steps: [Fact]
     var lastMessage: String?
     var error: String?
     var facts: [Fact]
-    /// How Pulse reads this session — folded away by default.
-    var diagnostics: [Fact]
     var canFocus: Bool
     var focusTitle: String
     var canDismiss: Bool
@@ -52,23 +54,25 @@ struct DetailModel: Equatable {
         muted: Bool = false
     ) -> DetailModel {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-        let explain = Explain.make(row, lang: lang, nowMs: nowMs)
+        typealias Words = TrayRowModel
         let fresh = row.selfReportFresh(at: nowMs)
 
         var facts: [Fact] = []
-        let model = row.model.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !model.isEmpty { facts.append(Fact(label: t(.detailModel), value: model)) }
-        facts.append(Fact(label: t(.detailSource), value: explain.source))
+        if row.state == .running || row.isBlocked {
+            let turn = Words.turnDuration(row, nowMs: nowMs, lang: lang)
+            if !turn.isEmpty { facts.append(Fact(label: t(.stepThisTurn), value: turn)) }
+        }
         if !row.displayPath.isEmpty { facts.append(Fact(label: t(.detailFolder), value: row.displayPath)) }
         if row.startedMs > 0, row.startedMs <= nowMs {
             facts.append(Fact(label: t(.detailStarted), value: LogClock.label(ms: row.startedMs, nowMs: nowMs, lang: lang)))
         }
 
-        let error: String? = row.lastErrorText.isEmpty ? nil : row.lastErrorText
-
         let age = row.isBlocked
-            ? Explain.waitDuration(row, nowMs: nowMs, lang: lang)
-            : Explain.activityLabel(row, nowMs: nowMs, lang: lang)
+            ? Words.waitDuration(row, nowMs: nowMs, lang: lang)
+            : Words.activityLabel(row, nowMs: nowMs, lang: lang)
+        let steps = row.recentSteps.reversed().map { step in
+            Fact(label: Words.minuteAgo(step.ms, nowMs: nowMs, lang: lang), value: Words.stepText(step))
+        }
 
         return DetailModel(
             lang: lang,
@@ -77,40 +81,21 @@ struct DetailModel: Equatable {
             agentName: row.agent.displayName,
             project: row.shortPlace,
             lamp: LampFace.row(row),
-            state: explain.state,
+            state: Words.stateText(row, lang: lang),
             age: age,
-            headline: explain.headline,
+            headline: Words.headline(row, lang: lang, nowMs: nowMs),
             headlineQuiet: row.isProcessOnly,
-            ask: explain.ask,
-            why: explain.why,
+            ask: Words.ask(row),
+            why: Words.why(row, lang: lang, nowMs: nowMs),
+            steps: steps,
             lastMessage: fresh && !row.lastWord.isEmpty ? row.lastWord : nil,
-            error: error,
+            error: row.lastErrorText.isEmpty ? nil : row.lastErrorText,
             facts: facts,
-            diagnostics: diagnostics(row, lang: lang, nowMs: nowMs),
             canFocus: row.canFocusTerminal,
-            focusTitle: Explain.focusTitle(row, lang: lang),
+            focusTitle: Words.focusTitle(row, lang: lang),
             canDismiss: row.isBlocked,
             muted: muted
         )
-    }
-
-    /// How Pulse reads this session, in words: the session id, how it would
-    /// be focused, the process and the last event.
-    static func diagnostics(_ row: AgentRow, lang: ResolvedLanguage, nowMs: Int64) -> [Fact] {
-        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-        var out: [Fact] = []
-        if !row.sessionID.isEmpty { out.append(Fact(label: t(.detailSession), value: row.sessionID)) }
-        out.append(Fact(
-            label: t(.detailGo),
-            value: row.canFocusTerminal ? Explain.focusTitle(row, lang: lang) : t(.detailGoNone)
-        ))
-        if row.liveProcess, row.pid > 0 {
-            out.append(Fact(label: t(.detailProcess), value: "pid \(row.pid)"))
-        }
-        if row.lastEventMs > 0, row.lastEventMs <= nowMs {
-            out.append(Fact(label: t(.detailLastChange), value: LogClock.label(ms: row.lastEventMs, nowMs: nowMs, lang: lang)))
-        }
-        return out
     }
 }
 

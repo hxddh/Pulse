@@ -24,12 +24,12 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     /// The panel's surface: Liquid Glass on macOS 26, the menu material
     /// before it. One view either way, so chrome and capture treat it alike.
     private let effectView: NSView
-    /// 21.0: one rendered lamp per state and appearance, not a fresh
+    /// One rendered lamp per state and appearance, not a fresh
     /// rasterisation on every scan.
     private var iconCache: [String: NSImage] = [:]
     private var lastIconKey = ""
     private let hosting: NSHostingController<TrayPanelHost>
-    /// 23.0: the tray's per-open state — keys, frozen order, height budget.
+    /// The tray's per-open state — keys, frozen order, height budget.
     let ui: TrayUI
     /// Follows only `snapshot` — a settings write does not touch the lamp.
     private var snapshotLoop: ObservationLoop?
@@ -42,7 +42,7 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     private var lastFitDetail: String?
     private var globalMonitor: Any?
     private var localMonitor: Any?
-    private var lastAnnouncedState: String?
+    private var lastAnnouncedState: TrayState.Counts?
     /// One-shot status-lamp pulse for a newly observed Waiting edge. The red
     /// colour remains steady until the wait is resolved; only the transition
     /// gets motion, so the menu bar can remind without becoming a permanent
@@ -246,14 +246,14 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         // AppKit keeps the adjacent title readable against the actual menu bar
         // appearance instead of tinting both icon and text together.
         button.contentTintColor = nil
-        // 23.0: the icon alone unless something is blocked; then how many
+        // The icon alone unless something is blocked; then how many
         // and how long the oldest has waited ("2 · 4m").
         if button.title != snapshot.title { button.title = snapshot.title }
         // One line: the rule that set the lamp.
         button.toolTip = snapshot.tooltip
         button.setAccessibilityLabel(snapshot.accessibilityLabel)
 
-        let waitingCount = snapshot.sectionTotals[.needsYou] ?? 0
+        let waitingCount = snapshot.counts.blocked
         if snapshot.updatedAt != .distantPast {
             if let previousWaitingCount = lastWaitingCount,
                waitingCount > previousWaitingCount {
@@ -262,9 +262,7 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
             lastWaitingCount = waitingCount
         }
 
-        let state = TraySection.allCases
-            .map { "\(String(describing: $0))=\(snapshot.sectionTotals[$0] ?? 0)" }
-            .joined(separator: ",")
+        let state = snapshot.counts
         // The empty bootstrap snapshot is not a state transition. Seed from
         // the first completed scan so launching Pulse does not speak an
         // unsolicited "Running" announcement.
@@ -472,7 +470,7 @@ enum StatusPanelChrome {
     static let cornerRadius: CGFloat = PulseTheme.Radius.panel
     static let shadowInset: CGFloat = 12
 
-    /// 21.0: macOS 26's Liquid Glass where the system has it — the material
+    /// macOS 26's Liquid Glass where the system has it — the material
     /// the system's own menu-bar panels use there — and the menu material
     /// before it. A `.popover` material behind a borderless panel had no
     /// popover host and rendered flat grey; `.menu` within the window is the

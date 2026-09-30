@@ -60,7 +60,7 @@ Pulse 是**菜单栏状态灯**：扫一眼知道编码 Agent 要不要你；点
 | **Tray**（下拉） | 谁、为何、我能做什么？ | 等待优先列表 + 可行动作 | 语言、hooks 安装界面 |
 | **Preferences** | 我想怎么用 Pulse？ | 行为与连接配置；Hooks 一节兼作诊断 | 大标题状态看板、重复 tray 的信息 |
 
-**信息流向：** hook 事件 → 会话簿（`SessionBook`）→ 进程与会话文件补充 → `TrayState.project` → Glance 编码状态 →
+**信息流向：** hook 事件 → 会话簿（`SessionBook`）→ 进程补充 → `TrayState.project` → Glance 编码状态 →
 Tray 展开细节 → Prefs 只改开关与连接。
 
 ---
@@ -87,7 +87,7 @@ Tray 展开细节 → Prefs 只改开关与连接。
 `2 · 4m`；刚发生（不到 5 秒）的等待只写数量 `1`。预算 **≤ 8 个显示宽度**（CJK 算两格），
 超限只留数量。不写 Agent 名、不写项目、不写 token。
 
-**Tooltip 一行**：决定颜色的那条规则（`Explain.lampSentence`），例如「红：有 Agent 在等你。」
+**Tooltip 一行**：决定颜色的那条规则（`TrayState.lampSentence`），例如「红：有 Agent 在等你。」
 「灰：有 Agent 在运行，但 Pulse 只看到进程。」—— 不列会话、不堆多行；会话由托盘来说。
 VoiceOver 读同一句（空闲时读「空闲」）。
 
@@ -151,33 +151,41 @@ Header 不写更新时间，也不走钟：灯与行本身就是最新的。
 1. **设置卡的后续**：刚连接完时说「已连接 Claude、Codex」，下面列出还要做的事 ——
    「Codex：在 Codex 里运行 /hooks 并信任 Pulse」（只在连接了 Codex 时）、「已在运行的会话会在它们的
    下一步之后出现」——直到点「知道了」
-2. **设置卡**：这台 Mac 上有（或正在跑）支持的 Agent 而它的 hook 没装 →「在这台 Mac 上找到 Claude、
+2. **设置卡**：这台 Mac 上有（厂商目录在）支持的 Agent 而它的 hook 没装 →「在这台 Mac 上找到 Claude、
    Codex——连接后，它们需要你时 Pulse 就会知道」[连接]。一次点击：为这台 Mac 上的 Agent 装上 hook，
    再请 macOS 允许通知（只在从没问过时问），然后显示第 1 条。没有 hook 就没有可通知的事，所以它排在
-   通知之前。用户卸载过 hooks 就不再提
-3. 通知被系统关闭 →「打开系统设置」；通知还没授权 →「启用通知」
-4. 上一条「需要你」通知被 macOS 拒绝 →「打开系统设置」
+   通知之前。只在跑、没有厂商目录的 Agent 不在卡上（「连接」装不上它）。用户卸载过 hooks 就不再提
+3. **安装失败**：某个 Agent 上次装失败了，就不再把它放进「连接」（那会一次次失败、卡片永远不消失），
+   改说原因 ——「Gemini：它的设置文件不是合法 JSON——修好后再安装」（设置里同一句失败文案）[打开设置]
+4. 通知被系统关闭 →「打开系统设置」；通知还没授权 →「启用通知」
+5. 上一条「需要你」通知被 macOS 拒绝 →「打开系统设置」
 
 版本不一致、有新版本、不会报「需要你」的 Agent 都不是托盘提示：它们在设置里。
 
 ### ③ 会话行
 
-**主语是会话，不是 Agent。** 每行只有**一行**：
+**主语是会话，不是 Agent。** 每行一行主行，只在有话要补时才有第二行：
 
 ```
 [灯形] [图标] 产品名  项目  主行……………………  [轮到你] [🔕]  时间
+                    Bash · swift test · 12 分钟前        ← 运行中的行：上一步（安静）
 ```
 
 - 产品名与项目各有最大宽度，**主行先截断**，产品名和项目不会把它挤没。
 - 项目与主行相同时不重复（主行已经是项目时，项目位置留空）。
-- **时间只有一个**：需要你的行是等了多久（`4m`，红色），其余是最后一次动静（`3 分前`）。
+- **时间只有一个**：需要你的行是等了多久（`4m`，红色）；运行中的行是本回合已经跑了多久
+  （`14 分`，从开始这一回合的那句提示算起，不到一分钟写 `<1 分`；不知道回合何时开始时退回最后一次动静）；
+  其余是最后一次动静（`3 分前`）。
 - 「轮到你」的行带一个灰色小字「轮到你」；静音的 Agent 带一个 `bell.slash`。
-- **第二行只给两种情况**：需要你的行写问题本身（Agent 原话，一行，次级色；不知道原话时写
-  等待种类）；停滞的行写橙色的原因（`Explain.why`）。其余一律一行。
+- **第二行只给三种情况**：需要你的行写问题本身（Agent 原话，一行，次级色；不知道原话时写
+  等待种类）；停滞的行写橙色的原因（`TrayRowModel.why`，点名上一步：「已经 23 分钟 没有新动静——上一步：
+  Bash · swift test」）；运行中的行安静地写**上一步**（最淡的颜色、小字）：「Bash · swift test · 12 分钟前」——
+  hook 报过的工具与目标、多久前，说的是已经发生的一步，**从不写「正在」/ running**（`surface_check` 把守）。
+  其余一律一行；Cursor、OpenCode 的 hook 不报工具名，它们的行始终一行。
 - **没有**：行底色、「新」点、芯片、行内按钮。动作在键盘、右键菜单、VoiceOver 动作与详情页里，
   每个动作只出现一次：前往、详情、忽略、静音 / 取消静音。
 - 点击一行 = 前往（有句柄时聚焦终端，否则打开详情页）；指针悬停或选中时行尾出现「›」，点它看详情。
-- 主行是 `Explain.headline`（场景 BL）：等待行 任务→项目→「需要你」，进程行说诚实短语，会话行
+- 主行是 `TrayRowModel.headline`（场景 BL）：等待行 任务→项目→「需要你」，进程行说诚实短语，会话行
   任务→新鲜原话→项目→会话短语；截断走尾部省略，完整原话在详情页。禁止 `update_plan` /
   `Bash` / 文件名 / `Agent session` 当主行，禁止把 Agent 产品名再当主行。
 
@@ -197,8 +205,8 @@ Header 不写更新时间，也不走钟：灯与行本身就是最新的。
 | 编码 | 表达 |
 | --- | --- |
 | 灯（形状 + 颜色） | 每行的即时状态 |
-| 时间 | 等待时长，或最后动静 |
-| 第二行 | 仅需要你（问题）与停滞（原因） |
+| 时间 | 等待时长、本回合时长，或最后动静 |
+| 第二行 | 需要你（问题）、停滞（原因）、运行中（上一步，安静） |
 
 **禁止**再叠加：行底色、芯片、「新」点、图标透明度、整行透明度、主行字号差、分组表头。
 
@@ -222,7 +230,8 @@ Header 不写更新时间，也不走钟：灯与行本身就是最新的。
 `↑↓ 选择 ↩ 前往 → 详情 ⌘D 忽略 ⌘M 静音 esc 关闭`。
 
 每次打开托盘都是新的扫视：选中与详情页都不跨打开保留。点菜单栏与全局快捷键打开时都选中
-最久的等待（没有等待就选中第一行；纯函数 `TrayUI.initialSelection`）。详情页里的行消失时，
+第一行 —— 投影的顺序让它就是最久的等待（`TrayState.assemble`：等待在前、最久的在前、时钟未知的排在等待最后；
+没有等待就是第一行）。详情页里的行消失时，
 详情页自动关闭回到列表；所选行离开时选中第一行。
 
 #### 通知横幅点下去
@@ -240,11 +249,16 @@ Header 不写更新时间，也不走钟：灯与行本身就是最新的。
 1. 头部：返回、灯形、Agent · 项目、状态与时长（「需要你 · 4m」）
 2. 主行全文
 3. **问题全文**（可选中）与动作：[前往终端 ↩] [忽略 ⌘D]（不是等待时只有前往）
-4. 为什么是这个状态（`Explain.why`，只说一次）
-5. 最后的消息、最后的错误（**没测到不渲染**；过了 30 分钟的新鲜窗口也不渲染）。打开详情页会让
-   Pulse 读一次这个会话的文件（有界、在后台），标题与最后的消息随后补上
-6. 几条事实（小表格）：模型、来源、目录、开始于（`LogClock`：今天只写时刻，一周内写星期，更早写月日）
-7. 折叠的「Pulse 如何读取这个会话」：会话 id、如何前往、进程、最后一次事件
+4. 为什么是这个状态（`TrayRowModel.why`，与托盘行同一句，只说一次）
+5. 最近几步（至多 5 步，新的在上：多久前 · 工具 · 目标）
+6. 最后的消息、最后的错误（**没测到不渲染**；过了 30 分钟的新鲜窗口也不渲染）。都来自会话自己的事件：
+   最后的消息是回合结束事件带的原话，错误只是 hook 自己报的（Claude StopFailure、Copilot 不可恢复的
+   errorOccurred、OpenCode session.error），下一句提示清掉
+7. 几条事实（小表格）：本回合（运行中或需要你时，「14 分」）、目录、开始于（`LogClock`：今天只写
+   时刻，一周内写星期，更早写月日）。**不显示模型**
+
+Pulse 怎么读这个会话（事实来自 hook 还是只有进程、前往是否精确、进程是否在盯、最近事件）不在详情页上，
+在设置 → Hooks 的「复制报告」里，一个会话一行，不含路径、提示、会话 id 或项目。
 
 **没有占位行**：不知道的事实不列；枚举值一律翻成人话。
 
@@ -294,10 +308,12 @@ macOS 问一次）；无论允许还是暂不，都记进 `settings.json`（`aut
 
 | 来源 | 默认展示 | 禁止 |
 | --- | --- | --- |
-| hook 事件 | 标题（会话文件读到的，否则回合结束时的原话）、项目、状态、一个时间 | 把最后的消息写成正在执行；把 Agent 名当标题 |
+| hook 事件 | 标题（会话第一句说了事的提示）、项目、状态、一个时间、上一步 | 把最后的消息或上一步写成正在执行；把 Agent 名当标题 |
 | 仅进程 | `已检测到终端会话 · 暂无活动详情` 或 `已检测到应用 · 暂无活跃会话数据`；可 Focus 时保留动作 | `process`、`2 processes`、把常驻 worker 算成 Running |
 
-工具名、token、上下文、计划与文件数都不读。每家 agent 装哪些事件、哪些事件点红灯、会话文件读什么，见
+上一步只来自事件（工具事件自带的工具名与目标）。**token、上下文、费用、模型与套餐都不显示 —— 这是决定**，
+不读这些字段（`catalog_check` 把守）。Pulse 不读任何厂商文件（没有会话文件、没有 transcript）。
+每家 agent 装哪些事件、哪些事件点红灯、标题与上一步从哪个事件来，见
 [`docs/observability-matrix.md`](docs/observability-matrix.md)。进程数是探测实现，不是用户价值，不占主界面。
 
 装 hooks 只在两处：设置、托盘的设置卡。
@@ -311,7 +327,7 @@ macOS 问一次）；无论允许还是暂不，都记进 `settings.json`（`aut
   不要在圆角面板里再画一块矩形材质或颜色 —— 多出来的 inset 会变成第二个表面，面板会读成一个贴上去的盒子。
 - **绝不把随外观变化的颜色存进 `let`。** `static let` 是只初始化一次的全局量，首次绘制时的外观
   被冻在里面，之后再切主题都不动。要么在 `body` 里读，要么用渲染时逐帧解析的 token
-  （`Material` / `.primary` / `.secondary`）。`scripts/appearance_check.py` 是门禁。
+  （`Material` / `.primary` / `.secondary`）。
 - 分割线内缩到文字边距。通宽的分割线是表格线，两条就把面板切成条带。
 
 **一套字阶，一套卡片纪律。** `PulseTheme` 统一间距、圆角、填充、语义字号和每个状态一种颜色
@@ -416,11 +432,12 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | 进程查看（libproc，不起子进程） | 启动 / 唤醒 / hook 报出未知进程时；平时 30s 起，没有变化就加倍到 5 分钟 |
 
 低电量模式 ×2；**息屏 / 锁屏停表**（托盘打开除外；事件日志变化仍唤醒）。
-会话文件只在轮到你、需要你或打开详情时读一次（有界、后台、按大小与修改时间缓存）。
+事件日志读失败时只排一个重试（5 秒起翻倍，封顶 60 秒），不因此少发横幅：只有启动那次重放是基线。
 
 **扫描不重绘**（场景 BY）：一轮扫描发现的世界与上一轮相同时，store 不发布任何变更，
 托盘与设置都不重算；屏上有一分钟以内的秒级等待时间时照常逐拍刷新，分钟级时间
-每分钟刷新一次。`debug.log` 每轮的「apply」行也只在内容变化时写。
+每分钟刷新一次。一阵工具行只动了行的安静事实（上一步、时钟）时，每拍至多落地一次，由时钟那一拍补上
+（场景 DI）；状态变了（阻塞、结束、停滞恢复）当场落地。`debug.log` 每轮的「apply」行也只在内容变化时写。
 
 ### 通知
 
@@ -456,9 +473,9 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 - 进程在 ≠ 会话在干活。用「运行中 / 检测到」，不用「正在编码」。
 - Waiting 只来自可证信号：厂商 hook 报告的阻塞事件。红灯留给「阻塞」。无信号就明说，不假装。
 - **状态只来自事件（场景 CQ）。** 会话簿按 hook 的顺序推进：工作中、需要你、轮到你、结束。
-  一个来源失败不清空托盘：进程查看失败保留上一份列表，会话文件读不到只是少了标题。
+  一个来源失败不清空托盘：进程查看失败保留上一份列表，事件日志读失败保留已应用的一切。
 - **轮到你（场景 CC）。** 三件事分开：**阻塞**（权限、提问、原因未知）点红灯、发通知、响声；
-  **轮到你**（`turn`：Claude 的 Stop / idle_prompt、Codex 的 agent-turn-complete）**不点红灯**，
+  **轮到你**（`turn`：Claude 的 Stop / idle_prompt、Codex 的 Stop）**不点红灯**，
   只在托盘头部安静计数「N 轮到你」、行上一个灰色「轮到你」标记；**已解决**（`done`）。
   「轮到你」只来自 hooks，从不推断，也从不单独造一行；有人看过就消失：提交下一句 prompt、
   从 Pulse 聚焦这一行、会话又动起来，或 30 分钟后转为「最近」。回合结束时提示窗口就在最前
@@ -467,23 +484,24 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
   「Claude 请求权限 · 8 分钟前」「Codex 的回合结束了 · 3 分钟前」，在最前时发生的阻塞补一句
   「当时它就在你眼前，所以先不发通知」。说不出就不说，不猜。托盘行与详情页说的是同一句。
 - **照厂商源码读（场景 CG）。** 每个 Agent 的 hook 契约都写明对照的是厂商哪个仓库哪个
-  提交或哪份文档；每周哨兵在这些文件变动时提醒。按需读取的六种会话文件方言各有按厂商格式造的夹具。
+  提交或哪份文档；每周哨兵在这些文件变动时提醒。
 - **跟上厂商（场景 CE）。** Claude hooks 接住提问（elicitation）与因接口错误结束的回合
   （StopFailure → 轮到你）；经权限请求到来的 AskUserQuestion 是提问，问题就是它自己的第一个问题
   （不是工具名），ExitPlanMode 显示计划的第一行；失败的工具（PostToolUseFailure）也算回答了它的
   权限请求。同一次提问先到一句泛泛的通知、后到具体的请求时，显示具体的那句。Pi 的提示没有标题时
-  什么都不写，不把事件的 reason（`ui_prompt`）当问题。Codex 分页会话格式
-  （`item_completed`）照样读出标题与最后一句话；Codex 的 hooks 从不接 PermissionRequest ——
-  它在自动审查之前就触发，接了就是伪造等待。
-- **工具名同理。** 只认结构化的 `tool_use` 记录和已知工具名白名单，
-  绝不从「任意 `"name": "..."`」里猜。宁可空着。
-- **数量不估算。** 会话文件只读头尾，记录数不展示；被上限压下的会话精确计数。
+  什么都不写，不把事件的 reason（`ui_prompt`）当问题。Codex 只用 hooks.json，从不碰
+  `config.toml`；Codex 的 hooks 从不接 PermissionRequest —— 它在自动审查之前就触发，接了就是伪造等待。
+- **工具名同理。** 只认工具事件自己的结构化字段（`tool_name` / `toolName`，Copilot 的 `toolArgs`
+  按 JSON 读），绝不从「任意 `"name": "..."`」里猜。宁可空着。
+- **数量不估算。** 被上限压下的会话精确计数。
 - **写到磁盘上的东西要说清楚。** Pulse 只写 `settings.json`、hook 安装账本与 `debug.log`，
-  以及往事件日志里追加忽略时的 `done`；hook 往事件日志 `events.tsv` 追加（只追加、0600、
-  超过 1 MiB 压缩，开着的等待与回答它的行不丢）。更早版本留下的会话记录文件在启动时删掉，不读、不迁移。
+  以及往事件日志里追加忽略时的 `done`（带那一行的目录：不点名会话的等待只清那个目录的）；hook 往事件日志
+  `events.tsv` 追加（只追加、0600、超过 1 MiB 压缩，开着的等待与回答它的行不丢、正在追加的那行不丢；
+  提示事件带提示原文，所以这个文件也装着你敲过的话 —— 从第一个字节起就是 0600）。更早版本留下的会话记录
+  文件在启动时删掉，不读、不迁移。
   诊断日志不落项目名。
-- **主行按来源选，不按长度。** 用户句压过厂商标题，与字数无关；占位词和纯文件名
-  永远不是目标。
+- **主行按来源选，不按长度。** 标题是第一句说了事的提示（「继续」「continue」不算），与字数无关；
+  占位词和纯文件名永远不是目标。
 - Focus 分级诚实：确切的窗格 / 会话 / 标签 → 仅 App；cwd 可在编辑器里打开，但绝不经 Finder 冒充
   Focus，也不把仅激活 App 写成「跳到该会话」；什么都没有就不给聚焦按钮，通知路径退回打开托盘
   并**进入该行的详情页**（Go-Look Closure）。
@@ -520,13 +538,13 @@ fail-open —— 句子里就说清楚它回落到哪儿。
 | Tray 结构 | `PulseApp/TrayPanelViews.swift` → `TrayPanel` |
 | Prefs 布局与诊断 | `PulseApp/SettingsViews.swift` → `SettingsView` / `SettingsFace`；`SettingsModel.swift`（Hooks 行、报告） |
 | 投影：行、排序、灯、标题、边沿 | `PulseApp/TrayState.swift` → `TrayState.project` |
-| 行的每一句话与灯的一句规则 | `PulseApp/Explain.swift`（纯值：headline / why / source / lampRule；语言与时刻是输入） |
+| 行的每一句话与灯的一句规则 | `PulseApp/TrayRowModel.swift`（纯函数：headline / why / 状态词 / 步骤与时间的说法；语言与时刻是输入）· `TrayState.lampRule` / `lampSentence` |
 | 行的身份 | `PulseHarvest/RowIdentity.swift`（键一次定下、从不改变） |
 | 扫描静默 | `PulseApp/StatusStore.swift` → `StatusStore.land` / `PulseSnapshot.needsPublish`；测试 `ScanQuietTests` |
 | 等待通知 | `PulseApp/WaitingDelivery.swift`（纯规划）· `WaitLedger.swift`（内存记账）· `WaitNotifier.swift`（执行） |
 | Agent 目录（一处加 agent） | `PulseCore/AgentCatalog.swift` |
 | 会话状态（事件 → 状态） | `PulseApp/SessionBook.swift` → `SessionBook.apply` |
-| 会话文件（标题、最后的消息、模型、错误） | `PulseHarvest/TranscriptSummary.swift` |
+| 标题（提示词的清洗与取舍） | `PulseHarvest/TitleHeuristics.swift` |
 | 进程 | `PulseHarvest/AgentProcesses.swift`（libproc）· `PulseApp/ProcessExitWatch.swift`（退出源；跨更新状态在 `ScanEngine.swift`） |
 | 状态与设置面 | `PulseApp/StatusStore.swift`（模型与 intent）+ `StatusStoreViews.swift` · `ScanEngine.swift`（扫描）· `WaitNotifier.swift`（横幅）· `PulseSettings.swift`（`settings.json`） |
 | 行的数据与状态 | `PulseApp/Models.swift` → `AgentRow` · `RowState` · `RowWait` · `RowSource` |
@@ -534,7 +552,7 @@ fail-open —— 句子里就说清楚它回落到哪儿。
 | 托盘行的脸 | `TrayRowModel.swift`（纯值：灯、身份、主行、时间、第二行、菜单、VoiceOver）→ `TrayPanelViews.swift` → `TrayRowFace`；详情页是 `DetailModel` → `SessionDetailFace` |
 | 灯形 | `LampFace.swift`（行与菜单栏同一套：实心 / 环 / 空心 / 虚线；橙只给停滞） |
 | 托盘的键与状态 | `TrayKeys.swift`（纯 reducer `TrayKeys.reduce`、`BannerRoute`）· `TrayModels.swift`（`TrayHeaderModel` / `TrayNoticeModel` / `TrayOrder`）· `TrayUI.swift`（每次打开的状态，面板的按键监视器调用它） |
-| 值化的表面 | `TrayRowModel.swift` · `DetailModel.swift` · `Explain.swift` · `LampFace.swift` · `TrayModels.swift` · `TrayKeys.swift` · `SettingsModel.swift`；夹具 `PulseQA/SurfaceFixtures.swift`，截图 `PulseQA/SurfaceCapture.swift` + `scripts/qa_surfaces.sh`，`scripts/surface_check.py` 核对 |
+| 值化的表面 | `TrayRowModel.swift` · `DetailModel.swift` · `LampFace.swift` · `TrayModels.swift` · `TrayKeys.swift` · `SettingsModel.swift`；夹具 `PulseQA/SurfaceFixtures.swift`，截图 `PulseQA/SurfaceCapture.swift` + `scripts/qa_surfaces.sh`，`scripts/surface_check.py` 核对 |
 | 节奏（事件驱动 + 便宜的时钟） | `PulseCore/ProbeSchedule.swift` + `PulseApp/PowerMonitor.swift` |
 | 文案 | `PulseApp/L10n.swift` |
 | 版本 / 构建指纹 | `PulseApp/Models.swift` → `PulseVersion` |

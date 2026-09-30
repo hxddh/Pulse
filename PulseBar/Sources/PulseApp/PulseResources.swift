@@ -4,10 +4,9 @@ import Foundation
 ///
 /// The compiler-generated `Bundle.module` accessor ends in `fatalError()` when
 /// it cannot open the bundle. That turns any packaging mistake into a launch
-/// crash with no diagnostics — which is exactly what shipped in 0.21 through
-/// 0.23.0: `package.sh` created a `Contents/` directory inside the flat SwiftPM
-/// bundle, CFBundle refused to open it, and the app died drawing its menu bar
-/// icon. Users saw a bounce and nothing else.
+/// crash with no diagnostics: a `Contents/` directory inside the flat SwiftPM
+/// bundle is enough for CFBundle to refuse it, and the app dies drawing its
+/// menu bar icon — a bounce and nothing else.
 ///
 /// A missing icon is not worth a crash. This resolves the same candidates and
 /// returns nil, so callers fall through to `PulseBrand.fallbackDrawn` and the

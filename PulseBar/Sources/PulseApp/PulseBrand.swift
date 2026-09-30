@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Pulse brand mark and the menu-bar lamp.
 ///
-/// 23.0: the status item draws the same four lamp shapes as a tray row
+/// The status item draws the same four lamp shapes as a tray row
 /// (`LampFace`): filled = needs you, ring = running, hollow = your turn /
 /// recent / idle, dotted = seen only as a process. One glyph family, so the
 /// menu bar and the row it summarises read alike.

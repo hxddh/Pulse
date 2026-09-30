@@ -14,7 +14,8 @@ says what is true now; CHANGELOG says when and why it became true.
 | [`docs/architecture.md`](docs/architecture.md) | You are changing how data reaches the menu bar |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the behaviour spec |
 | [`docs/scenarios.md`](docs/scenarios.md) | You add or change an acceptance scenario — each row names the tests that pin it |
-| [`docs/vendor-formats.md`](docs/vendor-formats.md) | You touch a hook receiver or a transcript dialect — each agent's hook contract has a pinned source, a test and a weekly drift sentinel |
+| [`docs/vendor-formats.md`](docs/vendor-formats.md) | You touch a hook receiver — each agent's hook contract has a pinned source, a test and a weekly drift sentinel, and says which event gives the title and the step |
+| [`docs/observability-matrix.md`](docs/observability-matrix.md) | You change what a row claims — the sources, and what is never shown |
 | [`docs/attention-protocol.md`](docs/attention-protocol.md) | You touch the event log (`events.tsv`, Attention Protocol v5) or a hook's line |
 | [`docs/landing-hosts.md`](docs/landing-hosts.md) | You change how a click lands on a terminal or an editor |
 
@@ -25,9 +26,8 @@ product decision; mechanically it is one `case` and one `AgentSpec` (with its
 `PulseHookReceiver`, its icon, README row, a truth table in
 `SessionBookTests` and a `hooks` entry in `docs/vendor-formats.json` —
 `scripts/catalog_check.py` fails if the roster is not the seven, if a
-per-agent table grows back anywhere else, if the README matrix disagrees
-with the catalog, if a contract lists a gating event, or if a hook contract
-has no stated source or test.
+contract lists a gating event, or if a hook contract has no stated source
+or test.
 
 ## Invariants
 
@@ -40,10 +40,15 @@ compiles and ships.
   say running and your turn only, the receiver refuses a blocked line for
   them, and the product says "doesn't report when it waits". **Red means
   blocked** — `permission`, `question`, `waiting`. A finished turn (`turn`:
-  Claude Stop / `idle_prompt`, Codex `agent-turn-complete`) is "your turn": a
+  Claude Stop / `idle_prompt`, Codex Stop) is "your turn": a
   quiet tray count, never the red lamp, never a banner; it comes only from
   hooks and never makes a row of its own.
-- **No quota, cost, or reset HUD.** That is a different product.
+- **No quota, cost, or reset HUD.** That is a different product. Tokens,
+  context, cost, model and plan are not shown, and no source reads a
+  `usage` / `token_count` / `rate_limits` / `cost` field (`catalog_check`).
+  What a row says — the title (the first prompt), the last step, the last
+  words, a turn's error — comes from the events only; Pulse reads no vendor
+  file (no session store, no transcript).
 - **No judgment transfer, and no blind approve.** Pulse never answers a
   permission request, and the hook receiver never holds — it appends one
   line to the event log and exits. The answer is always given in the vendor's own
@@ -70,11 +75,15 @@ compiles and ships.
   never resets what was applied, so an answered block is never replayed red.
 - **The log is bounded without losing an answer.** An append that would
   pass `EventLog.maxBytes` compacts first: per session (per agent + folder
-  for a session-less one) the last lines and every recent line stay, and an
-  open block is kept with everything after it in its session.
+  for a session-less one) the last lines and every recent line stay, an
+  open block is kept with everything after it in its session, and the line
+  being appended is always kept. A rewritten log is re-read whole and its
+  lines are matched to the applied ones by position (`EventLog.unapplied`),
+  never by text alone; lines end at `\n` bytes only.
 - **A source failure must not blank the tray.** A failed libproc scan keeps
-  the last good process list; an unreadable transcript only thins a row;
-  neither ever removes a session. Sessions leave only by an event (`end`), a
+  the last good process list; a failed log read keeps what was applied and
+  is retried on one backing-off timer (5 s → 60 s); neither ever removes a
+  session, and only the launch replay is a banner baseline. Sessions leave only by an event (`end`), a
   process exit (or a pid now running another process — `AgentProcesses.stillRuns`),
   the idle bound, the silent bound or the one-day prune. A live process keeps
   a working or blocked session listed, never an idle or recent one: one
@@ -95,8 +104,10 @@ compiles and ships.
   beforeShellExecution-style gating hooks, never anything that returns a
   decision), **and every install is reversible byte-for-byte.** The installer
   is driven by the catalog's `HookContract`s; `HookContract.gatingEvents`
-  lists what is never installed; `hook-installs.json` records what each
-  install replaced. See [`docs/attention-bridge.md`](docs/attention-bridge.md).
+  lists what is never installed, and an event that is not installed is not
+  read; `hook-installs.json` records what each install replaced. Codex is
+  `hooks.json` only — `config.toml` is never touched. See
+  [`docs/attention-bridge.md`](docs/attention-bridge.md).
 - **QA code never ships.** Fixtures, captures and the preview window live in
   the `PulseQA` executable; the app is `PulseBar` alone.
   `scripts/surface_check.py` keeps the QA files out of `PulseApp` and
@@ -110,7 +121,7 @@ down only:
 | Target | Kind | What it holds |
 | --- | --- | --- |
 | `PulseCore` | library | the agent catalog, bounded and private IO, process supervision, the cadence, the debug log (members `public`) |
-| `PulseHarvest` | library | the event sources: the event log (`EventLog`: append, read from a cursor, compact), libproc `AgentProcesses`, `RowIdentity`, `TranscriptSummary` (members `package`) |
+| `PulseHarvest` | library | the event sources: the event log (`EventLog`: append, read from a cursor, compact, match a rewrite to what was applied), libproc `AgentProcesses`, `RowIdentity`, `TitleHeuristics` (members `package`) |
 | `PulseApp` | library | `SessionBook` → `TrayState` → `StatusStore`, `ScanEngine`, `WaitNotifier` + `WaitLedger`, the hook receiver and installer, every view; owns the resources (`PulseResources`, never `Bundle.module`) |
 | `PulseBar` | executable | `PulseBarMain.main()` and nothing else — the shipping app |
 | `PulseQA` | executable | `SurfaceFixtures`, `SurfaceCapture`, `StatusStoreFixture`, `TrayPreviewWindowController`, `QADriver` (`@testable import PulseApp`, debug only) |
@@ -119,13 +130,20 @@ No library imports AppKit or SwiftUI below `PulseApp`, and none reaches
 `StatusStore`. Data flow: a hook appends a line to `events.tsv` →
 `AttentionWatcher` wakes `ScanEngine`, which reads the bytes after its cursor
 and applies those lines, in order, to `SessionBook` (at launch: the whole log,
-before the first projection) → `TrayState.project(book:processes:summaries:context:)`
-returns rows, lamp, title, counts, newly-blocked edges and `staleHidden` →
-`StatusStore.land` assigns an observed property only when it changed →
+before the first projection) → `TrayState.project(book:processes:context:)`
+returns rows (each with its last steps and its turn's clock), lamp, title,
+one `TrayState.Counts` (counted once; the header, the lamp and VoiceOver
+read it), newly-blocked edges and `staleHidden` → `StatusStore.land` assigns an
+observed property only when it changed; a projection from an event read that
+moves only quiet facts (`TrayState.quietSignature`: steps, clocks) lands at
+most once per tick →
 `WaitNotifier` plans banners from the edges (a wait raised in front of the
 person waits 30 s and its app leaving the front) and withdraws each banner
-when its wait is answered, dismissed or ends (`WaitLedger` keeps the ids). `Explain` says every row's
-headline and why, and the lamp's one-sentence rule.
+when its wait is answered, dismissed or ends (`WaitLedger` keeps the ids).
+`TrayRowModel` says every row's headline and why (the detail page says the
+same words), and `TrayState.lampSentence` the lamp's one-sentence rule. How
+Pulse reads a session is in Settings → Hooks → "Copy report", not on the
+detail page.
 
 ## Working on it
 
@@ -137,11 +155,11 @@ cd PulseBar && swift test       # test count is reported by SwiftPM/CI
 Every target is in the Swift 6 language mode; every product target treats
 warnings as errors. Tests live in `PulseBar/Tests/PulseBarTests/`, one file
 per component: `CoreTests` (catalog, bounded IO, libproc processes),
-`TranscriptTests` (the six transcript dialects), `VendorFormatTests` (hook
+`VendorFormatTests` (hook
 contracts and drift), `AttentionTests` (the book reading event lines, the
 protocol, the event log, the hook receiver, the installer), `SessionTests` (the seven agents' truth
-tables, `TrayState`, identity), `ExplainTests`, `NotifierTests` (`WaitLedger`,
-delivery, routing), `TrayTests`, `SettingsTests`, `DiagnosticsTests` (the
+tables, `TrayState`, identity), `NotifierTests` (`WaitLedger`,
+delivery, routing), `TrayTests` (the row's words, the lamp, keys, detail), `SettingsTests`, `DiagnosticsTests` (the
 report, the hooks section, the tray notice, version and updates),
 `EngineTests`. A new test goes in the file of the component it tests — never
 a file named after a release. `docs/scenarios.md` names suites and methods,
@@ -158,8 +176,9 @@ python3 scripts/package_check.py             # reads the built .app
 ```
 
 `gates.sh` runs `version_check` (one semver), `catalog_check` (roster,
-libproc-only process rules, privacy rules, README matrix, hook sources),
-`make_agent_icons --check`, `appearance_check`, `surface_check`,
+libproc-only process rules, privacy rules, no token / usage / cost reads,
+no gating event, hook sources), `make_agent_icons --check`,
+`surface_check` (surfaces render values; a step never says "running"),
 `scenario_map` and a `Bundle.module` grep. A gate earns its place by guarding
 a real fact; one that only checks prose or long-deleted code is removed, not
 kept "just in case".
@@ -167,7 +186,8 @@ kept "just in case".
 **The wall that catches a state regression** is `swift test`:
 `SessionBookTests` holds a truth table per agent, `TrayStateTests` and
 `TrayAssembleTests` the running / recent / process-only rules and the lamp,
-`TranscriptSummaryTests` a vendor-shaped fixture per dialect. A wrong tray
+`everyAgentsStepsComeFromItsOwnHook` where each agent's title and steps come
+from. A wrong tray
 state is fixed with a failing test there — a source-string gate cannot do
 that job. `ScanQuietTests` lists every observed `StatusStore` property; a
 projection that finds the same world must announce nothing.

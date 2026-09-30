@@ -8,10 +8,9 @@ import Foundation
 // `scripts/catalog_check.py` fails CI if a per-agent switch grows back
 // anywhere else.
 //
-// 24.0 (Exact): Pulse supports seven agents, each through the vendor's own
-// documented, non-blocking hook, plugin or extension (`hooks`). The others
-// were removed with their collectors; Cursor's IDE and its `cursor-agent`
-// CLI are one agent.
+// Pulse supports seven agents, each through the vendor's own documented,
+// non-blocking hook, plugin or extension (`hooks`). Cursor's IDE and its
+// `cursor-agent` CLI are one agent.
 //
 // Order is meaningful. `AgentCatalog.all` is `AgentID.allCases` order, which
 // is also process-rule precedence (the first matching rule wins).
@@ -47,8 +46,8 @@ public enum AgentID: String, CaseIterable, Identifiable, Hashable, Sendable {
     }
 }
 
-/// Where an agent's "needs you" comes from. 24.0: only the vendor's own hook
-/// (or plugin/extension event) — never inference, never a transcript read.
+/// Where an agent's "needs you" comes from: only the vendor's own hook (or
+/// plugin/extension event) — never inference, never a file Pulse reads.
 public enum WaitingSource: Sendable {
     /// The vendor's hook raises a blocked event (permission or question).
     case hooks
@@ -57,7 +56,7 @@ public enum WaitingSource: Sendable {
     case none
 }
 
-// MARK: - Hook contracts (24.0)
+// MARK: - Hook contracts
 
 /// How Pulse's hook is written into a vendor's configuration. One case per
 /// documented configuration shape.
@@ -65,8 +64,8 @@ public enum HookFormat: String, Sendable {
     /// Claude Code `~/.claude/settings.json`: `{"hooks": {Event: [{"matcher"?,
     /// "hooks": [{"type": "command", "command", "timeout", "async": true}]}]}}`.
     case claudeSettings
-    /// Codex `~/.codex/hooks.json` (same nested shape, `async` honoured) plus
-    /// the legacy `notify` argv in `~/.codex/config.toml`.
+    /// Codex `~/.codex/hooks.json` (same nested shape, `async` honoured).
+    /// Pulse never touches `config.toml`.
     case codexHooks
     /// Gemini CLI `~/.gemini/settings.json` `hooks` (nested shape, `timeout`
     /// in milliseconds, a `name`).
@@ -99,7 +98,7 @@ public struct HookEvent: Sendable, Equatable {
 
 /// The documented, non-blocking hook Pulse installs for one agent.
 ///
-/// The rule (24.0): install only the vendor's documented hook, plugin or
+/// The rule: install only the vendor's documented hook, plugin or
 /// extension; only events that cannot change the agent's decisions — never a
 /// tool-gating event, never anything that returns a decision (Pulse's hook
 /// prints nothing and exits 0; Claude and Codex entries also run `async`);
@@ -158,7 +157,7 @@ public struct HookContract: Sendable {
 
 /// Which processes are this agent, by executable path and argv. See
 /// `AgentProcesses.match(args:)`: the hook's pid lookup and the process scan
-/// (24.0: libproc, no `ps`) share it.
+/// (libproc, no `ps`) share it.
 public struct AgentProcessRule: Sendable {
     public var basenames: [String]
     public var pathNeedles: [String]
@@ -181,13 +180,13 @@ public struct AgentSpec: Sendable {
     /// Fallback glyph when the PNG/SVG mark is missing — unique across the
     /// roster. The mark itself is `Resources/AgentIcons/<rawValue>.png|svg`.
     public let monogram: String
-    /// Whether the vendor's own hook reports a blocked session (24.0).
+    /// Whether the vendor's own hook reports a blocked session.
     public let waiting: WaitingSource
     /// Other spellings a hook or bridge may use for this agent, beyond
     /// its raw value.
     public let aliases: [String]
     public let process: AgentProcessRule
-    /// The vendor's documented, non-blocking hook Pulse installs (24.0).
+    /// The vendor's documented, non-blocking hook Pulse installs.
     public let hooks: HookContract
 }
 
@@ -228,10 +227,10 @@ public enum AgentCatalog {
             id: .codex,
             displayName: "Codex",
             monogram: "Cx",
-            // 24.0: Codex's PermissionRequest fires before its own
-            // auto-review, so an approval nobody is asked for would light a
-            // red lamp (openai/codex#28833). Its hooks say running and your
-            // turn; they never say blocked.
+            // Codex's PermissionRequest fires before its own auto-review,
+            // so an approval nobody is asked for would light a red lamp
+            // (openai/codex#28833). Its hooks say running and your turn
+            // (Stop); they never say blocked.
             waiting: .none,
             aliases: [],
             process: AgentProcessRule(basenames: ["codex"], pathNeedles: ["/opt/homebrew/bin/codex", "/bin/codex", "Resources/codex"], denyNeedles: [], argvDenyNeedles: ["Codex Framework", "crashpad", "computer-use", "codex-code-mode-host"]),
@@ -255,7 +254,7 @@ public enum AgentCatalog {
             // gating `before*` hook — running and your turn only.
             waiting: .none,
             aliases: ["cursor_agent", "cursor-agent"],
-            // 24.0: the IDE and the `cursor-agent` CLI are one agent.
+            // The IDE and the `cursor-agent` CLI are one agent.
             // Cursor's private-worker daemon is persistent infrastructure: it
             // stays alive with no composer running, so counting it made an
             // idle IDE look like "2 processes" forever.

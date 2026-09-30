@@ -105,10 +105,9 @@ def main(argv: list[str]) -> int:
         ok, found = check(path, pattern, want)
         if ok:
             continue
-        # 21.0: never rename the newest CHANGELOG heading. `--fix` used to
-        # rewrite "## 18.0.0" into "## 19.0.0", so 19.0.0 and 20.0.0 shipped
-        # with 18.0's notes as their release body. A release's section is
-        # written by a person; the gate only checks that it exists.
+        # Never rename the newest CHANGELOG heading: a renamed heading ships
+        # the previous release's notes as the new release's body. A release's
+        # section is written by a person; the gate only checks that it exists.
         if do_fix and found != "<not found>" and path != CHANGELOG:
             fix(path, pattern, want)
             print(f"fixed   {label}: {found} → {want}")

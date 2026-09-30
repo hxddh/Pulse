@@ -2,8 +2,8 @@
 """Verify a packaged Pulse.app can actually find its resources.
 
 The other gates read source. This one reads the *build output*, because the
-bug it exists to catch never appears in source: 0.21 through 0.23.0 all shipped
-a DMG that crashed on launch, while every test passed and every gate was green.
+bug it exists to catch never appears in source: a DMG that crashes on launch
+can ship while every test passes and every gate is green.
 
 What went wrong: SwiftPM builds a *flat* resource bundle — Info.plist and the
 resource directories at the root, no Contents/. package.sh then created
@@ -100,9 +100,9 @@ def main(argv: list[str]) -> int:
     #   Contents/Resources/  — where an app bundle normally keeps resources, and
     #                          where PulseResources looks first.
     #   <app root>/          — where SwiftPM's generated `Bundle.module` accessor
-    #                          for an *executable* target looks, and the reason
-    #                          0.21–0.23.0 crashed: package.sh used the first,
-    #                          the accessor only ever checked the second.
+    #                          for an *executable* target looks — a package that
+    #                          used only the first crashed: the accessor only
+    #                          ever checks the second.
     #
     # Accept either, so this gate does not quietly encode one resolution
     # strategy as the only correct one. `--selftest` is what proves the app can

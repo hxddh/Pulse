@@ -39,7 +39,7 @@ struct WaitingDelivery: Equatable {
     func plan(_ rows: [AgentRow]) -> Plan {
         let eligible = rows.filter { row in
             row.isBlocked
-                // 16.0: the prompt was already in front of the user when it
+                // The prompt was already in front of the user when it
                 // was raised — the lamp says so; a banner and a sound would
                 // only interrupt someone who is looking at it — unless
                 // it is still open after `deferAfterMs` and its app has left

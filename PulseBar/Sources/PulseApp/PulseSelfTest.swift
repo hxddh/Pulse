@@ -3,11 +3,9 @@ import Foundation
 /// `PulseBar --selftest`: prove the packaged app can find its own resources.
 ///
 /// Every static check of the `.app` encodes an assumption about *where* the
-/// runtime looks. That assumption is exactly what was wrong in 0.21–0.23.0:
-/// `package.sh` put the resource bundle in `Contents/Resources/`, while the
-/// SwiftPM accessor for an executable target only ever looked at the `.app`
-/// root and the baked build path. The structure looked defensible; the app
-/// still died on launch.
+/// runtime looks, and such an assumption has been wrong before: a resource
+/// bundle packaged where the SwiftPM accessor never looks passes every
+/// structural check, and the app still dies on launch.
 ///
 /// So this asks the only question that matters, from inside the real bundle,
 /// using the real lookup code: can it resolve the resources? It deliberately

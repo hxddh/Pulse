@@ -1,17 +1,17 @@
 import Foundation
 
-/// The tray, as one pure value: the session book, the process table and the
-/// transcript summaries in; every row, the lamp, the menu-bar title, the
-/// counts, the Waiting edges and what was left out for age out.
+/// The tray, as one pure value: the session book and the process table in;
+/// every row, the lamp, the menu-bar title, the counts, the Waiting edges and
+/// what was left out for age out.
 ///
 /// `SessionBook` holds what the events said. `project` turns it into rows
 /// (`sessionRows`: one per session worth showing, plus a process-only row for
 /// each agent process no session has claimed) and then into the tray
-/// (`assemble`: sort, window, lamp, title, census, edges). It never reads a
+/// (`assemble`: sort, window, lamp, title, counts, edges). It never reads a
 /// clock, a file or a setting — the `Context` carries all of them — so the
 /// same world always projects the same way.
 ///
-/// Time rules, said by `Explain`:
+/// Time rules, said by the row's why (`TrayRowModel.why`):
 ///
 /// - a session whose pid is known stays in its state while the process
 ///   lives (an exit ends it); with no pid, a session quiet for `idleBoundMs`
@@ -58,7 +58,7 @@ struct TrayState: Equatable {
     /// Every row, in the tray's order (the visible window is
     /// `snapshot.rows`).
     var rows: [AgentRow] = []
-    /// The glance, the menu-bar title and tooltip, the census, the window.
+    /// The glance, the menu-bar title and tooltip, the counts, the window.
     var snapshot = PulseSnapshot()
     /// The tick's tier.
     var activity: ProbeSchedule.Activity = .empty
@@ -71,15 +71,36 @@ struct TrayState: Equatable {
     /// `showAllAgents` after collapsing it when the list got short again.
     var showAllAgents = false
 
-    /// The book, the processes and the transcripts, as the tray.
+    /// The book and the processes, as the tray.
     static func project(
         book: SessionBook,
         processes: [AgentProcesses.Hit],
-        summaries: [String: TranscriptSummary],
         context: Context
     ) -> TrayState {
-        let found = sessionRows(book: book, processes: processes, summaries: summaries, context: context)
+        let found = sessionRows(book: book, processes: processes, context: context)
         return assemble(rows: found.rows, staleHidden: found.staleHidden, context: context)
+    }
+
+    /// This state with every fact a burst of tool lines moves on its own —
+    /// the steps, the activity and event clocks — set aside: two states with
+    /// the same `quietSignature` differ only in what a row's quiet second
+    /// line says, never in a state, a wait, the lamp or a count. The engine
+    /// lands such a change at most once per tick.
+    var quietSignature: TrayState {
+        func quiet(_ row: AgentRow) -> AgentRow {
+            var copy = row
+            copy.lastStep = nil
+            copy.recentSteps = []
+            copy.lastEventMs = 0
+            copy.activityMs = 0
+            return copy
+        }
+        var copy = self
+        copy.rows = rows.map(quiet)
+        copy.newlyBlocked = newlyBlocked.map(quiet)
+        copy.snapshot.rows = snapshot.rows.map(quiet)
+        copy.snapshot.updatedAt = .distantPast
+        return copy
     }
 
     // MARK: - Rows
@@ -95,7 +116,6 @@ struct TrayState: Equatable {
     static func sessionRows(
         book: SessionBook,
         processes: [AgentProcesses.Hit],
-        summaries: [String: TranscriptSummary],
         context: Context
     ) -> SessionRows {
         let nowMs = context.nowMs
@@ -134,13 +154,14 @@ struct TrayState: Equatable {
                 continue
             }
 
-            if let summary = summaries[session.transcript], !session.transcript.isEmpty {
-                row.task = summary.title
-                row.model = summary.model
-                row.lastWord = summary.lastMessage
-                row.lastErrorText = summary.lastError
-            }
-            if row.lastWord.isEmpty { row.lastWord = TranscriptSummaryReader.firstLine(session.message) }
+            // What its events said: the title, the last words, the error,
+            // the steps and the turn's clock.
+            row.task = session.title
+            row.lastWord = session.message
+            row.lastErrorText = session.lastError
+            row.recentSteps = session.steps
+            row.lastStep = session.steps.last
+            row.turnStartMs = session.turnStartMs
 
             // How to reach it: the hook's landing handle first; the process
             // table fills only what the hook did not say.
@@ -258,7 +279,7 @@ struct TrayState: Equatable {
     // MARK: - The tray
 
     /// Rows in, the tray out: sorted, windowed, the lamp, the title, the
-    /// census and the Waiting edges.
+    /// counts and the Waiting edges.
     static func assemble(
         rows input: [AgentRow],
         staleHidden: [AgentID: Int] = [:],
@@ -326,7 +347,7 @@ struct TrayState: Equatable {
         return rows.isEmpty ? .empty : .recent
     }
 
-    /// The glance, the census, the tooltip and the lamp for a row list.
+    /// The glance, the counts, the tooltip and the lamp for a row list.
     private static func snapshot(
         rows all: [AgentRow],
         showAll: Bool,
@@ -334,17 +355,11 @@ struct TrayState: Equatable {
         context: Context
     ) -> PulseSnapshot {
         let lang = context.lang
-        let waitingRows = all.filter(\.isBlocked)
-        let waitingCount = waitingRows.count
-        let census = Census(rows: all)
+        let counts = Counts(rows: all)
+        let waitingCount = counts.blocked
 
         var snap = PulseSnapshot()
-        snap.sectionTotals = [
-            .needsYou: waitingCount,
-            .running: all.filter { $0.section == .running }.count,
-            .stalled: all.filter { $0.section == .stalled }.count,
-            .recent: all.filter { $0.section == .recent }.count,
-        ]
+        snap.counts = counts
         window(rows: all, showAll: showAll, maxVisible: context.maxVisibleRows, into: &snap)
 
         // The lamp. Red when anything is blocked; orange only for a stalled
@@ -353,9 +368,9 @@ struct TrayState: Equatable {
         // session is grey, never orange and never green.
         if waitingCount > 0 {
             snap.glance = .waiting
-        } else if census.stalled > 0 {
+        } else if counts.stalled > 0 {
             snap.glance = .stalled
-        } else if census.running > 0 {
+        } else if counts.running > 0 {
             snap.glance = .running
         } else {
             snap.glance = .idle
@@ -365,7 +380,7 @@ struct TrayState: Equatable {
         // many, and how long the oldest has waited. A wait younger than five
         // seconds says nothing the lamp has not.
         if waitingCount > 0 {
-            let oldestStamp = waitingRows.compactMap { $0.wait?.sinceMs }.filter { $0 > 0 }.min()
+            let oldestStamp = all.compactMap { $0.wait?.sinceMs }.filter { $0 > 0 }.min()
             let oldest = oldestStamp.map { max(0, Double(context.nowMs - $0) / 1000.0) } ?? 0
             let raw = oldest > 0 ? DurationFormat.label(seconds: oldest, lang: lang) : ""
             let dur = raw == L10n.t(.durNow, lang) ? "" : raw
@@ -374,12 +389,12 @@ struct TrayState: Equatable {
                 : GlanceTitle.fit("\(waitingCount) · \(dur)", "\(waitingCount)")
         }
 
-        snap.headerTitle = census.summary(lang)
+        snap.headerTitle = counts.summary(lang)
 
         // One sentence for the tooltip and VoiceOver: the rule that set the
         // lamp. The tray names the sessions.
-        let rule = Explain.lampRule(rows: all, glance: snap.glance)
-        snap.tooltip = Explain.lampSentence(rule, lang: lang)
+        let rule = lampRule(counts: counts, glance: snap.glance)
+        snap.tooltip = lampSentence(rule, lang: lang)
         snap.lamp = LampFace.glance(snap.glance, processOnly: rule == .processOnly)
         snap.accessibilityLabel = snap.glance == .idle
             ? L10n.t(snap.glance.accessibilityKey, lang)
@@ -391,8 +406,49 @@ struct TrayState: Equatable {
         return snap
     }
 
-    /// Every row counted once, by its state — the census VoiceOver announces.
-    struct Census: Equatable {
+    // MARK: - The lamp's rule
+
+    /// The rule that set the menu-bar lamp. The sentence names the rule;
+    /// the tray names the sessions.
+    enum LampRule: String, Equatable, Sendable {
+        case blocked, stalled, running, processOnly, yourTurn, recent, idle
+    }
+
+    /// A grey lamp says the most useful thing that is true: a finished turn,
+    /// then a live process Pulse can only see from outside, then recent
+    /// sessions.
+    static func lampRule(counts: Counts, glance: GlanceKind) -> LampRule {
+        switch glance {
+        case .waiting: return .blocked
+        case .stalled: return .stalled
+        case .running: return .running
+        case .idle:
+            if counts.yourTurn > 0 { return .yourTurn }
+            if counts.processOnly > 0 { return .processOnly }
+            if counts.recent > 0 { return .recent }
+            return .idle
+        }
+    }
+
+    /// The one line the tooltip and VoiceOver say — the status item's whole
+    /// tooltip.
+    static func lampSentence(_ rule: LampRule, lang: ResolvedLanguage) -> String {
+        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
+        switch rule {
+        case .blocked: return t(.lampRuleBlocked)
+        case .stalled: return t(.lampRuleStalled)
+        case .running: return t(.lampRuleRunning)
+        case .processOnly: return t(.lampRuleProcessOnly)
+        case .yourTurn: return t(.lampRuleTurn)
+        case .recent: return t(.lampRuleRecent)
+        case .idle: return t(.lampRuleIdle)
+        }
+    }
+
+    /// Every row counted once, by its state — counted once per projection
+    /// (`PulseSnapshot.counts`): the lamp, the menu-bar title, the header
+    /// VoiceOver announces and the status item's flash all read it.
+    struct Counts: Equatable {
         var blocked = 0
         var running = 0
         var stalled = 0
@@ -400,7 +456,7 @@ struct TrayState: Equatable {
         var processOnly = 0
         var recent = 0
 
-        init(rows: [AgentRow]) {
+        init(rows: [AgentRow] = []) {
             for row in rows {
                 switch row.state {
                 case .blocked: blocked += 1

@@ -1,8 +1,7 @@
 import Foundation
 
 /// Near-realtime refresh when the event log (`events.tsv`) changes — the
-/// one file every hook writes (the per-session activity spool and its
-/// second watch are gone).
+/// one file every hook writes, and the one watch.
 final class AttentionWatcher: @unchecked Sendable {
     private var source: DispatchSourceFileSystemObject?
     private var onChange: (() -> Void)?

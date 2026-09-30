@@ -47,7 +47,7 @@ final class StatusStore {
     var loginItemApplied: Bool?
     /// Notification authorization — a denied prompt used to fail silently.
     var notifyAuthorized: Bool?
-    /// 21.0: Notification Center refused the last "needs you" banner.
+    /// Notification Center refused the last "needs you" banner.
     var waitingBannerFailed = false
     var updateStatus: UpdateCheck.Status = .idle
     /// What happened the last time the user pressed a button on this row —
@@ -109,7 +109,7 @@ final class StatusStore {
     func start() {
         DebugLog.write("start begin \(PulseVersion.fingerprint)")
         // The agents' own hooks are the only state that outlives a launch;
-        // what Pulse kept of its own before 25.0 is deleted, never read.
+        // files Pulse once kept of its own are deleted, never read.
         Self.removeRetiredFiles()
         HooksSupport.seedAssets()
         landHooksStatus(HooksSupport.probeStatus())
@@ -209,7 +209,7 @@ final class StatusStore {
 
     // MARK: - Settings
 
-    /// Read `settings.json` (a pre-23.0 `settings.txt` is deleted, unread).
+    /// Read `settings.json` (an old `settings.txt` is deleted, unread).
     /// With no file, the defaults stay. A `--language=` from the command line
     /// is `languageOverride`, not a setting, so a file cannot undo it.
     func loadSettings() {
@@ -224,18 +224,44 @@ final class StatusStore {
 
     /// Change one setting, save it, and apply what it affects.
     func set<Value: Equatable>(_ keyPath: WritableKeyPath<PulseSettings, Value>, _ value: Value) {
-        guard settings[keyPath: keyPath] != value else { return }
-        settings[keyPath: keyPath] = value
+        update { $0[keyPath: keyPath] = value }
+    }
+
+    /// Change any number of settings at once: one assignment, one save, and
+    /// each effect applied once — only the ones a changed setting needs
+    /// (`effects(from:to:)`).
+    func update(_ change: (inout PulseSettings) -> Void) {
+        var next = settings
+        change(&next)
+        guard next != settings else { return }
+        let before = settings
+        settings = next
         guard started else { return }
         settings.save()
-        // Banner button titles are baked into the registered category, so they
-        // go stale on a language switch unless re-registered here.
-        notifier.languageChanged(lang)
-        applyLaunchAtLoginIfChanged()
-        applyHotkey()
-        UpdateCheck.shared.startIfEnabled(store: self)
-        engine.rescheduleTimer()
-        refresh(reason: "saveSettings")
+        for effect in Self.effects(from: before, to: next).sorted() { apply(effect) }
+    }
+
+    /// The effects a change from `before` to `after` needs — nothing for a
+    /// mute, a notification switch or an answered offer, which are read
+    /// where they are used. Pure.
+    nonisolated static func effects(from before: PulseSettings, to after: PulseSettings) -> Set<SettingEffect> {
+        var out: Set<SettingEffect> = []
+        if before.language != after.language { out.formUnion([.bannerCategory, .reproject]) }
+        if before.launchAtLogin != after.launchAtLogin { out.insert(.loginItem) }
+        if before.hotkey != after.hotkey { out.insert(.hotkey) }
+        if before.updateCheckEnabled != after.updateCheckEnabled { out.insert(.updateCheck) }
+        if before.allowTerminalAutomation != after.allowTerminalAutomation { out.insert(.reproject) }
+        return out
+    }
+
+    private func apply(_ effect: SettingEffect) {
+        switch effect {
+        case .bannerCategory: notifier.languageChanged(lang)
+        case .loginItem: applyLaunchAtLoginIfChanged()
+        case .hotkey: applyHotkey()
+        case .updateCheck: UpdateCheck.shared.startIfEnabled(store: self)
+        case .reproject: engine.project()
+        }
     }
 
     func toggleMute(_ agent: AgentID) {
@@ -370,11 +396,6 @@ final class StatusStore {
         }
     }
 
-    /// The detail page opened: its transcript is worth a (cached) read.
-    func detailOpened(_ row: AgentRow) {
-        engine.detailOpened(rowKey: row.rowKey)
-    }
-
     /// The landing plan was made by the projection that produced this row,
     /// and a window can close between then and the click. Say how it landed,
     /// never rounded up: exact says nothing, the app alone says so, and
@@ -409,11 +430,14 @@ final class StatusStore {
     }
 
     /// The offer's answer. Either way it is never made again; "Allow" turns
-    /// Terminal automation on (macOS asks once, on the next Go).
+    /// Terminal automation on (macOS asks once, on the next Go). One save,
+    /// one re-projection.
     func answerAutomationOffer(_ row: AgentRow, allow: Bool) {
-        set(\.automationOfferAnswered, true)
+        update {
+            $0.automationOfferAnswered = true
+            if allow { $0.allowTerminalAutomation = true }
+        }
         if allow {
-            set(\.allowTerminalAutomation, true)
             noteRowAction(row.rowKey, tr(.automationAllowed))
         } else {
             rowActionNotices.removeValue(forKey: row.rowKey)
@@ -425,18 +449,18 @@ final class StatusStore {
     /// survives a restart, and it is the same line a new prompt would write.
     func markTurnSeen(_ row: AgentRow) {
         guard row.isYourTurn, !row.attentionSession.isEmpty else { return }
-        writeDone(agent: row.agent, session: row.attentionSession)
+        writeDone(agent: row.agent, session: row.attentionSession, cwd: row.cwd)
     }
 
     /// The person dismissed a wait: a `done` in the event log under
-    /// exactly the session its entry carried — an empty one clears only that
-    /// agent's session-less entries, never its other sessions — and no
-    /// banner for it.
+    /// exactly the session its entry carried — an empty one, with the
+    /// row's folder, clears only that agent's session-less entry in that
+    /// folder, never its other sessions — and no banner for it.
     func dismissWaiting(_ row: AgentRow) {
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         notifier.dismissed(row.rowKey)
         if let done = Self.doneLine(for: row) {
-            writeDone(agent: done.agent, session: done.session, nowMs: nowMs)
+            writeDone(agent: done.agent, session: done.session, cwd: done.cwd, nowMs: nowMs)
         }
     }
 
@@ -448,12 +472,13 @@ final class StatusStore {
     /// click), appended to the event log off the main thread. The watch
     /// reads the line back; the book has already applied it, so it changes
     /// nothing.
-    private func writeDone(agent: AgentID, session: String, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) {
+    private func writeDone(agent: AgentID, session: String, cwd: String, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) {
         let record = AttentionRecord(
             agent: agent.rawValue,
             kind: AttentionKind.done.rawValue,
             ms: nowMs,
-            session: session.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " ")
+            session: AttentionProtocol.flatten(session),
+            cwd: AttentionProtocol.flatten(cwd)
         )
         // A preview fixture's rows are not the book's; leave them on screen.
         if !previewFixtureActive { engine.apply(records: [record], nowMs: nowMs) }
@@ -464,10 +489,11 @@ final class StatusStore {
     }
 
     /// The `done` a dismissal writes, with the entry's own session spelling
-    /// (possibly empty). Pure.
-    nonisolated static func doneLine(for row: AgentRow) -> (agent: AgentID, session: String)? {
+    /// (possibly empty) and its folder — what tells one session-less wait
+    /// from another of the same agent. Pure.
+    nonisolated static func doneLine(for row: AgentRow) -> (agent: AgentID, session: String, cwd: String)? {
         guard row.isBlocked else { return nil }
-        return (row.agent, row.attentionSession)
+        return (row.agent, row.attentionSession, row.cwd)
     }
 
     // MARK: - Focus
@@ -485,7 +511,7 @@ final class StatusStore {
         requestTrayReveal()
     }
 
-    /// 23.0 · a banner click (or its Go button): the terminal, and nothing
+    /// A banner click (or its Go button): the terminal, and nothing
     /// else, when it can be focused — the tray does not pop up over it. With
     /// no handle (or one that failed) the tray opens on the row's detail; a
     /// row that is gone opens the tray. `BannerRoute` decides.
@@ -609,6 +635,25 @@ final class StatusStore {
     func checkForUpdatesNow() {
         UpdateCheck.shared.check(store: self, force: true)
     }
+}
+
+/// What applying a setting means outside the settings file
+/// (`StatusStore.effects(from:to:)`).
+enum SettingEffect: Int, Comparable, Sendable {
+    /// Re-register the banner's button titles: they are baked into the
+    /// registered category and go stale on a language switch.
+    case bannerCategory
+    /// Tell launchd.
+    case loginItem
+    /// Re-register the global shortcut.
+    case hotkey
+    /// Start (or stop) the daily update check.
+    case updateCheck
+    /// Re-project the book: the words (language) or how a click lands
+    /// (Terminal automation) changed.
+    case reproject
+
+    static func < (a: SettingEffect, b: SettingEffect) -> Bool { a.rawValue < b.rawValue }
 }
 
 /// Where Settings scrolls when a deep link opens it. The token moves on

@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "25.0.0"
+    static let semver = "26.0.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -42,12 +42,6 @@ enum PulseVersion {
     /// Stapler success stamp from `package.sh`. Absent or false → not Gatekeeper-ready.
     static var isNotarized: Bool {
         (plist("PulseNotarized") ?? "false").lowercased() == "true"
-    }
-
-    /// True only for notarized stable builds that other Macs can open without
-    /// the Control-click recovery path.
-    static var isGatekeeperReady: Bool {
-        distributionChannel == "stable" && isNotarized
     }
 
     /// Preview and signed-but-unnotarized builds should follow prerelease feeds.
@@ -110,8 +104,8 @@ enum GlanceKind: Equatable {
     }
 }
 
-/// 23.0 · what a blocked row is blocked on. 24.0: always a hook's blocked
-/// event — the only source of a wait.
+/// What a blocked row is blocked on: always a hook's blocked event — the
+/// only source of a wait.
 struct RowWait: Hashable, Sendable {
     /// Protocol token (`Permission` / `Input` / `Waiting`), never user copy —
     /// `L10n.waitKind` translates it.
@@ -120,21 +114,21 @@ struct RowWait: Hashable, Sendable {
     var ask: String = ""
     /// When the wait was raised, by the hook's own clock; 0 = unknown.
     var sinceMs: Int64 = 0
-    /// 16.0: the prompt's own window was frontmost when it was raised — the
-    /// lamp still lights, but no banner and no sound.
+    /// The prompt's own window was frontmost when it was raised — the lamp
+    /// still lights, but no banner and no sound.
     var inFront: Bool = false
 }
 
-/// 23.0 · the one state a row is in, decided once (24.0: by
-/// `TrayState`, from the session book).
+/// The one state a row is in, decided once by `TrayState`, from the session
+/// book.
 enum RowState: Hashable, Sendable {
     /// Red: the vendor's hook reported a permission request or a question.
     case blocked(RowWait)
     /// The session took a prompt or reported work, and nothing since says
     /// otherwise.
     case running
-    /// 16.0: the agent finished its turn and nobody has looked since. From
-    /// hooks only; never red.
+    /// The agent finished its turn and nobody has looked since. From hooks
+    /// only; never red.
     case yourTurn(sinceMs: Int64)
     /// At its prompt with nothing owed, ended, or quiet past what Pulse can
     /// vouch for.
@@ -145,7 +139,7 @@ enum RowState: Hashable, Sendable {
     case processOnly
 }
 
-/// 24.0 · why a session is shown as recent rather than live.
+/// Why a session is shown as recent rather than live.
 enum RecentReason: Hashable, Sendable {
     /// At its prompt with nothing owed: it started, or its turn was seen or
     /// aged out.
@@ -160,7 +154,7 @@ enum RecentReason: Hashable, Sendable {
     case silent
 }
 
-/// 23.0 · where a row's facts came from, in the words `Explain` uses.
+/// Where a row's facts came from — said in the "Copy report".
 enum RowSource: String, Equatable, Hashable, Sendable {
     /// The agent's own hook events.
     case hooks
@@ -170,7 +164,7 @@ enum RowSource: String, Equatable, Hashable, Sendable {
 
 /// One tray row: a session (or a process no session has claimed) and
 /// exactly what the tray row, the detail page, the lamp and the notifier
-/// read. `Explain` builds the few sentences Pulse says from what is here.
+/// read. `TrayRowModel` builds the few sentences Pulse says from what is here.
 struct AgentRow: Identifiable, Hashable {
     // MARK: Identity — `RowIdentity` decides the key, and it never changes.
 
@@ -203,20 +197,28 @@ struct AgentRow: Identifiable, Hashable {
     /// (`RowNotice.shouldOfferAutomation`). False when it is already allowed.
     var exactWithAutomation = false
 
-    // MARK: What it is doing (24.0: from its transcript, read lazily)
+    // MARK: What it is doing — from its events only
 
-    /// The session's title: the vendor's own name, else the first prompt.
+    /// The session's title: its first prompt that says something.
     var task: String = ""
-    var model: String = ""
-    /// The first line of the agent's latest message (self-report tier).
+    /// The first line of the agent's latest message, as its turn event
+    /// carried it (self-report tier).
     var lastWord: String = ""
-    /// The first line of the latest error the transcript holds.
+    /// The text of the latest turn that ended on an error, as its hook
+    /// reported it.
     var lastErrorText: String = ""
+    /// The newest tool step (`recentSteps.last`); nil when the agent's hook
+    /// names no tool (Cursor, OpenCode) or none has run.
+    var lastStep: SessionBook.Step?
+    /// Up to `SessionBook.maxSteps` recent steps, oldest first.
+    var recentSteps: [SessionBook.Step] = []
+    /// When the current turn started (its prompt); 0 unknown.
+    var turnStartMs: Int64 = 0
 
     // MARK: State
 
     var state: RowState = .recent
-    /// Why a `.recent` row is recent — `Explain` says the rule.
+    /// Why a `.recent` row is recent — `TrayRowModel.why` says the rule.
     var recentReason: RecentReason = .atPrompt
     /// Resolved once per projection against its clock and the stall rule
     /// (`TrayState`), never against `Date()` in a view.
@@ -287,8 +289,8 @@ struct AgentRow: Identifiable, Hashable {
     // MARK: - Stall
 
     /// The stall rule: twenty minutes with no event from a working session
-    /// whose agent reports its work (24.0: one that has sent an activity
-    /// event). Not a setting; `TrayState.Context` carries it so a
+    /// whose agent reports its work (one that has sent an activity event).
+    /// Not a setting; `TrayState.Context` carries it so a
     /// test can move it.
     static let stalledSeconds: Double = 20 * 60
 
@@ -419,22 +421,22 @@ enum TraySection: Int, CaseIterable, Hashable {
 struct PulseSnapshot: Equatable {
     var glance: GlanceKind = .idle
     var title: String = ""
-    /// One line: the rule that set the lamp (`Explain.lampSentence`).
+    /// One line: the rule that set the lamp (`TrayState.lampSentence`).
     var tooltip: String = "Pulse"
     /// Glance state spoken by VoiceOver, in the resolved language.
     var accessibilityLabel: String = ""
-    /// The census VoiceOver announces when it changes ("1 needs you · 2
-    /// running"), counted by row state.
+    /// `counts` in words, which VoiceOver announces when they change ("1
+    /// needs you · 2 running").
     var headerTitle: String = ""
     var rows: [AgentRow] = []
-    /// Section totals over the *whole* list, so a heading can say "3 running"
-    /// even when the window is showing two of them.
-    var sectionTotals: [TraySection: Int] = [:]
+    /// Every row of the *whole* list counted once by its state, not only
+    /// the window shown.
+    var counts = TrayState.Counts()
     var hiddenCount: Int = 0
-    /// 21.0: sessions quiet past the recent window, left out of the list —
-    /// and which agents they belong to (the last 24 hours only).
+    /// Sessions quiet past the recent window, left out of the list — and
+    /// which agents they belong to (the last 24 hours only).
     var staleHidden: Int = 0
-    /// 23.0: the menu-bar lamp's shape and tone (`LampFace.glance`).
+    /// The menu-bar lamp's shape and tone (`LampFace.glance`).
     var lamp: LampFace = .idle
     var staleHiddenAgents: [AgentID] = []
     var totalCount: Int = 0

@@ -4,9 +4,11 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     case auto, en, zh
     var id: String { rawValue }
 
-    var menuLabel: String {
+    /// The picker's label, in the interface's language for "System"; each
+    /// language names itself.
+    func menuLabel(_ lang: ResolvedLanguage) -> String {
         switch self {
-        case .auto: return "System"
+        case .auto: return L10n.t(.languageSystem, lang)
         case .en: return "English"
         case .zh: return "中文"
         }
@@ -177,10 +179,6 @@ enum L10n {
         case .explainKindPermission: return "asked for permission"
         case .explainKindInput: return "asked a question"
         case .explainKindWaiting: return "is waiting for you"
-        case .sourceHooks: return "Hooks only"
-        case .sourceProcess: return "Process only"
-        case .detailModel: return "Model"
-        case .detailSource: return "Source"
         case .detailFolder: return "Folder"
         case .detailStarted: return "Started"
         case .processOnly: return "Process only"
@@ -206,12 +204,6 @@ enum L10n {
         case .settingsUpdatesSection: return "Updates"
         case .detailLastMessage: return "Last message"
         case .detailErrorHeading: return "Error"
-        case .detailSession: return "Session"
-        case .detailGo: return "Go"
-        case .detailGoNone: return "No way to reach it — observed only"
-        case .detailProcess: return "Process"
-        case .detailLastChange: return "Last change"
-        case .detailDiagnostics: return "How Pulse reads this session"
         case .explainIdle: return "At its prompt · last step %@"
         case .explainEnded: return "The session ended %@"
         case .explainQuiet: return "Nothing heard for %@ and no process to watch — moved to recent"
@@ -229,6 +221,12 @@ enum L10n {
         case .durSecSpoken: return "%ds"
         case .durMinSpoken: return "%dm"
         case .durHourSpoken: return "%dh"
+        case .durUnderMinute: return "<1m"
+        case .stepStalled: return "Nothing new for %@ — last step: %@"
+        case .stepHeading: return "Recent steps"
+        case .stepThisTurn: return "This turn"
+        case .setupFailedAction: return "Open Settings"
+        case .languageSystem: return "System"
         }
     }
 
@@ -345,10 +343,6 @@ enum L10n {
         case .explainKindPermission: return "请求权限"
         case .explainKindInput: return "提了一个问题"
         case .explainKindWaiting: return "在等你"
-        case .sourceHooks: return "仅 hook"
-        case .sourceProcess: return "仅进程"
-        case .detailModel: return "模型"
-        case .detailSource: return "来源"
         case .detailFolder: return "目录"
         case .detailStarted: return "开始于"
         case .processOnly: return "仅进程"
@@ -374,12 +368,6 @@ enum L10n {
         case .settingsUpdatesSection: return "更新"
         case .detailLastMessage: return "最后的消息"
         case .detailErrorHeading: return "错误"
-        case .detailSession: return "会话"
-        case .detailGo: return "前往"
-        case .detailGoNone: return "无法前往——仅观测"
-        case .detailProcess: return "进程"
-        case .detailLastChange: return "最后变化"
-        case .detailDiagnostics: return "Pulse 如何读取这个会话"
         case .explainIdle: return "停在提示符 · 上一步 %@"
         case .explainEnded: return "会话已结束 · %@"
         case .explainQuiet: return "已经 %@ 没有消息，也看不到进程——移到最近"
@@ -397,6 +385,12 @@ enum L10n {
         case .durSecSpoken: return "%d 秒"
         case .durMinSpoken: return "%d 分钟"
         case .durHourSpoken: return "%d 小时"
+        case .durUnderMinute: return "<1 分"
+        case .stepStalled: return "已经 %@ 没有新动静——上一步：%@"
+        case .stepHeading: return "最近几步"
+        case .stepThisTurn: return "本回合"
+        case .setupFailedAction: return "打开设置"
+        case .languageSystem: return "跟随系统"
         }
     }
 
@@ -469,13 +463,8 @@ enum L10n {
         case explainKindPermission
         case explainKindInput
         case explainKindWaiting
-        case sourceHooks
-        case sourceProcess
-        case detailModel
-        case detailSource
         case detailFolder
         case detailStarted
-        // 23.0
         case processOnly
         case processOnlyN
         case waiting1
@@ -492,16 +481,14 @@ enum L10n {
         case settingsUpdatesSection
         case detailLastMessage
         case detailErrorHeading
-        case detailSession
-        case detailGo
-        case detailGoNone
-        case detailProcess
-        case detailLastChange
-        case detailDiagnostics
         case explainIdle, explainEnded, explainQuiet, explainSilent
         case setupFound, setupConnect, setupDone, setupGotIt, setupStepCodex, setupStepRestart
         case automationOffer, automationAllow, automationNotNow, automationAllowed
         case durSecSpoken, durMinSpoken, durHourSpoken
+        case durUnderMinute
+        case stepStalled, stepHeading, stepThisTurn
+        case setupFailedAction
+        case languageSystem
     }
 }
 

@@ -47,8 +47,8 @@ enum PulseNotify {
     static let focusActionID = "pulse.focus"
     static let waitingCategoryID = "pulse.waiting"
 
-    /// The button on the waiting banner: go to the session. (23.0 removed
-    /// "Later" with snooze.)
+    /// The button on the waiting banner: go to the session. There is no
+    /// "Later": a wait is a wait.
     ///
     /// Registered in the resolved language and re-registered when it changes —
     /// a category is keyed by id, so re-adding replaces the old titles.

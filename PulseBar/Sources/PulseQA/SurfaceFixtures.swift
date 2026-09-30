@@ -31,7 +31,9 @@ enum SurfaceFixtures {
     static let names = [
         "row-blocked", "row-blocked-front", "row-running", "row-running-hover",
         "row-stalled", "row-your-turn", "row-process-only", "row-muted",
-        "header", "notice-setup", "notice-setup-done", "row-automation-offer", "detail-blocked", "detail-your-turn",
+        "row-running-step", "row-stalled-step",
+        "header", "notice-setup", "notice-setup-done", "notice-setup-failed", "row-automation-offer",
+        "detail-blocked", "detail-your-turn", "detail-steps",
         "settings",
     ]
 
@@ -47,12 +49,20 @@ enum SurfaceFixtures {
             Fixture(name: "row-your-turn", width: 448, value: .row(rowModel(rowTurn(), lang: lang))),
             Fixture(name: "row-process-only", width: 448, value: .row(rowModel(rowProcessOnly(), lang: lang))),
             Fixture(name: "row-muted", width: 448, value: .row(rowModel(rowRunning(), lang: lang, muted: true))),
+            // A running row's quiet last step, and its turn's duration in
+            // the time slot.
+            Fixture(name: "row-running-step", width: 448, value: .row(rowModel(rowRunningStep(), lang: lang))),
+            // A stalled row whose why names the last step.
+            Fixture(name: "row-stalled-step", width: 448, value: .row(rowModel(rowStalledStep(), lang: lang))),
             Fixture(name: "header", width: 448, value: .header(header(lang: lang))),
             Fixture(name: "notice-setup", width: 432, value: .notice(noticeSetup(lang: lang))),
             Fixture(name: "notice-setup-done", width: 432, value: .notice(noticeSetupDone(lang: lang))),
+            Fixture(name: "notice-setup-failed", width: 432, value: .notice(noticeSetupFailed(lang: lang))),
             Fixture(name: "row-automation-offer", width: 448, value: .row(rowModel(rowRunning(), lang: lang, offer: true))),
             Fixture(name: "detail-blocked", width: 448, value: .detail(detailPermission(lang: lang))),
             Fixture(name: "detail-your-turn", width: 448, value: .detail(detailTurn(lang: lang))),
+            // Up to five recent steps and this turn's duration.
+            Fixture(name: "detail-steps", width: 448, value: .detail(detailSteps(lang: lang))),
             Fixture(name: "settings", width: 500, value: .settings(settings(lang: lang))),
         ]
     }
@@ -87,7 +97,6 @@ enum SurfaceFixtures {
 
     static func rowPermission() -> AgentRow {
         var row = baseRow(.claude, key: "fx-perm")
-        row.model = "claude-sonnet-4"
         row.state = .blocked(RowWait(
             kind: "Permission", ask: "Bash: npm run build", sinceMs: nowMs - 8 * minute
         ))
@@ -107,7 +116,6 @@ enum SurfaceFixtures {
         var row = baseRow(.codex, key: "fx-turn", task: "Add an offline queue for login")
         row.state = .yourTurn(sinceMs: nowMs - 3 * minute)
         row.lastWord = "All 42 tests pass; the queue drains on reconnect."
-        row.model = "gpt-5"
         return row
     }
 
@@ -120,8 +128,35 @@ enum SurfaceFixtures {
     }
 
     static func rowRunning() -> AgentRow {
-        var row = baseRow(.codex, key: "fx-running", task: "Add retry with jitter to the upload queue")
-        row.model = "gpt-5"
+        baseRow(.codex, key: "fx-running", task: "Add retry with jitter to the upload queue")
+    }
+
+    /// Five steps, as a hook reports them: the tool, its target, when.
+    static func steps(endingAt last: Int64) -> [SessionBook.Step] {
+        [
+            SessionBook.Step(tool: "Read", target: "Sources/Upload/Queue.swift", ms: last - 9 * minute),
+            SessionBook.Step(tool: "Edit", target: "Sources/Upload/Queue.swift", ms: last - 7 * minute),
+            SessionBook.Step(tool: "Grep", target: "retryDelay", ms: last - 5 * minute),
+            SessionBook.Step(tool: "Edit", target: "Sources/Upload/Backoff.swift", ms: last - 3 * minute),
+            SessionBook.Step(tool: "Bash", target: "swift test", ms: last),
+        ]
+    }
+
+    static func rowRunningStep() -> AgentRow {
+        var row = baseRow(.claude, key: "fx-running-step", task: "Add retry with jitter to the upload queue")
+        row.recentSteps = steps(endingAt: nowMs - 2 * minute)
+        row.lastStep = row.recentSteps.last
+        row.turnStartMs = nowMs - 14 * minute
+        row.lastEventMs = nowMs - 2 * minute
+        row.activityMs = nowMs - 2 * minute
+        return row
+    }
+
+    static func rowStalledStep() -> AgentRow {
+        var row = rowStalled()
+        row.recentSteps = steps(endingAt: nowMs - 25 * minute)
+        row.lastStep = row.recentSteps.last
+        row.turnStartMs = nowMs - 40 * minute
         return row
     }
 
@@ -138,7 +173,7 @@ enum SurfaceFixtures {
 
     static func header(lang: ResolvedLanguage) -> TrayHeaderModel {
         TrayHeaderModel.make(
-            rows: [rowPermission(), rowQuestionFront(), rowRunning(), rowStalled(), rowTurn(), rowProcessOnly()],
+            counts: TrayState.Counts(rows: [rowPermission(), rowQuestionFront(), rowRunning(), rowStalled(), rowTurn(), rowProcessOnly()]),
             lang: lang
         )
     }
@@ -163,6 +198,18 @@ enum SurfaceFixtures {
         )
     }
 
+    /// The card after an install that failed for one agent: why, and where
+    /// to fix it — never "Connect" again.
+    static func noticeSetupFailed(lang: ResolvedLanguage) -> TrayNoticeModel {
+        TrayNoticeModel.pick(TrayNoticeModel.Input(
+            lang: lang, notifyOnWaiting: true, notifyAuthorized: true, bannerFailed: false,
+            installFailure: HooksSupport.Status.failureText([.gemini: .invalidJSON], lang: lang)
+        )) ?? TrayNoticeModel(
+            kind: .setupFailed, text: "", actionTitle: "", action: .openHooksSettings,
+            systemImage: "exclamationmark.triangle", tone: .attention
+        )
+    }
+
     // MARK: - The detail page
 
     static func detailPermission(lang: ResolvedLanguage) -> DetailModel {
@@ -171,6 +218,10 @@ enum SurfaceFixtures {
 
     static func detailTurn(lang: ResolvedLanguage) -> DetailModel {
         DetailModel.make(row: rowTurn(), lang: lang, nowMs: nowMs)
+    }
+
+    static func detailSteps(lang: ResolvedLanguage) -> DetailModel {
+        DetailModel.make(row: rowRunningStep(), lang: lang, nowMs: nowMs)
     }
 
     // MARK: - Settings

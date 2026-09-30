@@ -1,6 +1,6 @@
 # Landing — how ↩ / click / banner reach the exact prompt
 
-24.0. The hook records where its session lives (`HookLanding.handles`, the v4
+The hook records where its session lives (`HookLanding.handles`, the v5
 `landing` column): `tmux:%3;tmuxsock:<socket>;iterm:w0t1p0:<uuid>;tty:/dev/ttys004;term:<TERM_PROGRAM>;app:<__CFBundleIdentifier>`.
 `LandingPlan.make(handle:cwd:allowAutomation:pid:hostApp:)` (pure, once per
 projection) turns it into ordered steps; `TerminalFocus.land` (on the click)

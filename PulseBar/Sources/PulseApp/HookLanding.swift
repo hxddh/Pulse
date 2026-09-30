@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-/// 24.0 · Where a hooked session lives, read by the hook itself.
+/// Where a hooked session lives, read by the hook itself.
 ///
 /// The hook runs inside the agent's own process tree and environment, so it
 /// can say — at no cost to the scan — which process is the agent and how its
@@ -47,10 +47,10 @@ enum HookLanding {
 
     /// The agent's pid: the first process on the chain from `start` upward
     /// whose argv is this agent by its catalog process rule. When none is,
-    /// the direct parent (`start`) — the process that ran the hook — unless
-    /// that is launchd or nothing (a parent that had exited leaves the
-    /// hook re-parented to pid 1, which is nobody's session): then 0,
-    /// unknown.
+    /// 0 — unknown. Never the direct parent: that is usually the `sh -c` the
+    /// vendor ran the hook in, which exits the moment the hook does, and a
+    /// session bound to it would end at once. A chain that starts at launchd
+    /// (the hook was re-parented to pid 1) is nobody's session either.
     static func agentPID(
         agent: AgentID,
         start: Int32,
@@ -68,16 +68,13 @@ enum HookLanding {
             guard let parent = parentOf(current) else { break }
             current = parent
         }
-        return start > 1 ? start : 0
+        return 0
     }
 
-    /// One field of a `;`-separated list inside a TSV column.
+    /// One field of a `;`-separated list inside a TSV column: no tab, no
+    /// line break of any kind (`AttentionProtocol.flatten`), no `;`.
     static func clean(_ raw: String) -> String {
-        raw.replacingOccurrences(of: "\t", with: " ")
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-            .replacingOccurrences(of: ";", with: ",")
-            .trimmingCharacters(in: .whitespaces)
+        AttentionProtocol.flatten(raw.replacingOccurrences(of: ";", with: ","))
     }
 
     // MARK: - This process

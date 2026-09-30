@@ -158,7 +158,8 @@ struct SettingsModel: Equatable {
     /// path, prompt, session id or project — the version, each agent's hook
     /// and when it last reported, whether macOS allows banners, whether
     /// Pulse may script a terminal (and whether the row's offer was
-    /// answered), and the global shortcut.
+    /// answered), the global shortcut, and how Pulse reads each listed
+    /// session (the detail page does not say it).
     struct ReportInput: Equatable {
         var version: String
         var macOS: String
@@ -179,6 +180,48 @@ struct SettingsModel: Equatable {
         /// Whether launchd took the toggle; nil when it was not applied this
         /// run.
         var loginItemApplied: Bool? = nil
+        /// Every listed session, as the few facts that say how Pulse reads it.
+        var sessions: [ReportSession] = []
+    }
+
+    /// How Pulse reads one session, without naming it: its state, where
+    /// its facts come from, how a click lands, whether its process is
+    /// watched, and when it last spoke.
+    struct ReportSession: Equatable {
+        var agent: AgentID
+        var state: String
+        var source: RowSource
+        var go: LandingPlan.Precision?
+        var liveProcess: Bool
+        var lastEventMs: Int64
+
+        init(_ row: AgentRow) {
+            agent = row.agent
+            switch row.state {
+            case .blocked: state = "blocked"
+            case .running: state = row.isStalled ? "stalled" : "running"
+            case .yourTurn: state = "your turn"
+            case .recent: state = "recent"
+            case .processOnly: state = "process only"
+            }
+            source = row.source
+            go = row.landingPlan.precision
+            liveProcess = row.liveProcess
+            lastEventMs = row.lastEventMs
+        }
+
+        func line(nowMs: Int64) -> String {
+            let goWord: String
+            switch go {
+            case .exact: goWord = "exact"
+            case .app: goWord = "app only"
+            case nil: goWord = "none"
+            }
+            var text = "  \(agent.rawValue): \(state), from \(source == .hooks ? "hooks" : "process only"), go \(goWord)"
+            text += liveProcess ? ", process watched" : ", no process"
+            text += lastEventMs > 0 ? ", last event \(max(0, (nowMs - lastEventMs) / 1000))s ago" : ", no event"
+            return text
+        }
     }
 
     static func report(_ input: ReportInput) -> String {
@@ -222,6 +265,8 @@ struct SettingsModel: Equatable {
             }
             lines.append(line)
         }
+        lines.append(input.sessions.isEmpty ? "sessions: none listed" : "sessions:")
+        lines += input.sessions.map { $0.line(nowMs: input.nowMs) }
         return lines.joined(separator: "\n")
     }
 

@@ -50,7 +50,6 @@ extension StatusStore {
                     : "Ship Signal Quality",
                 cwd: "/Users/me/code/Pulse"
             )
-            fixtureRow.model = "fixture-model"
             switch name {
             case "status-waiting":
                 fixtureRow.state = .blocked(RowWait(
@@ -62,9 +61,13 @@ extension StatusStore {
                 fixtureRow.isStalled = true
                 fixtureRow.lastEventMs = now - 25 * 60 * 1000
             case "status-running":
-                fixtureRow.lastWord = "Running the fixtures."
+                fixtureRow.lastWord = "The fixtures pass."
+                let step = SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 60 * 1000)
+                fixtureRow.recentSteps = [step]
+                fixtureRow.lastStep = step
+                fixtureRow.turnStartMs = now - 14 * 60 * 1000
             case "status-turn":
-                // 16.0: finished, unseen — a quiet count, not the red lamp.
+                // Finished, unseen — a quiet count, not the red lamp.
                 fixtureRow.state = .yourTurn(sinceMs: now - 3 * 60 * 1000)
             default:
                 fixtureRow.liveProcess = false
@@ -76,24 +79,21 @@ extension StatusStore {
             switch name {
             case "status-running":
                 snap.glance = .running
-                snap.sectionTotals[.running] = 1
             case "status-stalled":
                 snap.glance = .stalled
-                snap.sectionTotals[.stalled] = 1
             case "status-waiting":
                 snap.glance = .waiting
                 snap.title = "1 · 8m"
-                snap.sectionTotals[.needsYou] = 1
             case "status-turn":
                 // A finished turn is grey, even while its process lives.
                 snap.glance = .idle
-                snap.sectionTotals[.running] = 1
             default:
                 snap.glance = .idle
             }
             snap.headerTitle = name
+            snap.counts = TrayState.Counts(rows: [fixtureRow])
             snap.lamp = LampFace.glance(snap.glance)
-            snap.tooltip = Explain.lampSentence(Explain.lampRule(rows: [fixtureRow], glance: snap.glance), lang: lang)
+            snap.tooltip = TrayState.lampSentence(TrayState.lampRule(counts: TrayState.Counts(rows: [fixtureRow]), glance: snap.glance), lang: lang)
             snap.accessibilityLabel = tr(snap.glance.accessibilityKey)
             snap.rows = [fixtureRow]
             snap.totalCount = 1
@@ -103,13 +103,12 @@ extension StatusStore {
         }
 
         if name == "coverage" {
-            var codex = row(
+            let codex = row(
                 "coverage-codex",
                 .codex,
                 task: "Ship runtime observability",
                 cwd: "/Users/me/code/Pulse"
             )
-            codex.model = "gpt-5"
 
             var pi = row(
                 "coverage-pi",
@@ -134,11 +133,11 @@ extension StatusStore {
             snapshot = PulseSnapshot(
                 glance: .running,
                 title: "",
-                tooltip: Explain.lampSentence(Explain.lampRule(rows: cachedAll, glance: .running), lang: lang),
+                tooltip: TrayState.lampSentence(TrayState.lampRule(counts: TrayState.Counts(rows: cachedAll), glance: .running), lang: lang),
                 accessibilityLabel: tr(.a11yRunning),
                 headerTitle: "2 running",
                 rows: cachedAll,
-                sectionTotals: [.running: 2, .recent: 1],
+                counts: TrayState.Counts(rows: cachedAll),
                 lamp: LampFace.glance(.running),
                 totalCount: cachedAll.count,
                 updatedAt: Date()
@@ -159,8 +158,13 @@ extension StatusStore {
             task: "[hxddh/Pulse](https://github.com/hxddh/Pulse) Fix panel corners"
         )
         active.activityMs = now - 15_000
-        active.model = "gpt-5"
-        active.lastWord = "Corners now follow the panel radius; running the snapshot tests."
+        active.lastWord = "Corners now follow the panel radius."
+        active.recentSteps = [
+            SessionBook.Step(tool: "Edit", target: "Sources/PulseApp/PulseTheme.swift", ms: now - 3 * 60 * 1000),
+            SessionBook.Step(tool: "Bash", target: "swift test --filter Snapshot", ms: now - 15_000),
+        ]
+        active.lastStep = active.recentSteps.last
+        active.turnStartMs = now - 9 * 60 * 1000
 
         var stalled = row(
             "pi-preview",
@@ -201,13 +205,12 @@ extension StatusStore {
             process.lastEventMs = 0
             process.state = .processOnly
             process.startedMs = now - 70 * 60 * 1000
-            var sub = row(
+            let sub = row(
                 "claude-sub-preview",
                 .claude,
                 task: "Run collector fixtures",
                 cwd: "/Users/me/code/Pulse"
             )
-            sub.model = "claude-sonnet-4"
             rows += [quiet, process, sub]
         }
         rows.sort { $0.section.rawValue < $1.section.rawValue }
@@ -218,16 +221,12 @@ extension StatusStore {
         snap.lamp = LampFace.glance(.waiting)
         let blockedCount = rows.filter { $0.isBlocked }.count
         snap.title = "\(blockedCount) · 8m"
-        snap.tooltip = Explain.lampSentence(Explain.lampRule(rows: rows, glance: .waiting), lang: lang)
+        snap.tooltip = TrayState.lampSentence(TrayState.lampRule(counts: TrayState.Counts(rows: rows), glance: .waiting), lang: lang)
         snap.accessibilityLabel = tr(.a11yWaiting)
         snap.rows = rows
         snap.totalCount = rows.count
-        snap.sectionTotals = Dictionary(
-            uniqueKeysWithValues: TraySection.allCases.map { section in
-                (section, rows.filter { $0.section == section }.count)
-            }
-        )
-        snap.headerTitle = TrayState.Census(rows: rows).summary(lang)
+        snap.counts = TrayState.Counts(rows: rows)
+        snap.headerTitle = snap.counts.summary(lang)
         snap.updatedAt = Date()
         snapshot = snap
     }

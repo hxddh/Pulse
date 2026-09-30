@@ -10,7 +10,7 @@ import XCTest
 // Notifier: the in-memory wait ledger, banner planning, copy, routing and
 // reveals.
 
-/// 12.3 δ — the Waiting notification decision is a value. No store, no
+/// The Waiting notification decision is a value. No store, no
 /// Notification Center, no ledger file: facts in, a plan out.
 final class WaitingDeliveryTests: XCTestCase {
     private func waiting(_ key: String, agent: AgentID = .claude) -> AgentRow {
@@ -417,7 +417,7 @@ final class NotificationCopyTests: XCTestCase {
 }
 
 final class BannerRevealTests: XCTestCase {
-    /// 19.0 (Swift 6 mode): built per test on the main actor — a
+    /// Swift 6 mode: built per test on the main actor — a
     /// nonisolated `setUp` cannot hand a main-actor store to `self`.
     @MainActor
     private func makeStore() -> StatusStore {
@@ -480,7 +480,7 @@ final class BannerRevealTests: XCTestCase {
     }
 }
 
-/// Regressions for two defects found by reading 0.99.0.
+/// Regressions for two defects found by reading the code.
 ///
 /// Both had the same shape: something that looked verified was not. One test
 /// asserted a tool's output format the tool does not produce; one dictionary
@@ -540,7 +540,7 @@ struct BannerRoutingTests {
         return row
     }
 
-    /// 23.0: the jump takes the first wait in the builder's order, which
+    /// The jump takes the first wait in the builder's order, which
     /// lists the oldest first.
     @Test func theJumpGoesToTheFirstListedWait() {
         let oldest = waitingRow("a", .claude, since: now - 10 * Self.minute)

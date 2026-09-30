@@ -1,6 +1,6 @@
 import Foundation
 
-/// 24.0 · The two hook modules Pulse owns whole: an OpenCode plugin and a Pi
+/// The two hook modules Pulse owns whole: an OpenCode plugin and a Pi
 /// extension. Each observes its vendor's documented lifecycle events and
 /// hands each one to `pulse-hook`, detached, with a small JSON payload as its
 /// last argument (the receiver reads a payload there and then skips stdin):
@@ -91,6 +91,11 @@ enum HookModules {
                 directory: info.directory || directory || "",
               }
               if (event.type === "session.status") payload.status = p.status && p.status.type
+              if (event.type === "session.error") {
+                const e = p.error || {}
+                const text = (e.data && typeof e.data.message === "string" && e.data.message) || (typeof e.message === "string" && e.message) || (typeof e.name === "string" && e.name) || ""
+                if (text) payload.error = text.slice(0, 200)
+              }
               if (event.type === "permission.asked") {
                 payload.permission = p.permission || p.type || ""
                 payload.patterns = Array.isArray(p.patterns) ? p.patterns.slice(0, 4) : []
@@ -111,7 +116,10 @@ enum HookModules {
 
     /// `~/.pi/agent/extensions/pulse.js` — a Pi extension (badlogic/pi-mono
     /// coding-agent docs/extensions.md). Starts nothing in the factory; each
-    /// handler returns `undefined`, so no event's result is changed.
+    /// handler returns `undefined`, so no event's result is changed. A tool
+    /// event carries the tool's name and one short argument — the command,
+    /// path, pattern, URL or query — as `tool_name` / `tool_input`, the
+    /// receiver's own words for a tool call.
     static func piExtension(launcher: String, events: [String]) -> String {
         let list = events.map(literal).joined(separator: ", ")
         return """
@@ -124,6 +132,24 @@ enum HookModules {
         \(sendFunction(launcher: launcher, agent: "pi"))
 
         const EVENTS = [\(list)]
+        const ARG_KEYS = ["command", "path", "file_path", "pattern", "url", "query"]
+
+        function toolSummary(event) {
+          const out = {}
+          try {
+            if (typeof event.toolName === "string") out.tool_name = event.toolName.slice(0, 64)
+            const args = event.args || event.input
+            if (args && typeof args === "object") {
+              for (const key of ARG_KEYS) {
+                if (typeof args[key] === "string" && args[key]) {
+                  out.tool_input = { [key]: args[key].slice(0, 200) }
+                  break
+                }
+              }
+            }
+          } catch {}
+          return out
+        }
 
         function context(ctx) {
           const out = { session_id: "", transcript_path: "", cwd: "" }
@@ -142,6 +168,7 @@ enum HookModules {
                 const payload = context(ctx)
                 if (event && typeof event.kind === "string") payload.kind = event.kind
                 if (event && typeof event.title === "string") payload.title = event.title
+                if (name === "tool_execution_end" && event) Object.assign(payload, toolSummary(event))
                 // A reason is a shutdown's why; on a prompt it is not the ask.
                 if (name === "session_shutdown" && event && typeof event.reason === "string") payload.reason = event.reason
                 send(name, payload)

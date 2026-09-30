@@ -80,8 +80,40 @@ struct ReportTests {
     /// The input has no field for a path, a prompt, a session or a
     /// project; the text says only states, counts and ages.
     @Test func theReportCarriesNoPathSessionOrProject() {
-        let text = SettingsModel.report(input())
+        var withSession = input()
+        var row = AgentRow(rowKey: "claude|secret-session", agent: .claude)
+        row.sessionID = "secret-session"
+        row.cwd = "/Users/me/secret-project"
+        row.project = "secret-project"
+        row.task = "a private prompt"
+        withSession.sessions = [SettingsModel.ReportSession(row)]
+        let text = SettingsModel.report(withSession)
         #expect(!text.contains("/"), "not even a folder: \(text)")
+        #expect(!text.contains("secret"), "\(text)")
+        #expect(!text.contains("private"), "\(text)")
+    }
+
+    /// How Pulse reads each listed session — once on the detail page — is
+    /// in the report: its state, where its facts come from, how a click
+    /// lands, whether its process is watched and when it last spoke.
+    @Test func theReportSaysHowPulseReadsEachSession() {
+        var hooked = AgentRow(rowKey: "claude|s1", agent: .claude)
+        hooked.state = .running
+        hooked.source = .hooks
+        hooked.liveProcess = true
+        hooked.pid = 42
+        hooked.lastEventMs = now - 7_000
+        hooked.landingPlan = LandingPlan(steps: [.ttyTab(tty: "ttys003")])
+        var process = AgentRow(rowKey: "cursor|p", agent: .cursor)
+        process.state = .processOnly
+        process.liveProcess = true
+        var chosen = input()
+        chosen.sessions = [hooked, process].map(SettingsModel.ReportSession.init)
+        let text = SettingsModel.report(chosen)
+        #expect(text.contains("\nsessions:\n"), "\(text)")
+        #expect(text.contains("  claude: running, from hooks, go exact, process watched, last event 7s ago"), "\(text)")
+        #expect(text.contains("  cursor: process only, from process only, go none, process watched, no event"), "\(text)")
+        #expect(SettingsModel.report(input()).hasSuffix("sessions: none listed"))
     }
 
     /// The store's report reads the engine's last events, never the file.
@@ -143,11 +175,12 @@ struct HooksSectionTests {
 /// The tray's one notice, and the fixtures the tray captures are made of.
 final class TrayNoticeTests: XCTestCase {
     /// The setup card comes first — without a hook there is nothing
-    /// to notify. It names the agents running (or on this Mac) unconnected.
+    /// to notify. It names the agents on this Mac unconnected.
     @MainActor
     func testTheSetupCardOutranksNotificationSetup() {
         let store = StatusStore()
         store.installPreviewFixture("waiting")
+        store.presentAgents = [.claude, .codex]
 
         XCTAssertFalse(store.setupAgents.isEmpty)
         XCTAssertEqual(store.trayNotice?.kind, .setup)
@@ -167,6 +200,42 @@ final class TrayNoticeTests: XCTestCase {
         XCTAssertEqual(store.trayNotice?.text, String(format: store.tr(.setupFound), "Claude, Codex"))
         store.hooksStatus = .installed([.claude, .codex])
         XCTAssertNil(store.trayNotice, "connected: nothing to set up")
+    }
+
+    /// A live agent process whose vendor folder is not on this Mac is not
+    /// offered: "Connect" installs only where the folder is, so offering it
+    /// would ask again after every click.
+    @MainActor
+    func testOnlyAgentsWhoseFolderIsHereAreOffered() {
+        let store = StatusStore()
+        store.installPreviewFixture("waiting")
+        store.notifyAuthorized = true
+        store.presentAgents = []
+        XCTAssertTrue(store.cachedAll.contains { $0.liveProcess })
+        XCTAssertTrue(store.setupAgents.isEmpty, "running is not being on this Mac")
+        store.presentAgents = [.gemini]
+        XCTAssertEqual(store.setupAgents, [.gemini])
+    }
+
+    /// An agent whose install failed is never offered "Connect" again —
+    /// it would fail the same way, card after card. The card says why,
+    /// in the failure's own words, and opens Settings.
+    @MainActor
+    func testAFailedInstallIsSaidNotOfferedAgain() {
+        let store = StatusStore()
+        store.notifyAuthorized = true
+        store.presentAgents = [.claude, .codex, .gemini]
+        store.hooksStatus = .installed([.claude], failed: [.gemini: .invalidJSON])
+        XCTAssertEqual(store.setupAgents, [.codex], "Gemini failed: not offered again")
+        XCTAssertEqual(store.trayNotice?.kind, .setup)
+        store.hooksStatus = .installed([.claude, .codex], failed: [.gemini: .invalidJSON])
+        XCTAssertTrue(store.setupAgents.isEmpty)
+        let card = store.trayNotice
+        XCTAssertEqual(card?.kind, .setupFailed)
+        XCTAssertEqual(card?.action, .openHooksSettings)
+        XCTAssertEqual(card?.text, HooksSupport.Status.failureText([.gemini: .invalidJSON], lang: store.lang))
+        store.settings.hooksNudgeOff = true
+        XCTAssertNil(store.trayNotice, "hooks removed on purpose: nothing to say")
     }
 
     /// After "Connect" the card shows what is left, until "Got it".
@@ -218,8 +287,8 @@ final class TrayNoticeTests: XCTestCase {
     }
 }
 
-/// The 0.5.0-vs-0.21.0 drift that shipped for months was invisible because
-/// nothing ever compared the two.
+/// A version drift once shipped for months, invisible because nothing ever
+/// compared the two.
 final class PulseVersionTests: XCTestCase {
     func testSemverIsWellFormed() {
         let parts = PulseVersion.semver.split(separator: ".")
@@ -334,7 +403,6 @@ final class PulseVersionTests: XCTestCase {
         XCTAssertEqual(PulseVersion.distributionChannel, "dev")
         XCTAssertFalse(PulseVersion.prefersPrereleaseUpdates)
         XCTAssertFalse(PulseVersion.isNotarized)
-        XCTAssertFalse(PulseVersion.isGatekeeperReady)
     }
 
     @MainActor

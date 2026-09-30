@@ -25,15 +25,13 @@ enum HookFeed {
         session: String = "s1",
         cwd: String = "/Users/me/app",
         pid: Int32 = 4242,
-        front: Bool? = nil,
-        transcript: String = ""
+        front: Bool? = nil
     ) -> Written {
         guard let reading = PulseHookReceiver.interpret(agent: agent, event: event, payload: payload) else { return Written() }
         if case .blocked = reading.action, agent.waitingSource == .none { return Written() }
         var full = payload
         full["session_id"] = session
         full["cwd"] = cwd
-        if !transcript.isEmpty { full["transcript_path"] = transcript }
         guard var record = PulseHookReceiver.record(agent: agent, reading: reading, payload: full, nowMs: ms) else {
             return Written()
         }
@@ -54,7 +52,7 @@ enum HookFeed {
     }
 }
 
-/// 24.0 · the truth tables: each supported agent's own event sequence,
+/// The truth tables: each supported agent's own event sequence,
 /// replayed through the receiver's reading into the book, and the state the
 /// session is in after every step.
 @Suite("Session book")
@@ -203,6 +201,40 @@ struct SessionBookTests {
         ])
         let ask = HookFeed.write(.opencode, "permission.asked", ["permission": "bash", "patterns": ["npm test"]], at: t0).lines.first?.message
         #expect(ask == "bash: npm test")
+    }
+
+    /// Each agent's own tool event becomes a step with its tool and target —
+    /// Copilot's `toolArgs` as a JSON string, Pi's forwarded summary — and
+    /// its own prompt event becomes the title. Cursor and OpenCode activity
+    /// names no tool: no step.
+    @Test func everyAgentsStepsComeFromItsOwnHook() {
+        let cases: [(AgentID, String, [String: Any], String, String)] = [
+            (.claude, "PostToolUse", ["tool_name": "Bash", "tool_input": ["command": "swift test"]], "Bash", "swift test"),
+            (.codex, "PostToolUse", ["tool_name": "shell", "tool_input": ["command": "cargo build"]], "shell", "cargo build"),
+            (.gemini, "AfterTool", ["tool_name": "read_file", "tool_input": ["file_path": "/w/a.ts"]], "read_file", "/w/a.ts"),
+            (.copilot, "postToolUse", ["toolName": "bash", "toolArgs": #"{"command":"npm test"}"#], "bash", "npm test"),
+            (.pi, "tool_execution_end", ["tool_name": "edit", "tool_input": ["path": "src/x.ts"]], "edit", "src/x.ts"),
+        ]
+        for (agent, event, payload, tool, target) in cases {
+            var book = SessionBook()
+            for line in HookFeed.write(agent, event, payload, at: t0).lines { book.apply(line, nowMs: t0) }
+            let step = book.sessions["\(agent.rawValue)|s1"]?.steps.last
+            #expect(step == SessionBook.Step(tool: tool, target: target, ms: t0), "\(agent.rawValue)")
+        }
+        let quiet: [(AgentID, String, [String: Any])] = [(.cursor, "afterAgentResponse", [:]), (.opencode, "session.status", ["status": "busy"])]
+        for (agent, event, payload) in quiet {
+            var book = SessionBook()
+            for line in HookFeed.write(agent, event, payload, at: t0).lines { book.apply(line, nowMs: t0) }
+            let steps = book.sessions["\(agent.rawValue)|s1"]?.steps ?? []
+            #expect(steps.isEmpty, "\(agent.rawValue)")
+        }
+        let prompts: [(AgentID, String)] = [(.claude, "UserPromptSubmit"), (.codex, "UserPromptSubmit"), (.gemini, "BeforeAgent"), (.copilot, "userPromptSubmitted")]
+        for (agent, event) in prompts {
+            var book = SessionBook()
+            for line in HookFeed.write(agent, event, ["prompt": "Fix the flaky login test"], at: t0).lines { book.apply(line, nowMs: t0) }
+            let title = book.sessions["\(agent.rawValue)|s1"]?.title
+            #expect(title == "Fix the flaky login test", "\(agent.rawValue)")
+        }
     }
 
     // MARK: - Answers, denials and held turns (realistic spacing)
@@ -457,7 +489,7 @@ struct SessionBookTests {
         #expect(book.sessions.isEmpty)
     }
 
-    /// 25.0: a tool line is an event like any other — it introduces a
+    /// A tool line is an event like any other — it introduces a
     /// working session; one that names no session makes nothing.
     @Test func aToolLineIsWorkAndASessionlessOneIsNothing() {
         var book = SessionBook()
@@ -470,7 +502,7 @@ struct SessionBookTests {
         #expect(book.sessions.count == 1)
     }
 
-    // MARK: - 25.0 audit fixes
+    // MARK: - Audit fixes
 
     /// Fix 3: every line is applied. Parallel tools written around the
     /// answering one — before it and after it — no longer hide it (the spool
@@ -603,8 +635,8 @@ struct SessionBookTests {
     }
 }
 
-/// The book as rows: process-only discovery, the time rules, and what a
-/// transcript and a landing add.
+/// The book as rows: process-only discovery, the time rules, and what the
+/// events and a landing add.
 @Suite("Tray projection")
 struct TrayStateTests {
     let t0: Int64 = 1_800_000_000_000
@@ -613,11 +645,10 @@ struct TrayStateTests {
     private func rows(
         _ book: SessionBook,
         processes: [AgentProcesses.Hit] = [],
-        transcripts: [String: TranscriptSummary] = [:],
         at nowMs: Int64? = nil
     ) -> TrayState.SessionRows {
         TrayState.sessionRows(
-            book: book, processes: processes, summaries: transcripts,
+            book: book, processes: processes,
             context: TrayState.Context(nowMs: nowMs ?? t0)
         )
     }
@@ -674,7 +705,7 @@ struct TrayStateTests {
         #expect(row.state == .recent)
         #expect(row.recentReason == .quiet)
         #expect(row.stateSinceMs == t0 + TrayState.idleBoundMs)
-        let why = Explain.why(row, lang: .en, nowMs: t0 + 31 * minute)
+        let why = TrayRowModel.why(row, lang: .en, nowMs: t0 + 31 * minute)
         #expect(why.contains("no process to watch"), "\(why)")
     }
 
@@ -737,19 +768,41 @@ struct TrayStateTests {
         #expect(!row.isStalled)
         #expect(row.recentReason == .silent)
         #expect(row.stateSinceMs == t0 + minute + TrayState.silentBoundMs)
-        let why = Explain.why(row, lang: .en, nowMs: silent)
+        let why = TrayRowModel.why(row, lang: .en, nowMs: silent)
         #expect(why.hasPrefix("Nothing heard for"), "\(why)")
         #expect(rows(b, at: silent + TrayState.recentWindowMs).rows.isEmpty, "and it leaves the list, process or not")
     }
 
-    @Test func theTranscriptSummaryFillsTheRow() throws {
-        let b = book([AttentionRecord(agent: "claude", kind: "turn", ms: t0, message: "Done.", session: "s1", pid: 70, transcript: "/t/s1.jsonl")])
-        let summary = TranscriptSummary(title: "Fix the login test", lastMessage: "All green.", model: "claude-sonnet-4", lastError: "npm ERR! missing script")
-        let row = try #require(rows(b, transcripts: ["/t/s1.jsonl": summary]).rows.first)
+    /// Everything a row says about its session comes from the events: the
+    /// title (the first prompt), the last words (the turn), the error (a
+    /// failed turn), the steps and the turn's clock. No file is read.
+    @Test func theEventsFillTheRow() throws {
+        let b = book([
+            AttentionRecord(agent: "claude", kind: "working", ms: t0, message: "Fix the login test", session: "s1", pid: 70),
+            AttentionRecord(agent: "claude", kind: "tool", ms: t0 + minute, message: "Tests/LoginTests.swift", session: "s1", pid: 70, tool: "Read"),
+            AttentionRecord(agent: "claude", kind: "tool", ms: t0 + 2 * minute, message: "swift test", session: "s1", pid: 70, tool: "Bash"),
+            AttentionRecord(agent: "claude", kind: "turn", ms: t0 + 3 * minute, message: "All green.", session: "s1", pid: 70),
+            AttentionRecord(agent: "claude", kind: "working", ms: t0 + 4 * minute, message: "Ship it", session: "s1", pid: 70),
+            AttentionRecord(agent: "claude", kind: "tool", ms: t0 + 5 * minute, message: "git push", session: "s1", pid: 70, tool: "Bash"),
+        ])
+        let row = try #require(rows(b, at: t0 + 6 * minute).rows.first)
         #expect(row.task == "Fix the login test")
         #expect(row.lastWord == "All green.")
-        #expect(row.model == "claude-sonnet-4")
-        #expect(row.lastErrorText == "npm ERR! missing script")
+        #expect(row.lastStep == SessionBook.Step(tool: "Bash", target: "git push", ms: t0 + 5 * minute))
+        #expect(row.recentSteps.count == 3)
+        #expect(row.turnStartMs == t0 + 4 * minute)
+        #expect(row.lastErrorText == "")
+    }
+
+    /// Cursor and OpenCode activity names no tool: their rows have no steps.
+    @Test func anAgentWhoseHookNamesNoToolHasNoSteps() throws {
+        let b = book([
+            AttentionRecord(agent: "cursor", kind: "working", ms: t0, session: "cu1", pid: 72),
+            AttentionRecord(agent: "cursor", kind: "tool", ms: t0 + minute, session: "cu1", pid: 72),
+        ])
+        let row = try #require(rows(b, at: t0 + 2 * minute).rows.first)
+        #expect(row.lastStep == nil)
+        #expect(row.recentSteps.isEmpty)
     }
 
     @Test func withoutATranscriptTheTurnSaysTheLastWords() throws {
@@ -774,7 +827,7 @@ struct TrayStateTests {
         #expect(try #require(rows(b, at: t0 + 40 * minute).rows.first).isStalled)
     }
 
-    /// 24.0: only an agent whose hook reports every tool call can be
+    /// Only an agent whose hook reports every tool call can be
     /// stalled. Cursor and OpenCode speak at a prompt and at the end of a
     /// reply; a long turn is silent, and silence from them is not evidence.
     @Test func aLongTurnIsNotAStallForAnAgentWithoutToolEvents() throws {
@@ -890,10 +943,11 @@ final class TrayAssembleTests: XCTestCase {
         XCTAssertFalse(build((0..<2).map { row("k\($0)") }, showAll: true, maxRows: 3).showAllAgents)
     }
 
-    func testSectionTotalsCountTheWholeListNotTheWindow() {
+    func testCountsCoverTheWholeListNotTheWindow() {
         let r = build([blocked("w")] + (0..<4).map { row("k\($0)") }, maxRows: 2)
-        XCTAssertEqual(r.snapshot.sectionTotals[.needsYou], 1)
-        XCTAssertEqual(r.snapshot.sectionTotals[.running], 4)
+        XCTAssertEqual(r.snapshot.counts.blocked, 1)
+        XCTAssertEqual(r.snapshot.counts.running, 4)
+        XCTAssertEqual(r.snapshot.headerTitle, r.snapshot.counts.summary(.en))
     }
 
     func testFirstSightOfAWaitIsReportedAsNew() {
@@ -917,7 +971,7 @@ final class TrayAssembleTests: XCTestCase {
         XCTAssertTrue(build([row("a")], previousWaits: ["a": now - 60_000]).waitingSince.isEmpty, "a resolved wait is gone")
     }
 
-    /// 21.0/24.0: "N older not shown" counts only sessions that went quiet
+    /// "N older not shown" counts only sessions that went quiet
     /// within the last day — the projection's count, carried to the snapshot.
     func testStaleHiddenCountsOnlyTheLastDay() {
         var book = SessionBook()
@@ -926,7 +980,7 @@ final class TrayAssembleTests: XCTestCase {
         book.apply(AttentionRecord(agent: "claude", kind: "working", ms: now - 3 * 60 * minute, session: "y"), nowMs: now)
         book.apply(AttentionRecord(agent: "codex", kind: "working", ms: now - 30 * 60 * minute, session: "z"), nowMs: now)
         let r = TrayState.project(
-            book: book, processes: [], summaries: [:],
+            book: book, processes: [],
             context: TrayState.Context(nowMs: now, lang: .en)
         )
         XCTAssertEqual(r.snapshot.staleHidden, 1, "the end line made no session; y went quiet today; z yesterday")
@@ -940,7 +994,7 @@ final class TrayAssembleTests: XCTestCase {
     }
 }
 
-/// 23.0 · a row's key is decided once and never changes.
+/// A row's key is decided once and never changes.
 @Suite("Row identity")
 struct RowIdentityTests {
     @Test func eachKindOfRowHasItsOwnKey() {
@@ -974,10 +1028,10 @@ struct RowIdentityTests {
         let hit = AgentProcesses.Hit(agent: .claude, pid: 4242, cwd: "/w/app")
         let context = TrayState.Context(nowMs: t0)
         var book = SessionBook()
-        let before = TrayState.project(book: book, processes: [hit], summaries: [:], context: context).rows.map(\.rowKey)
+        let before = TrayState.project(book: book, processes: [hit], context: context).rows.map(\.rowKey)
         #expect(before == ["claude|pid:4242"])
         book.apply(AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "abc", pid: 4242), nowMs: t0)
-        let after = TrayState.project(book: book, processes: [hit], summaries: [:], context: context).rows.map(\.rowKey)
+        let after = TrayState.project(book: book, processes: [hit], context: context).rows.map(\.rowKey)
         #expect(after == ["claude|abc"])
     }
 }
@@ -1041,7 +1095,7 @@ final class AgentRowTests: XCTestCase {
     }
 }
 
-/// Screenshots of 0.24.0 showed one fact stated three and four times over.
+/// One fact is stated once — screenshots once showed it three and four times over.
 final class RowRedundancyTests: XCTestCase {
     private func row(agent: AgentID, task: String = "", project: String = "") -> AgentRow {
         var r = AgentRow(rowKey: "k", agent: agent)
@@ -1065,7 +1119,7 @@ final class RowRedundancyTests: XCTestCase {
         r.state = .processOnly
         XCTAssertNil(r.usefulTask)
         // Hero must not fall back to the agent product name (already on identity).
-        let hero = Explain.make(r, lang: .en, nowMs: 1_700_000_000_000).headline
+        let hero = TrayRowModel.headline(r, lang: .en, nowMs: 1_700_000_000_000)
         XCTAssertNotEqual(hero, r.agent.displayName)
     }
 
@@ -1132,7 +1186,7 @@ final class RowContextTests: XCTestCase {
     }
 }
 
-/// Each of these is a defect visible in a 0.25.0 screenshot.
+/// Each of these is a defect once visible in a screenshot.
 final class RowPresentationTests: XCTestCase {
     private let home = FileManager.default.homeDirectoryForCurrentUser.path
 
@@ -1201,7 +1255,7 @@ final class RowPresentationTests: XCTestCase {
     }
 
     /// A stalled row is one the user should react to: an orange ring, and
-    /// its why on a second line (23.0 — no badge).
+    /// its why on a second line (no badge).
     func testStalledRowsSayWhy() {
         var r = row(eventMs: now - 25 * 60 * 1000, live: true)
         r.isStalled = true

@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-/// How often Pulse looks, now that events drive it (24.0).
+/// How often Pulse looks, when events drive it.
 ///
 /// Nothing here polls a vendor. The event log (`events.tsv`) wakes Pulse
 /// when a hook appends to it (a file-system watch), and a process exit

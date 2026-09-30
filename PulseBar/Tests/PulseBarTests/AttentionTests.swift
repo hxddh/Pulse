@@ -13,8 +13,8 @@ import XCTest
 final class AttentionBookTests: XCTestCase {
     private let now: Int64 = 1_700_000_000_000
 
-    /// Rows are padded to the eleven v5 columns (front, pid, transcript,
-    /// landing and tool empty).
+    /// Rows are padded to the eleven v5 columns (front, pid, the reserved
+    /// column, landing and tool empty).
     private func tsv(_ rows: [[String]]) -> String {
         rows.map { row in
             (row + Array(repeating: "", count: max(0, AttentionProtocol.columnCount - row.count)))
@@ -56,7 +56,7 @@ final class AttentionBookTests: XCTestCase {
         XCTAssertEqual(state(b, "claude|s1"), "working")
     }
 
-    /// 23.0 bug: dismissing a session-less hook wait wrote a session-less
+    /// Dismissing a session-less hook wait once wrote a session-less
     /// `done`, which cleared every session of that agent. A `done` clears
     /// exactly what it names: an empty session, only session-less entries.
     func testASessionlessDoneClearsOnlyTheSessionlessEntry() {
@@ -69,6 +69,69 @@ final class AttentionBookTests: XCTestCase {
         XCTAssertEqual(state(b, "claude|s1"), "blocked:permission", "the sessions' own waits stay")
         XCTAssertEqual(state(b, "claude|s2"), "blocked:permission")
         XCTAssertEqual(state(b, RowIdentity.session(agent: .claude, session: "", cwd: "/r")), "working")
+    }
+
+    /// A dismissal's `done` names the row's folder: it clears the
+    /// session-less wait in that folder and leaves the agent's session-less
+    /// wait in another folder red.
+    func testASessionlessDoneWithAFolderClearsOnlyThatFolder() {
+        let b = book(tsv([
+            ["gemini", "permission", "\(now - 5000)", "a", "", "/r"],
+            ["gemini", "permission", "\(now - 4000)", "b", "", "/q"],
+            ["gemini", "done", "\(now - 1000)", "", "", "/r"],
+        ]))
+        XCTAssertEqual(state(b, RowIdentity.session(agent: .gemini, session: "", cwd: "/r")), "working")
+        XCTAssertEqual(state(b, RowIdentity.session(agent: .gemini, session: "", cwd: "/q")), "blocked:permission")
+    }
+
+    /// The steps: the last five tool lines that name a tool, oldest first,
+    /// rebuilt by replaying the log; a tool line with no tool (Cursor,
+    /// OpenCode activity) is no step.
+    func testTheLastFiveToolStepsAreKept() throws {
+        var rows = [["claude", "working", "\(now - 60_000)", "Fix the login test", "s1", "/p"]]
+        for index in 0..<7 {
+            rows.append(["claude", "tool", "\(now - 50_000 + Int64(index) * 1000)", "target \(index)", "s1", "/p", "", "", "", "", "Tool\(index)"])
+        }
+        rows.append(["claude", "tool", "\(now - 1000)", "", "s1", "/p"])
+        let session = try XCTUnwrap(book(tsv(rows)).sessions["claude|s1"])
+        XCTAssertEqual(session.steps.map(\.tool), ["Tool2", "Tool3", "Tool4", "Tool5", "Tool6"])
+        XCTAssertEqual(session.steps.last?.target, "target 6")
+        XCTAssertEqual(session.steps.last?.ms, now - 44_000)
+        XCTAssertEqual(session.turnStartMs, now - 60_000, "the prompt started the turn")
+        XCTAssertEqual(session.title, "Fix the login test")
+        XCTAssertEqual(session.lastPrompt, "Fix the login test")
+    }
+
+    /// The title is the first prompt that says something; "continue" is
+    /// the latest prompt, never the title. A new prompt starts a new turn.
+    func testTheTitleIsTheFirstMeaningfulPrompt() throws {
+        let b = book(tsv([
+            ["codex", "working", "\(now - 9000)", "继续", "x1", "/p"],
+            ["codex", "working", "\(now - 8000)", "Port the parser to Swift", "x1", "/p"],
+            ["codex", "turn", "\(now - 5000)", "Ported.", "x1", "/p"],
+            ["codex", "working", "\(now - 2000)", "continue", "x1", "/p"],
+        ]))
+        let session = try XCTUnwrap(b.sessions["codex|x1"])
+        XCTAssertEqual(session.title, "Port the parser to Swift")
+        XCTAssertEqual(session.lastPrompt, "continue")
+        XCTAssertEqual(session.turnStartMs, now - 2000)
+        XCTAssertEqual(session.message, "Ported.", "the last words stay until the next turn says something")
+    }
+
+    /// A turn that ended on an error (`tool` = `error`) is the session's
+    /// last error — its last words are left alone — until the next prompt.
+    func testAFailedTurnIsTheLastErrorUntilTheNextPrompt() throws {
+        let failed = tsv([
+            ["claude", "turn", "\(now - 9000)", "All green.", "s1", "/p"],
+            ["claude", "working", "\(now - 8000)", "Ship it", "s1", "/p"],
+            ["claude", "turn", "\(now - 5000)", "API Error: Rate limit reached", "s1", "/p", "", "", "", "", AttentionRecord.errorTool],
+        ])
+        let session = try XCTUnwrap(book(failed).sessions["claude|s1"])
+        XCTAssertEqual(session.lastError, "API Error: Rate limit reached")
+        XCTAssertEqual(session.message, "All green.")
+        XCTAssertEqual(HookFeed.word(session.state), "turn", "a failed turn is your turn, never red")
+        let next = failed + tsv([["claude", "working", "\(now - 1000)", "Try again", "s1", "/p"]])
+        XCTAssertEqual(book(next).sessions["claude|s1"]?.lastError, "")
     }
 
     func testStopKeepsAFreshPermissionWithinGrace() {
@@ -123,7 +186,7 @@ final class AttentionBookTests: XCTestCase {
         XCTAssertTrue(book("# header\nclaude\tpermission\n\n").sessions.isEmpty)
     }
 
-    /// 25.0: v5 needs all eleven columns. A v4 (ten-column) or v3 line is
+    /// v5 needs all eleven columns. A v4 (ten-column) or v3 line is
     /// not read.
     func testAnOlderShorterLineIsNotRead() throws {
         let v1 = "claude\tpermission\t\(now - 1000)\tapprove\ts1\t/p\n"
@@ -132,15 +195,16 @@ final class AttentionBookTests: XCTestCase {
         XCTAssertTrue(book(v1).sessions.isEmpty)
         XCTAssertTrue(book(v3).sessions.isEmpty)
         XCTAssertTrue(book(v4).sessions.isEmpty)
+        // The ninth column is reserved: whatever an older writer put there
+        // is not read.
         let v5 = "claude\tpermission\t\(now - 1000)\tBash: ls\ts1\t/p\t\t4242\t/t.jsonl\ttmux:%3\tBash\n"
         let session = try XCTUnwrap(book(v5).sessions["claude|s1"])
         XCTAssertEqual(session.pid, 4242)
-        XCTAssertEqual(session.transcript, "/t.jsonl")
         XCTAssertEqual(session.landing, "tmux:%3")
         XCTAssertEqual(block(book(v5), "claude|s1")?.tool, "Bash")
     }
 
-    /// 24.0: a hand-written blocked line for an agent whose hooks cannot
+    /// A hand-written blocked line for an agent whose hooks cannot
     /// report a block is not a wait; its turn still is its turn.
     func testAWaitingNoneAgentIsNeverBlockedByALine() {
         let b = book(tsv([
@@ -152,7 +216,7 @@ final class AttentionBookTests: XCTestCase {
         XCTAssertEqual(state(b, "codex|x2"), "turn")
     }
 
-    /// 24.0: the lifecycle kinds each say what the session does next.
+    /// The lifecycle kinds each say what the session does next.
     func testStartWorkingAndEndAfterATurn() {
         let expected = ["start": "idle", "working": "working", "end": "ended"]
         for (kind, word) in expected {
@@ -250,7 +314,7 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertNotEqual(AttentionProtocol.kind("idle_prompt")?.isBlocking, true)
         XCTAssertTrue(AttentionProtocol.acceptsWrite(kind: "permission"))
         XCTAssertFalse(AttentionProtocol.acceptsWrite(kind: "totally_made_up_kind"))
-        // 24.0: no free-text guessing — "…approval…" is not a permission.
+        // No free-text guessing — "…approval…" is not a permission.
         XCTAssertFalse(AttentionProtocol.acceptsWrite(kind: "exec_approval_request"))
     }
 
@@ -259,10 +323,11 @@ final class PulseHookReceiverTests: XCTestCase {
         let record = AttentionRecord(
             agent: "claude", kind: "permission", ms: 1_800_000_000_000,
             message: "Bash: npm test", session: "s1", cwd: "/w", front: false,
-            pid: 4242, transcript: "/Users/me/.claude/projects/w/s1.jsonl",
-            landing: "tmux:%3;tty:/dev/ttys004", tool: "Bash"
+            pid: 4242, landing: "tmux:%3;tty:/dev/ttys004", tool: "Bash"
         )
-        XCTAssertEqual(record.line.split(separator: "\t", omittingEmptySubsequences: false).count, 11)
+        let columns = record.line.split(separator: "\t", omittingEmptySubsequences: false)
+        XCTAssertEqual(columns.count, 11)
+        XCTAssertEqual(columns[8], "", "the reserved column is written empty")
         XCTAssertEqual(AttentionRecord(line: record.line), record)
         let unknown = AttentionRecord(agent: "codex", kind: "turn", ms: 1)
         XCTAssertEqual(AttentionRecord(line: unknown.line), unknown, "empty columns stay empty")
@@ -289,7 +354,7 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(record.message, "Bash: npm run build")
         XCTAssertEqual(record.session, "c9")
         XCTAssertEqual(record.cwd, "/w")
-        XCTAssertEqual(record.transcript, "/Users/me/.claude/projects/w/c9.jsonl")
+        XCTAssertFalse(try String(contentsOf: log, encoding: .utf8).contains("c9.jsonl"), "a transcript path is never written")
         XCTAssertEqual(record.pid, 4242)
         XCTAssertEqual(record.landing, "tmux:%3;tty:/dev/ttys004")
     }
@@ -299,7 +364,7 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(kinds(), ["question"])
     }
 
-    /// 25.0 fix 9: the question itself, not the tool's name — and the tool
+    /// The question itself, not the tool's name — and the tool
     /// column says which tool will answer it.
     func testClaudeAskUserQuestionSaysTheQuestion() throws {
         deliver("claude", "PermissionRequest", #"""
@@ -341,6 +406,7 @@ final class PulseHookReceiverTests: XCTestCase {
         deliver("claude", "SessionEnd", #"{"session_id":"s1","cwd":"/w","hook_event_name":"SessionEnd","reason":"exit"}"#)
         XCTAssertEqual(records().map(\.kind), ["start", "working", "tool", "turn", "end"], "25.0: one log, every event in order")
         XCTAssertEqual(records().first { $0.kind == "turn" }?.message, "All tests pass.")
+        XCTAssertEqual(records().first { $0.kind == "working" }?.message, "Fix the login", "the prompt is the title's source")
         let tool = try? XCTUnwrap(records().first { $0.kind == "tool" })
         XCTAssertEqual(tool?.tool, "Edit")
         XCTAssertEqual(tool?.message, "/w/a.swift")
@@ -348,7 +414,7 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertNil(tool?.front, "front is only asked for what is owed")
     }
 
-    /// 25.0 fix 1: a failed tool is activity for that tool.
+    /// A failed tool is activity for that tool.
     func testClaudePostToolUseFailureIsAToolLine() throws {
         deliver("claude", "PostToolUseFailure", #"{"session_id":"s1","cwd":"/w","hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"npm test"},"error":"exit 1"}"#)
         let line = try XCTUnwrap(records().first)
@@ -357,7 +423,7 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(line.message, "npm test")
     }
 
-    /// 25.0 fix 10: a hook whose parent had exited is re-parented to
+    /// A hook whose parent had exited is re-parented to
     /// launchd; pid 1 is never written.
     func testPidOneIsNeverWritten() throws {
         deliver("claude", "Stop", #"{"session_id":"s1","cwd":"/w"}"#, locate: { _, _ in (1, "") })
@@ -373,7 +439,19 @@ final class PulseHookReceiverTests: XCTestCase {
         )
     }
 
-    /// A 23.0 entry names no event; the payload does.
+    /// Claude's StopFailure: your turn, with the error in its own words and
+    /// the `error` marker in the tool column.
+    func testClaudeStopFailureCarriesItsError() throws {
+        deliver("claude", "StopFailure", #"{"session_id":"s1","cwd":"/w","hook_event_name":"StopFailure","error":"rate_limit","last_assistant_message":"API Error: Rate limit reached"}"#)
+        let line = try XCTUnwrap(records().first)
+        XCTAssertEqual(line.kind, "turn")
+        XCTAssertEqual(line.tool, AttentionRecord.errorTool)
+        XCTAssertEqual(line.message, "API Error: Rate limit reached")
+        XCTAssertEqual(PulseHookReceiver.errorMessage(from: ["error": "rate_limit"]), "rate_limit")
+        XCTAssertEqual(PulseHookReceiver.errorMessage(from: ["error": ["message": "boom"]]), "boom")
+    }
+
+    /// An entry that names no event is read from its payload.
     func testALegacyClaudeEntryIsReadFromItsPayload() {
         deliver("claude", "", #"{"hook_event_name":"PermissionRequest","tool_name":"Edit","tool_input":{"file_path":"/w/a"},"session_id":"c1"}"#)
         XCTAssertEqual(kinds(), ["permission"])
@@ -381,17 +459,17 @@ final class PulseHookReceiverTests: XCTestCase {
 
     // MARK: - Codex (openai/codex codex-rs/hooks)
 
-    func testCodexStopAndNotifyAreYourTurnAndItNeverBlocks() {
+    func testCodexStopIsYourTurnAndItNeverBlocks() {
+        deliver("codex", "UserPromptSubmit", #"{"session_id":"x1","turn_id":"t1","cwd":"/w","hook_event_name":"UserPromptSubmit","prompt":"Add a retry"}"#)
         deliver("codex", "Stop", #"{"session_id":"x1","turn_id":"t1","transcript_path":null,"cwd":"/w","hook_event_name":"Stop","model":"gpt-5","permission_mode":"default","stop_hook_active":false,"last_assistant_message":"Done."}"#)
-        let notify = #"{"type":"agent-turn-complete","thread-id":"x2","turn-id":"1","cwd":"/w","input-messages":["go"],"last-assistant-message":"Shipped."}"#
-        PulseHookReceiver.run(arguments: ["pulse-hook", "--hook", "codex", notify], logURL: log, locate: located)
         // A bridge that says Codex is blocked is refused: Codex's own
         // PermissionRequest fires before its auto-review.
         deliver("codex", "permission", #"{"session_id":"x3","message":"Approve shell"}"#)
         deliver("codex", "PermissionRequest", #"{"session_id":"x4","tool_name":"Bash"}"#)
-        XCTAssertEqual(kinds(), ["turn", "turn"])
-        XCTAssertEqual(records().map(\.session), ["x1", "x2"])
-        XCTAssertEqual(records().last?.message, "Shipped.")
+        XCTAssertEqual(kinds(), ["working", "turn"])
+        XCTAssertEqual(records().map(\.session), ["x1", "x1"])
+        XCTAssertEqual(records().first?.message, "Add a retry")
+        XCTAssertEqual(records().last?.message, "Done.")
     }
 
     // MARK: - Gemini CLI (docs/hooks/reference.md)
@@ -403,7 +481,8 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(kinds(), ["working", "permission", "turn"])
         let block = try XCTUnwrap(records().first { $0.kind == "permission" })
         XCTAssertEqual(block.message, "Allow run_shell_command: npm test?")
-        XCTAssertEqual(block.transcript, "/Users/me/.gemini/tmp/h/chats/g1.json")
+        XCTAssertEqual(records().first?.message, "Fix it", "BeforeAgent's prompt")
+        XCTAssertEqual(records().last?.message, "Fixed.", "AfterAgent's prompt_response")
     }
 
     // MARK: - Copilot CLI (github/docs hooks-reference.md)
@@ -415,7 +494,24 @@ final class PulseHookReceiverTests: XCTestCase {
         deliver("copilot", "agentStop", #"{"sessionId":"cp1","timestamp":1790000000003,"cwd":"/w","transcriptPath":"/Users/me/.copilot/session-state/cp1/events.jsonl","stopReason":"end_turn","stop_hook_active":false}"#)
         XCTAssertEqual(kinds(), ["permission", "question", "turn"], "a background agent's idle is not this session's turn")
         XCTAssertEqual(records().first?.message, "Copilot wants to run: npm test")
-        XCTAssertEqual(records().last?.transcript, "/Users/me/.copilot/session-state/cp1/events.jsonl")
+    }
+
+    /// Copilot sends `toolArgs` as a JSON string: its command or path is the
+    /// step's target. An unrecoverable error ends the turn with its message.
+    func testCopilotToolArgsAsAStringNameTheTarget() throws {
+        deliver("copilot", "userPromptSubmitted", #"{"sessionId":"cp2","cwd":"/w","prompt":"Run the tests"}"#)
+        deliver("copilot", "postToolUse", #"{"sessionId":"cp2","cwd":"/w","toolName":"bash","toolArgs":"{\"command\":\"npm test\",\"description\":\"Run tests\"}"}"#)
+        deliver("copilot", "postToolUse", #"{"sessionId":"cp2","cwd":"/w","toolName":"view","toolArgs":"{\"path\":\"/w/README.md\"}"}"#)
+        deliver("copilot", "errorOccurred", #"{"sessionId":"cp2","cwd":"/w","recoverable":false,"error":{"message":"Model unavailable","name":"Error"}}"#)
+        let lines = records()
+        XCTAssertEqual(lines.map(\.kind), ["working", "tool", "tool", "turn"])
+        XCTAssertEqual(lines[0].message, "Run the tests")
+        XCTAssertEqual(lines[1].tool, "bash")
+        XCTAssertEqual(lines[1].message, "npm test")
+        XCTAssertEqual(lines[2].message, "/w/README.md")
+        XCTAssertEqual(lines[3].tool, AttentionRecord.errorTool)
+        XCTAssertEqual(lines[3].message, "Model unavailable")
+        XCTAssertNil(PulseHookReceiver.toolInput(["toolArgs": "not json"]))
     }
 
     // MARK: - OpenCode (plugin events, SDK v2)
@@ -449,12 +545,23 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(kinds(), ["turn"])
         XCTAssertEqual(record.session, "cu1")
         XCTAssertEqual(record.cwd, "/Users/me/app")
-        XCTAssertEqual(record.transcript, "/Users/me/.cursor/projects/app/cu1.jsonl")
+        XCTAssertFalse(try String(contentsOf: log, encoding: .utf8).contains("cu1.jsonl"))
+    }
+
+    /// Only the events Pulse installs are read: an event it never installs
+    /// writes nothing, for Cursor, Pi and Claude alike.
+    func testNeverInstalledEventsWriteNothing() {
+        deliver("cursor", "afterShellExecution", #"{"conversation_id":"cu2","command":"ls"}"#)
+        deliver("cursor", "afterFileEdit", #"{"conversation_id":"cu2","file_path":"/w/a"}"#)
+        deliver("pi", "tool_execution_start", #"{"session_id":"p2","cwd":"/w"}"#)
+        deliver("pi", "turn_end", #"{"session_id":"p2","cwd":"/w"}"#)
+        deliver("claude", "PreToolUse", #"{"session_id":"c2","cwd":"/w","tool_name":"Bash"}"#)
+        XCTAssertTrue(records().isEmpty, "\(records().map(\.kind))")
     }
 
     // MARK: - Pi (extension events)
 
-    /// 25.0 fix 8: a Pi prompt with no title never says its event's
+    /// A Pi prompt with no title never says its event's
     /// reason (`ui_prompt`); the extension sends a reason only on shutdown.
     func testAPiPromptNeverSaysItsReason() throws {
         deliver("pi", "ui_prompt_start", #"{"session_id":"p9","cwd":"/w","kind":"input","reason":"ui_prompt"}"#)
@@ -477,6 +584,18 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(records()[1].message, "Allow rm -rf build?")
     }
 
+    /// The Pi extension forwards the tool's name and one short argument.
+    func testPiToolEventsNameTheirStep() throws {
+        deliver("pi", "tool_execution_end", #"{"session_id":"p3","cwd":"/w","tool_name":"bash","tool_input":{"command":"ls -la"}}"#)
+        let line = try XCTUnwrap(records().first)
+        XCTAssertEqual(line.kind, "tool")
+        XCTAssertEqual(line.tool, "bash")
+        XCTAssertEqual(line.message, "ls -la")
+        let module = HookModules.piExtension(launcher: "/x/pulse-hook", events: ["tool_execution_end"])
+        XCTAssertTrue(module.contains("Object.assign(payload, toolSummary(event))"))
+        XCTAssertTrue(module.contains("out.tool_input = { [key]: args[key].slice(0, 200) }"))
+    }
+
     // MARK: - Rejections
 
     func testUnknownEventsAndAgentsWriteNothing() throws {
@@ -484,7 +603,7 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(deliver("goose", "permission", #"{"message":"x","session_id":"x"}"#), 0, "not a supported agent")
         XCTAssertEqual(deliver("claude", "", #"{"message":"says nothing about what it is","session_id":"x"}"#), 0)
         XCTAssertFalse(FileManager.default.fileExists(atPath: log.path))
-        XCTAssertFalse(PulseHookReceiver.appendEvent(agent: "claude", kind: "", message: "nope", logURL: log))
+        XCTAssertFalse(AttentionProtocol.acceptsWrite(kind: ""))
         XCTAssertEqual(AttentionProtocol.normalizeKind("   "), "")
     }
 
@@ -500,17 +619,17 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertTrue(records().isEmpty)
     }
 
-    /// Codex `notify` hands its JSON as the last argument; stdin is then not
-    /// read at all, so a pipe nobody closes cannot hold the hook.
+    /// A payload handed as the last argument means stdin is not read at
+    /// all, so a pipe nobody closes cannot hold the hook.
     func testAPayloadInArgvSkipsStdin() {
         XCTAssertTrue(PulseHookReceiver.payloadInArguments(
-            ["pulse-hook", "--hook", "codex", #"{"type":"agent-turn-complete"}"#]
+            ["pulse-hook", "--hook", "pi", "agent_settled", #"{"session_id":"p1"}"#]
         ))
         XCTAssertFalse(PulseHookReceiver.payloadInArguments(["pulse-hook", "--hook", "claude"]))
         XCTAssertFalse(PulseHookReceiver.payloadInArguments(["pulse-hook", "--hook", "gemini", "Notification"]))
     }
 
-    /// 24.0: the OpenCode plugin and the Pi extension pass their payload as
+    /// The OpenCode plugin and the Pi extension pass their payload as
     /// the last argument — the event is whole the moment the hook is
     /// spawned, so the one sent as the agent exits is not lost with a pipe.
     func testAModulePayloadInArgvIsRead() {
@@ -619,7 +738,7 @@ final class PulseHookReceiverTests: XCTestCase {
     }
 }
 
-/// 24.0 · landing handles and the agent pid, read by the hook itself.
+/// Landing handles and the agent pid, read by the hook itself.
 final class HookLandingTests: XCTestCase {
     func testHandlesAreMostSpecificFirst() {
         let env = [
@@ -669,8 +788,8 @@ final class HookLandingTests: XCTestCase {
         )
         XCTAssertEqual(
             HookLanding.agentPID(agent: .codex, start: 300, parentOf: { parents[$0] }, argumentsOf: { argv[$0] }),
-            300,
-            "no ancestor is the agent: the direct parent"
+            0,
+            "no ancestor is the agent: unknown, never the dying `sh -c` that ran the hook"
         )
     }
 
@@ -685,7 +804,7 @@ final class HookLandingTests: XCTestCase {
     }
 }
 
-/// 24.0 · every agent's documented, non-blocking hook, installed from the
+/// Every agent's documented, non-blocking hook, installed from the
 /// catalog and removed byte for byte.
 final class HooksInstallerTests: XCTestCase {
     private var tempHome: URL!
@@ -763,6 +882,7 @@ final class HooksInstallerTests: XCTestCase {
         }
         XCTAssertEqual(HooksSupport.probeStatus(), .all)
         XCTAssertNotEqual(snapshot(), before)
+        XCTAssertEqual(read(".codex/config.toml"), "model = \"gpt-5\"\n\n[profiles.fast]\nmodel = \"o4-mini\"\n", "Pulse never touches config.toml")
 
         HooksInstaller.uninstall()
         XCTAssertEqual(snapshot(), before, "every file and directory is back exactly as it was")
@@ -875,7 +995,7 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertFalse(copilot.contains("preToolUse"))
     }
 
-    /// 24.0: an OpenCode subagent runs in a child session. Its lifecycle
+    /// An OpenCode subagent runs in a child session. Its lifecycle
     /// never reaches Pulse (its idle is not the person's turn, and it is not
     /// a row); its asks block the parent's work and land on the parent.
     func testOpenCodeSubagentsFoldIntoTheirParent() {
@@ -892,13 +1012,18 @@ final class HooksInstallerTests: XCTestCase {
         }
     }
 
-    func testInstallNeverOverwritesTheUsersOwnCodexNotify() throws {
-        try write(".codex/config.toml", "notify = [\"/usr/local/bin/my-notifier\"]\n")
+    /// Codex is hooks.json only: an install and an uninstall never touch
+    /// `config.toml` — not even a `notify` line an older Pulse wrote there.
+    func testCodexIsHooksJSONOnly() throws {
+        let config = "model = \"gpt-5\"\nnotify = [\"/x/pulse-hook\", \"codex\"]\n"
+        try write(".codex/config.toml", config)
         let report = try HooksInstaller.install(agents: [.codex])
-        XCTAssertTrue(report.map(\.line).joined().contains("kept your own notify"))
-        let text = try XCTUnwrap(read(".codex/config.toml"))
-        XCTAssertTrue(text.contains("my-notifier"))
-        XCTAssertFalse(text.contains("pulse-hook"))
+        XCTAssertEqual(report.map(\.failure), [nil])
+        XCTAssertEqual(read(".codex/config.toml"), config)
+        XCTAssertTrue(HooksInstaller.containsPulseMarker(read(".codex/hooks.json") ?? ""))
+        HooksInstaller.uninstall(agents: [.codex])
+        XCTAssertEqual(read(".codex/config.toml"), config, "uninstall leaves config.toml alone too")
+        XCTAssertFalse(HooksSupport.isWired(.codex), "a notify line in config.toml is not a Pulse hook")
     }
 
     func testInstallWritesThroughASymlinkedSettingsFile() throws {
@@ -923,7 +1048,7 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertEqual(read(".claude/settings.json"), "{ not json", "the user's file is left alone")
     }
 
-    /// 24.0: one agent's broken config stops that agent only — the others
+    /// One agent's broken config stops that agent only — the others
     /// are installed (and removed) all the same, and the result says which
     /// failed and why, without a path.
     func testOneBrokenConfigDoesNotStopTheOtherAgents() throws {
@@ -953,7 +1078,7 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertFalse(HooksSupport.isWired(.claude), "Claude is removed although Cursor failed")
     }
 
-    /// 24.0: an install rewrites only `hooks` — every other key, its order
+    /// An install rewrites only `hooks` — every other key, its order
     /// and its formatting stay exactly as the user wrote them.
     func testInstallLeavesEverythingOutsideHooksUntouched() throws {
         let original = """
@@ -1016,76 +1141,11 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertThrowsError(try JSONSplice.replacingHooks(in: "[1]", pulse: [], isPulse: { _ in false }, ensureVersion: false, dropEmptyHooks: false))
     }
 
-    func testRootTableEndFindsFirstSection() {
-        let text = "model = \"o3\"\n\n[profiles.x]\nmodel = \"y\"\n"
-        let end = HooksInstaller.rootTableEnd(text)
-        XCTAssertEqual(String(text[..<end]), "model = \"o3\"\n\n")
-    }
-
-    /// 25.0 fix 13: a line of a multi-line array or string that begins with
-    /// `[` is not a table header.
-    func testRootTableEndIgnoresBracketsInsideValues() {
-        let text = """
-        model = "o3"
-        matrix = [
-          ["a", "b"],
-          ["c", "d"],
-        ]
-        prompt = \"\"\"
-        [not a table]
-        \"\"\"
-        notify = ["/x/n"] # [comment]
-
-        [profiles.x]
-        model = "y"
-
-        """
-        let end = HooksInstaller.rootTableEnd(text)
-        XCTAssertTrue(String(text[end...]).hasPrefix("[profiles.x]"), String(text[end...]))
-        let statements = TOMLScan.statements(text)
-        XCTAssertEqual(statements.filter(\.isTable).count, 1)
-        XCTAssertEqual(statements.filter { $0.key == "matrix" }.count, 1, "the array is one statement")
-        XCTAssertEqual(HooksInstaller.rootTableEnd("model = 1\n"), "model = 1\n".endIndex)
-    }
-
-    /// 25.0 fix 13: a Pulse `notify` the user reformatted over several
-    /// lines goes whole — no dangling `]` — and is still recognized as
-    /// Pulse's on a reinstall.
-    func testAReformattedNotifyIsRemovedWhole() throws {
-        let launcher = HooksInstaller.launcherURL.path
-        let config = """
-        model = "gpt-5"
-
-        # Pulse attention hooks
-        notify = [
-          "\(launcher)",
-          "codex",
-        ]
-
-        [profiles.fast]
-        model = "o4-mini"
-
-        """
-        try write(".codex/config.toml", config)
-        try write(".codex/hooks.json", "{}\n")
-        let report = try HooksInstaller.install(agents: [.codex])
-        XCTAssertFalse(report.map(\.line).joined().contains("kept your own notify"), "the multi-line notify is Pulse's")
-        XCTAssertEqual(read(".codex/config.toml"), config, "nothing to add")
-        HooksInstaller.uninstall(agents: [.codex])
-        let after = try XCTUnwrap(read(".codex/config.toml"))
-        XCTAssertFalse(HooksInstaller.containsPulseMarker(after), after)
-        XCTAssertFalse(after.contains("notify"), after)
-        XCTAssertFalse(after.contains("\"codex\","), after)
-        XCTAssertFalse(after.contains("\n]\n"), "no dangling bracket: \(after)")
-        XCTAssertTrue(after.contains("[profiles.fast]\nmodel = \"o4-mini\""), after)
-    }
-
-    /// 25.0 fix 11: the launcher as a whole token, never a substring.
+    /// The launcher as a whole token, never a substring.
     func testMarkersNeverClaimAUsersOwnHook() {
         XCTAssertTrue(HooksInstaller.containsPulseMarker("/x/pulse-hook claude Stop"))
         XCTAssertTrue(HooksInstaller.containsPulseMarker(#""/Users/me/Library/Application Support/Pulse/pulse-hook" claude Stop"#))
         XCTAssertTrue(HooksInstaller.containsPulseMarker(#"{"command": "\"/a b/pulse-hook\" claude Stop"}"#))
-        XCTAssertTrue(HooksInstaller.containsPulseMarker(#"notify = ["/x/pulse-hook", "codex"]"#))
         XCTAssertTrue(HooksInstaller.containsPulseMarker(#"{"command":"\/x\/pulse-hook claude"}"#), "JSONSerialization escapes slashes")
         XCTAssertTrue(HooksInstaller.containsPulseMarker("/Applications/Pulse.app/Contents/MacOS/PulseBar --hook claude"))
         XCTAssertFalse(HooksInstaller.containsPulseMarker("mytool --hook-dir /tmp"))
@@ -1095,7 +1155,7 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertFalse(HooksInstaller.containsPulseMarker("PulseBarHelper --hooks"))
     }
 
-    /// 25.0 fix 11: a user's `impulse-hook.sh` survives an install and an
+    /// A user's `impulse-hook.sh` survives an install and an
     /// uninstall.
     func testAUsersImpulseHookIsNeverRemoved() throws {
         let original = """
@@ -1114,7 +1174,7 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertFalse(HooksInstaller.containsPulseMarker(after))
     }
 
-    /// 25.0 fix 12: the edges of a user's JSON — a non-array event, a
+    /// The edges of a user's JSON — a non-array event, a
     /// user's empty event, CRLF, a byte-order mark, comments.
     func testJSONSpliceEdges() throws {
         let pulse = [("Stop", [#"{"x": 1}"#])]
@@ -1153,7 +1213,7 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertFalse(JSONSplice.hasComments(#"{"url": "https://example.com/a", "q": "a \" // b"}"#))
     }
 
-    /// 25.0 fix 12: a settings file with comments is refused with its own
+    /// A settings file with comments is refused with its own
     /// reason, in the person's language, and left alone.
     func testAJSONCSettingsFileIsRefusedAsHavingComments() throws {
         let jsonc = "{\n  // my theme\n  \"theme\": \"dark\"\n}\n"
@@ -1247,9 +1307,9 @@ final class AttentionWatcherReArmTests: XCTestCase {
     }
 }
 
-/// 16.0 · Turn — vendor event sequences, from the attention file to the lamp.
+/// Turn — vendor event sequences, from the attention file to the lamp.
 ///
-/// 18.0: Swift Testing. Every sequence is one row of `TurnTruthTests.cases`
+/// Swift Testing. Every sequence is one row of `TurnTruthTests.cases`
 /// and one named test in the report, so a failing vendor order reads as
 /// "claude · finished turn → your turn, not red" rather than as one assertion
 /// buried in a hundred-line method. Each row is a sequence of lines exactly as
@@ -1265,7 +1325,7 @@ struct TurnTruthTests {
         session: String = "s1", cwd: String = "/p", front: String? = nil
     ) -> String {
         // v5: all eleven columns; front as given (empty = unknown), pid,
-        // transcript, landing and tool empty.
+        // the reserved column, landing and tool empty.
         let cols = [agent, kind, "\(now - ago)", message, session, cwd, front ?? "", "", "", "", ""]
         return cols.joined(separator: "\t")
     }
@@ -1277,7 +1337,7 @@ struct TurnTruthTests {
             if let record = AttentionRecord(line: line) { book.apply(record, nowMs: now) }
         }
         return TrayState.project(
-            book: book, processes: [], summaries: [:],
+            book: book, processes: [],
             context: TrayState.Context(nowMs: now, lang: .en)
         )
     }
@@ -1357,12 +1417,12 @@ struct TurnTruthTests {
             expect: quiet
         ),
         Case(
-            name: "claude · StopFailure (18.0) → your turn, never red",
+            name: "claude · StopFailure → your turn, never red",
             lines: [line("claude", "stop_failure", ago: 10 * second, message: "rate_limit")],
             expect: turn
         ),
         Case(
-            name: "codex · agent-turn-complete → your turn",
+            name: "codex · a bridge's agent-turn-complete → your turn",
             lines: [line("codex", "agent-turn-complete", ago: 10 * second)],
             agent: .codex,
             expect: turn
@@ -1411,13 +1471,13 @@ struct TurnTruthTests {
         ),
     ]
 
-    /// 23.0: a finished turn is grey even while its CLI stays open — the
+    /// A finished turn is grey even while its CLI stays open — the
     /// green ring is for a session that is working, and "your turn" is not.
     @Test func aFinishedTurnWithALiveProcessIsAGreyLamp() throws {
         var book = SessionBook()
         book.apply(AttentionRecord(agent: "claude", kind: "turn", ms: Self.now - 2 * Self.second, session: "s1", cwd: "/p", pid: 42), nowMs: Self.now)
         let r = TrayState.project(
-            book: book, processes: [], summaries: [:],
+            book: book, processes: [],
             context: TrayState.Context(nowMs: Self.now, lang: .en)
         )
         let row = try #require(r.rows.first)
@@ -1480,8 +1540,8 @@ struct TurnTruthTests {
         let failure = PulseHookReceiver.interpret(agent: .claude, event: "StopFailure", payload: [:])
         let subagent = PulseHookReceiver.interpret(agent: .claude, event: "SubagentStop", payload: [:])
         #expect(stop?.action == .turn)
-        #expect(failure?.action == .turn)
-        #expect(subagent?.action == .ignore)
+        #expect(failure?.action == .failedTurn)
+        #expect(subagent == nil, "never installed: not read")
 
         // The installed Claude hooks pass the vendor's event name.
         let here: (AgentID, [String: String]) -> (pid: Int32, landing: String) = { _, _ in (0, "") }
@@ -1513,7 +1573,7 @@ struct TurnTruthTests {
     }
 }
 
-/// 25.0 · the event log: one append-only file, read from an offset.
+/// The event log: one append-only file, read from an offset.
 @Suite("Event log")
 struct EventLogTests {
     let t0: Int64 = 1_800_000_000_000
@@ -1600,14 +1660,64 @@ struct EventLogTests {
         #expect(kinds == ["tool"], "the torn line is dropped, the new one is whole")
     }
 
-    /// Fix 4: a missing file is a failed read (nil — the caller keeps its
-    /// state), not an empty world.
-    @Test func aMissingFileIsAFailedReadNotAnEmptyOne() {
+    /// A missing file is an empty log — a fresh, empty chunk, so the launch
+    /// replay is over and the first wait written after it is news. A file
+    /// that exists but cannot be read is a failed read (nil — the caller
+    /// keeps its state).
+    @Test func aMissingFileIsAnEmptyLogAndAnUnreadableOneAFailedRead() throws {
         let home = Home()
         let fresh = EventLog.read(at: home.log, after: nil)
-        let later = EventLog.read(at: home.log, after: EventLog.Cursor(header: "# x", offset: 10))
-        #expect(fresh == nil)
-        #expect(later == nil)
+        #expect(fresh == EventLog.Chunk(header: "", lines: [], end: 0, fresh: true))
+        EventLog.append(line("working", t0), at: home.log, nowMs: t0)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: home.log.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: home.log.path) }
+        let unreadable = EventLog.read(at: home.log, after: nil)
+        #expect(unreadable == nil)
+    }
+
+    /// Lines end at `\n` bytes only: a U+2028, a NEL or a lone `\r` inside a
+    /// field (a writer that did not clean it) never splits a record. And the
+    /// receiver cleans every kind of line break out of a field.
+    @Test func aLineBreakInsideAFieldNeverSplitsARecord() throws {
+        let odd = "claude\tpermission\t\(t0)\tBash: a\u{2028}b\u{85}c\rd\ts1\t/w\t\t\t\t\tBash\n"
+        let data = Data((AttentionProtocol.header(generation: "g1") + odd).utf8)
+        let chunk = EventLog.parse(data, from: 0, header: "# g1", fresh: true)
+        #expect(chunk.lines.count == 1)
+        let parsed = chunk.lines.compactMap { AttentionRecord(line: $0) }
+        let record = try #require(parsed.first)
+        #expect(record.session == "s1")
+        #expect(record.tool == "Bash")
+        let cleaned = PulseHookReceiver.cleanField("a\u{2028}b\u{0B}c\u{85}d\u{2029}e\u{0C}f\r\ng\th", limit: 100)
+        #expect(cleaned == "a b c d e f  g h")
+        #expect(AttentionProtocol.flatten("x\u{2028}") == "x")
+    }
+
+    /// A rewritten log is matched to what was applied by position: a kept
+    /// line is not applied again, and a line written twice is applied twice.
+    @Test func unappliedLinesAreMatchedByPositionNotText() {
+        #expect(EventLog.unapplied(["A", "B"], after: ["A", "B", "A"]) == [], "the compaction kept a subset")
+        #expect(EventLog.unapplied(["B", "A", "A"], after: ["A", "B", "A"]) == ["A"], "the same text appended again is new")
+        #expect(EventLog.unapplied(["A", "B", "C"], after: ["A", "B"]) == ["C"])
+        #expect(EventLog.unapplied(["C", "A"], after: ["A", "B"]) == ["C"], "an unknown line is new; a known one is not")
+        #expect(EventLog.unapplied(["A"], after: []) == ["A"])
+    }
+
+    /// The record being appended is always in the file after its own
+    /// compaction — even one older than the retention window.
+    @Test func theAppendedRecordSurvivesItsOwnCompaction() throws {
+        let home = Home()
+        var ms = t0
+        let pad = String(repeating: "y", count: 180)
+        while home.size < EventLog.maxBytes - 300 {
+            EventLog.append(line("tool", ms, session: "busy", message: pad, tool: "Read"), at: home.log, nowMs: ms)
+            ms += 1
+        }
+        // Longer than the room left, so this append compacts.
+        let ancient = line("turn", t0 - 3 * EventLog.retentionMs, session: "late", message: String(repeating: "z", count: 400))
+        #expect(EventLog.append(ancient, at: home.log, nowMs: ms))
+        let chunk = try #require(EventLog.read(at: home.log, after: nil))
+        #expect(chunk.lines.last == ancient)
+        #expect(home.size < EventLog.maxBytes)
     }
 
     @Test func aCursorFromAnotherGenerationReadsTheWholeFileAgain() throws {
@@ -1703,6 +1813,12 @@ struct EventLogTests {
         let openOne = tight.contains { $0.cwd == "/one" && $0.kind == "permission" }
         #expect(openB)
         #expect(openOne)
+        // A dismissal's session-less `done` names its folder: it answers
+        // that folder's block only, so another folder's open block stays.
+        let dismissed = lines + [line("done", base + 30_000, session: "", cwd: "/two", agent: "gemini")]
+        let afterDone = EventLog.compact(dismissed, nowMs: now, budget: 1_000).compactMap { AttentionRecord(line: $0) }
+        let stillOpen = afterDone.contains { $0.cwd == "/one" && $0.kind == "permission" }
+        #expect(stillOpen, "a done for /two is not an answer in /one")
         // Recent lines all stay.
         let recent = (0..<300).map { line("tool", now - 1_000 + Int64($0), session: "hot", tool: "Read") }
         #expect(EventLog.compact(recent, nowMs: now, budget: 1 << 30).count == 300)
@@ -1759,16 +1875,14 @@ struct AttentionFixTests {
     }
 }
 
-/// 22.x · Lamp fixes — each pins one defect with the pure function that
-/// decides it.
+/// Codex is wired by its hooks.json alone.
 @Suite("Codex hooks detection")
 struct CodexHooksDetectionTests {
     // MARK: - Codex hooks.json counts as installed
 
     @Test func codexHooksJSONAloneCountsAsInstalled() {
-        let hooks = #"{"hooks":{"Stop":[{"hooks":[{"command":"/x/pulse-hook --agent codex"}]}]}}"#
-        #expect(HooksSupport.codexHooked(configTOML: nil, hooksJSON: hooks))
-        #expect(HooksSupport.codexHooked(configTOML: "notify = [\"/x/pulse-hook\"]", hooksJSON: nil))
-        #expect(!HooksSupport.codexHooked(configTOML: "model = \"o3\"", hooksJSON: "{}"))
+        let hooks = #"{"hooks":{"Stop":[{"hooks":[{"command":"/x/pulse-hook codex Stop"}]}]}}"#
+        #expect(HooksInstaller.installedEvents(.codex, text: hooks) == ["Stop"])
+        #expect(HooksInstaller.installedEvents(.codex, text: "{}") == [])
     }
 }

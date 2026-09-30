@@ -15,31 +15,25 @@ struct TrayHeaderModel: Equatable {
     /// Said when no count applies ("3 recent", "No coding agents").
     var title: String
 
-    /// `rows`: every row the last scan produced, not the visible window.
-    static func make(rows: [AgentRow], lang: ResolvedLanguage) -> TrayHeaderModel {
+    /// `counts`: the projection's one count (`PulseSnapshot.counts`) —
+    /// every row, not the visible window.
+    static func make(counts all: TrayState.Counts, lang: ResolvedLanguage) -> TrayHeaderModel {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-        let blocked = rows.filter(\.isBlocked).count
-        let running = rows.filter { $0.state == .running && !$0.isStalled }.count
-        let stalled = rows.filter { $0.state == .running && $0.isStalled }.count
-        let turns = rows.filter(\.isYourTurn).count
-
         var counts: [Count] = []
-        if blocked > 0 {
-            counts.append(Count(count: blocked, label: t(blocked == 1 ? .waiting1 : .waitingN), tone: .waiting))
+        if all.blocked > 0 {
+            counts.append(Count(count: all.blocked, label: t(all.blocked == 1 ? .waiting1 : .waitingN), tone: .waiting))
         }
-        if running > 0 { counts.append(Count(count: running, label: t(.runningN), tone: .running)) }
-        if stalled > 0 { counts.append(Count(count: stalled, label: t(.stalledN), tone: .attention)) }
-        if turns > 0 { counts.append(Count(count: turns, label: t(.yourTurnN), tone: .idle)) }
+        if all.running > 0 { counts.append(Count(count: all.running, label: t(.runningN), tone: .running)) }
+        if all.stalled > 0 { counts.append(Count(count: all.stalled, label: t(.stalledN), tone: .attention)) }
+        if all.yourTurn > 0 { counts.append(Count(count: all.yourTurn, label: t(.yourTurnN), tone: .idle)) }
 
-        let processOnly = rows.filter(\.isProcessOnly).count
-        let recent = rows.filter(\.isRecent).count
         let title: String
         if !counts.isEmpty {
             title = ""
-        } else if processOnly > 0 {
-            title = "\(processOnly) \(t(.processOnlyN))"
-        } else if recent > 0 {
-            title = "\(recent) \(t(.recentN))"
+        } else if all.processOnly > 0 {
+            title = "\(all.processOnly) \(t(.processOnlyN))"
+        } else if all.recent > 0 {
+            title = "\(all.recent) \(t(.recentN))"
         } else {
             title = t(.noAgents)
         }
@@ -56,18 +50,21 @@ struct TrayHeaderModel: Equatable {
 /// 2. the setup card: agents on this Mac that are not connected — "Found
 ///    Claude, Codex — Connect" installs their hooks, then asks macOS to allow
 ///    banners. It comes first: without a hook there is nothing to notify;
-/// 3. notifications denied, then not yet asked (a "needs you" cannot reach
+/// 3. an agent whose install failed, and why ("Gemini: its settings file is
+///    not valid JSON — fix it, then install again") — never offered again as
+///    "Connect", which would fail the same way;
+/// 4. notifications denied, then not yet asked (a "needs you" cannot reach
 ///    a closed tray);
-/// 4. the last banner refused while a wait is open.
+/// 5. the last banner refused while a wait is open.
 ///
 /// Pure.
 struct TrayNoticeModel: Equatable {
     enum Kind: Equatable {
-        case setup, setupDone, notificationsDenied, notificationsOff, bannerFailed
+        case setup, setupDone, setupFailed, notificationsDenied, notificationsOff, bannerFailed
     }
 
     enum Action: Equatable {
-        case connect, dismissSetup, openNotificationSettings, enableNotifications
+        case connect, dismissSetup, openHooksSettings, openNotificationSettings, enableNotifications
     }
 
     var kind: Kind
@@ -86,9 +83,13 @@ struct TrayNoticeModel: Equatable {
         var notifyAuthorized: Bool?
         /// Notification Center refused the last banner while a wait is open.
         var bannerFailed: Bool
-        /// Agents on this Mac (or running) whose hook is not installed, in
-        /// roster order — empty once the person removed the hooks on purpose.
+        /// Agents on this Mac whose hook is not installed and whose last
+        /// install did not fail, in roster order — empty once the person
+        /// removed the hooks on purpose.
         var unconnected: [AgentID] = []
+        /// Why the last install failed for some agents
+        /// (`HooksSupport.Status.failureText`); "" when none did.
+        var installFailure: String = ""
         /// The agents the setup card just connected (never empty); nil when
         /// it has no follow-up to show.
         var justConnected: [AgentID]? = nil
@@ -113,6 +114,13 @@ struct TrayNoticeModel: Equatable {
                 kind: .setup, text: String(format: t(.setupFound), names(input.unconnected)),
                 actionTitle: t(.setupConnect), action: .connect,
                 systemImage: "link", tone: .idle
+            )
+        }
+        if !input.installFailure.isEmpty {
+            return TrayNoticeModel(
+                kind: .setupFailed, text: input.installFailure,
+                actionTitle: t(.setupFailedAction), action: .openHooksSettings,
+                systemImage: "exclamationmark.triangle", tone: .attention
             )
         }
         if input.notifyOnWaiting, input.notifyAuthorized == false {
