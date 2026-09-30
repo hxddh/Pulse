@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 import XCTest
-@testable import PulseBar
+@testable import PulseApp
 @testable import PulseCore
 @testable import PulseHarvest
 
@@ -21,7 +21,7 @@ struct SessionLogTests {
         row.task = "Fix the login test"
         row.liveProcess = true
         row.state = .running
-        row.eventMs = now - minute
+        row.lastEventMs = now - minute
         return row
     }
 
@@ -305,7 +305,7 @@ struct SessionTimelineTests {
         row.task = "Fix the login test"
         row.liveProcess = true
         row.state = .running
-        row.eventMs = now - minute
+        row.lastEventMs = now - minute
         return row
     }
 

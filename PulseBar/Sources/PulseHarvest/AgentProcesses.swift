@@ -314,11 +314,6 @@ package enum AgentProcesses {
         return parseProcArgv(Array(buffer.prefix(size)))
     }
 
-    /// The argv joined by spaces (`parseProcArgv`).
-    package static func parseProcArgs(_ bytes: [UInt8]) -> String? {
-        parseProcArgv(bytes).map { $0.joined(separator: " ") }
-    }
-
     /// `KERN_PROCARGS2` bytes: argc (a 32-bit little-endian int), the exec
     /// path, NUL padding, then argc NUL-terminated argv strings.
     package static func parseProcArgv(_ bytes: [UInt8]) -> [String]? {

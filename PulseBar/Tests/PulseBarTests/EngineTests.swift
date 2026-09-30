@@ -3,7 +3,7 @@ import AppKit
 import Observation
 import Testing
 import XCTest
-@testable import PulseBar
+@testable import PulseApp
 @testable import PulseCore
 @testable import PulseHarvest
 
@@ -34,11 +34,8 @@ struct ScanQuietTests {
     static var observed: [(String, PartialKeyPath<StatusStore>)] {
         [
             ("cachedAll", \StatusStore.cachedAll),
-            ("diagnostics", \StatusStore.diagnostics),
-            ("hookSelfTestResult", \StatusStore.hookSelfTestResult),
             ("hooksStatus", \StatusStore.hooksStatus),
             ("hotkeyRegistered", \StatusStore.hotkeyRegistered),
-            ("logRevision", \StatusStore.logRevision),
             ("loginItemApplied", \StatusStore.loginItemApplied),
             ("notifyAuthorized", \StatusStore.notifyAuthorized),
             ("rowActionNotices", \StatusStore.rowActionNotices),
@@ -99,23 +96,42 @@ struct ScanQuietTests {
         #expect(fired.names == [], "\(fired.names)")
     }
 
-    /// 23.0: a wait that crossed while macOS had not yet allowed Pulse to
-    /// notify is owed a banner once; the session log changes (and
-    /// `logRevision` moves) only when the wait did.
-    @Test func anOwedBannerWhileUnauthorizedIsRecordedOnce() {
+    /// A wait that crossed while macOS had not yet allowed Pulse to notify
+    /// is owed a banner once; the ticks after it change nothing a view
+    /// draws, and owe it no second time.
+    @Test func anOwedBannerWhileUnauthorizedIsOwedOnce() {
         let store = quietStore()
         store.notifyAuthorized = nil
-        tick(store)
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        // The launch baseline: the attention file read once, empty.
+        store.engine.landAttention(AttentionProtocol.header, nowMs: nowMs - 2_000)
         store.engine.apply(records: [
             AttentionRecord(agent: "claude", kind: "permission", ms: nowMs - 1_000, message: "Bash: npm test", session: "s-owed", cwd: "/w/app"),
         ], nowMs: nowMs)
-        let owed = store.sessionLog.queuedKeys
-        #expect(owed.count == 1, "the edge is owed its banner")
-        let fired = watch(store, [("logRevision", \StatusStore.logRevision)])
+        let owed = store.notifier.ledger.queuedKeys
+        #expect(owed == ["claude|s-owed"], "the edge is owed its banner")
+        // The snapshot moves (a wait under a minute is drawn in seconds);
+        // the rows do not.
+        let fired = watch(store, [("cachedAll", \StatusStore.cachedAll)])
         tick(store, at: nowMs + 1)
         tick(store, at: nowMs + 2)
-        #expect(fired.names == [], "the same owed wait is not news")
+        #expect(fired.names == [], "the same owed wait is not news: \(fired.names)")
+        let still = store.notifier.ledger.queuedKeys
+        #expect(still == owed)
+    }
+
+    /// A wait already in the attention file when Pulse starts is the
+    /// baseline: it is on the list, and owed no banner.
+    @Test func aWaitRaisedBeforeLaunchIsOwedNoBanner() {
+        let store = quietStore()
+        store.notifyAuthorized = nil
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        let raise = AttentionRecord(agent: "claude", kind: "permission", ms: nowMs - 60_000, message: "Bash: make", session: "s-old", cwd: "/w/app")
+        store.engine.landAttention(AttentionProtocol.header + raise.line + "\n", nowMs: nowMs)
+        let blocked = store.cachedAll.first?.isBlocked
+        #expect(blocked == true)
+        let owed = store.notifier.ledger.queuedKeys
+        #expect(owed.isEmpty)
     }
 
     @Test func aChangedWorldIsStillAnnounced() {
@@ -212,12 +228,9 @@ struct ScanQuietTests {
         var book = SessionBook()
         book.apply(AttentionRecord(agent: "claude", kind: "permission", ms: t0 - 10 * 60_000, message: "Bash: make", session: "s1", cwd: "/w", pid: 0), nowMs: t0)
         func project(at nowMs: Int64) -> PulseSnapshot {
-            let rows = SessionProjection.rows(
-                book: book, processes: [], transcripts: [:],
-                context: SessionProjection.Context(nowMs: nowMs)
-            ).rows
-            var snap = SnapshotBuilder.build(
-                rows: rows, previous: .init(), context: SnapshotBuilder.Context(nowMs: nowMs, lang: .en)
+            var snap = TrayState.project(
+                book: book, processes: [], summaries: [:],
+                context: TrayState.Context(nowMs: nowMs, lang: .en)
             ).snapshot
             snap.updatedAt = Date(timeIntervalSince1970: Double(nowMs) / 1000)
             return snap
@@ -315,17 +328,14 @@ struct EventFeedTests {
         #expect(store.engine.latestHookEventMs[.gemini] == t0 - 60_000)
     }
 
-    /// 24.0: the self-check's "hooks reach Pulse" counts activity events
-    /// too, and remembers them past the attention file's 80 lines.
+    /// Settings' "last event" counts activity events too, and remembers
+    /// them past the attention file's 80 lines.
     @Test func anActivityEventIsAHookEventToo() {
         let store = StatusStore()
         store.engine.apply(activity: [
             ActivitySpool.Event(agent: "claude", session: "s1", event: "tool", tool: "Read", target: "", prompt: "", cwd: "/w", tsMs: t0 - 5_000),
         ], nowMs: t0)
         #expect(store.engine.latestHookEventMs[.claude] == t0 - 5_000)
-        #expect(store.engine.latestHookEvents[.claude]?.kind == "activity")
-        let facts = DoctorProbe.gather(home: FileManager.default.temporaryDirectory, nowMs: t0, lastFire: store.engine.latestHookEvents)
-        #expect(facts.lastFire["claude"]?.tsMs == t0 - 5_000)
     }
 
     /// A turn held inside a block's grace lands on the tick, with no event

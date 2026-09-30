@@ -1,7 +1,8 @@
 import Foundation
 import Testing
 import XCTest
-@testable import PulseBar
+@testable import PulseApp
+@testable import PulseQA
 @testable import PulseCore
 @testable import PulseHarvest
 
@@ -24,7 +25,7 @@ struct ExplainTests {
         row.source = .hooks
         row.liveProcess = true
         row.state = .running
-        row.eventMs = now - minute
+        row.lastEventMs = now - minute
         return row
     }
 
@@ -79,7 +80,7 @@ struct ExplainTests {
     /// silence and nothing the person could not have set.
     @Test func aStalledRowNamesTheSilence() {
         var row = session()
-        row.eventMs = now - 23 * minute
+        row.lastEventMs = now - 23 * minute
         row.isStalled = true
         let quiet = DurationFormat.label(seconds: 23 * 60, lang: .en)
         let expected = String(format: L10n.t(.explainStalled, .en), quiet)
@@ -88,7 +89,7 @@ struct ExplainTests {
 
     @Test func aStalledRowWithNoClockSaysSoRatherThanGuess() {
         var row = session()
-        row.eventMs = 0
+        row.lastEventMs = 0
         row.isStalled = true
         #expect(why(row) == L10n.t(.explainStalledUnknown, .en))
     }
@@ -97,7 +98,7 @@ struct ExplainTests {
         let text = why(session())
         #expect(text.hasPrefix("Claude's hook"), "\(text)")
         var noClock = session()
-        noClock.eventMs = 0
+        noClock.lastEventMs = 0
         #expect(why(noClock) == L10n.t(.explainRunningNoClock, .en))
     }
 
@@ -153,7 +154,7 @@ struct ExplainTests {
         var row = session(task: "")
         row.lastWord = "All tests pass."
         #expect(Explain.make(row, lang: .en, nowMs: now).headline == "All tests pass.")
-        row.eventMs = now - 45 * minute
+        row.lastEventMs = now - 45 * minute
         #expect(Explain.make(row, lang: .en, nowMs: now).headline == "pulse", "stale words fall back to the project")
     }
 
@@ -214,7 +215,7 @@ struct ExplainTests {
 
     @Test func aStalledLampNamesNoThreshold() {
         var stalled = session()
-        stalled.eventMs = now - 30 * minute
+        stalled.lastEventMs = now - 30 * minute
         stalled.isStalled = true
         let explanation = LampExplanation.make(rows: [stalled], glance: .stalled)
         #expect(explanation.rule == .stalled)
@@ -349,7 +350,7 @@ struct ExplainTests {
 
     @Test func staleWordsAreNotQuotedAsNow() {
         var row = session()
-        row.eventMs = now - 45 * minute
+        row.lastEventMs = now - 45 * minute
         row.lastWord = "old"
         let detail = DetailModel.make(row: row, lang: .en, nowMs: now)
         #expect(detail.lastMessage == nil)
@@ -383,7 +384,7 @@ final class ExplainErrorTests: XCTestCase {
         row.task = "Fix the auth module"
         row.liveProcess = true
         row.state = .running
-        row.eventMs = Int64(Date().timeIntervalSince1970 * 1000)
+        row.lastEventMs = Int64(Date().timeIntervalSince1970 * 1000)
         row.source = .hooks
         return row
     }
@@ -395,12 +396,12 @@ final class ExplainErrorTests: XCTestCase {
     func testALastErrorIsTheDetailPagesError() {
         var row = liveRow()
         row.lastErrorText = "npm ERR! missing script: test"
-        XCTAssertEqual(DetailModel.make(row: row, lang: .en, nowMs: row.eventMs).error, "npm ERR! missing script: test")
-        XCTAssertNil(DetailModel.make(row: liveRow(), lang: .en, nowMs: row.eventMs).error)
+        XCTAssertEqual(DetailModel.make(row: row, lang: .en, nowMs: row.lastEventMs).error, "npm ERR! missing script: test")
+        XCTAssertNil(DetailModel.make(row: liveRow(), lang: .en, nowMs: row.lastEventMs).error)
     }
 
     func testNoErrorsIsNoFault() {
-        let why = Explain.make(liveRow(), lang: .en, nowMs: liveRow().eventMs).why
+        let why = Explain.make(liveRow(), lang: .en, nowMs: liveRow().lastEventMs).why
         XCTAssertFalse(why.contains("error"), why)
     }
 }

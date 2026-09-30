@@ -41,7 +41,7 @@ public enum AgentID: String, CaseIterable, Identifiable, Hashable, Sendable {
     ]
 
     /// Agents whose hook never reports a blocked session — they show running
-    /// and your turn only. Single source for Settings, Diagnostics and L10n.
+    /// and your turn only. Single source for Settings and L10n.
     public static var waitingNoneAgents: [AgentID] {
         priority.filter { $0.waitingSource == .none }
     }

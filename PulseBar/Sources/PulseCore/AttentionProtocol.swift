@@ -27,8 +27,6 @@ public enum AttentionKind: String, Sendable, CaseIterable {
     case start
     case working
     case end
-    case subagentStart = "subagent_start"
-    case subagentStop = "subagent_stop"
 
     /// The agent cannot continue until the user acts.
     public var isBlocking: Bool {
@@ -203,9 +201,6 @@ public enum AttentionProtocol {
             "prompt": .working,
             "end": .end,
             "session_end": .end,
-            // Lifecycle, stored for diagnostics only.
-            "subagent_start": .subagentStart,
-            "subagent_stop": .subagentStop,
         ]
         if let mapped = mapping[low] { return mapped.rawValue }
         // Never invent Waiting from free text: an unknown word stays unknown.

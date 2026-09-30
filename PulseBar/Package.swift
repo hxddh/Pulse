@@ -1,12 +1,11 @@
 // swift-tools-version: 6.2
-// 18.0: Xcode 26 / Swift 6.2. Every product target is in the Swift 6
-// language mode (complete concurrency checking is the language, not a flag)
-// and treats every warning as an error through the supported setting rather
-// than `unsafeFlags`.
+// Xcode 26 / Swift 6.2. Every target is in the Swift 6 language mode
+// (complete concurrency checking is the language, not a flag) and treats
+// every warning as an error through the supported setting rather than
+// `unsafeFlags`.
 import PackageDescription
 
-/// The rule since 12.1/12.4, now spelled the supported way.
-let productSettings: [SwiftSetting] = [
+let strict: [SwiftSetting] = [
     .treatAllWarnings(as: .error),
 ]
 
@@ -14,57 +13,72 @@ let package = Package(
     name: "PulseBar",
     platforms: [.macOS(.v14)],
     products: [
+        // The shipping app. `PulseQA` is not a product: it is built only by
+        // the QA scripts, in the debug configuration.
         .executable(name: "PulseBar", targets: ["PulseBar"]),
     ],
     targets: [
-        // 12.0 · the kernel. Foundation only — no AppKit, no SwiftUI, no
-        // StatusStore — so the compiler, not a review, keeps the facts Pulse
-        // stands behind (evidence, code identity, bounded and link-safe IO,
-        // process supervision, transcript parsing, probe cadence) free of UI
-        // and app state. Checked under complete concurrency checking.
+        // The kernel. Foundation only — no AppKit, no SwiftUI, no store — so
+        // the compiler, not a review, keeps the catalog, bounded and
+        // link-safe IO, process supervision and the cadence free of UI and
+        // app state.
         .target(
             name: "PulseCore",
             path: "Sources/PulseCore",
-            // 12.1: zero warnings, and it stays that way. A concurrency
-            // warning here is a data race the compiler already found.
-            swiftSettings: productSettings
+            swiftSettings: strict
         ),
-        // 12.3 · Harvest; 24.0: the event sources — the attention file and
-        // the activity spool the hooks write, the process table (libproc),
-        // and the bounded read of one known transcript. It sees the catalog
-        // and the kernel, never the store or the UI; the app reads what it
-        // returns. (The name stays; the file-scraping collector is gone.)
+        // The event sources: the attention file and the activity spool the
+        // hooks write, the process table (libproc), row identity and the
+        // bounded read of one known transcript. It sees the kernel, never the
+        // store or the UI.
         .target(
             name: "PulseHarvest",
             dependencies: ["PulseCore"],
             path: "Sources/PulseHarvest",
-            swiftSettings: productSettings
+            swiftSettings: strict
         ),
-        // 22.0 removed PulseManaged (sessions Pulse ran itself) and 23.0
-        // removed PulseRespond (answering permission requests). A status
-        // lamp watches orchestrators; it is not one.
-        .executableTarget(
-            name: "PulseBar",
+        // The app: the session book, the tray projection, the store, the
+        // notifier, the hook receiver and installer, every view. A library,
+        // so the shipping executable and the QA driver link the same code.
+        .target(
+            name: "PulseApp",
             dependencies: ["PulseCore", "PulseHarvest"],
-            path: "Sources/PulseBar",
+            path: "Sources/PulseApp",
             resources: [
                 .copy("Resources/AgentIcons"),
                 .copy("Resources/Brand"),
             ],
-            // 12.4: every target is warning-free under complete concurrency
-            // checking, and stays that way — the same rule as PulseCore.
-            swiftSettings: productSettings
+            swiftSettings: strict
+        ),
+        // The shipping executable: `PulseBarMain.main()` and nothing else.
+        .executableTarget(
+            name: "PulseBar",
+            dependencies: ["PulseApp"],
+            path: "Sources/PulseBar",
+            swiftSettings: strict
+        ),
+        // The QA driver: surface fixtures, tray fixtures and captures. It
+        // reaches the app's internals through `@testable import PulseApp`,
+        // so it builds in the debug configuration only
+        // (`swift build --product PulseQA`); release builds name
+        // `--product PulseBar`.
+        .executableTarget(
+            name: "PulseQA",
+            dependencies: ["PulseApp", "PulseCore", "PulseHarvest"],
+            path: "Sources/PulseQA",
+            swiftSettings: strict
         ),
         // The session reducer and its projection are the most
-        // regression-prone part of the product.
+        // regression-prone part of the product. Swift 6 mode like the rest;
+        // not warnings-as-errors — the tests exercise deprecated AppKit on
+        // purpose (appearances) and must build on every SDK CI meets. The
+        // main-actor XCTest suites isolate their test methods (an
+        // `XCTestCase` subclass cannot be `@MainActor`); new suites are
+        // Swift Testing.
         .testTarget(
             name: "PulseBarTests",
-            dependencies: ["PulseBar", "PulseCore", "PulseHarvest"],
+            dependencies: ["PulseApp", "PulseQA", "PulseCore", "PulseHarvest"],
             path: "Tests/PulseBarTests"
-            // 19.0: the tests are in the Swift 6 mode too. An XCTestCase
-            // subclass cannot be `@MainActor` (its superclass is not), so
-            // the main-actor suites isolate their test methods instead; new
-            // suites are Swift Testing (`import Testing`).
         ),
     ]
 )

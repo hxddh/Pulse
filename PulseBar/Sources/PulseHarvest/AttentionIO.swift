@@ -88,8 +88,8 @@ package enum AttentionIO {
     }
 
     /// The newest protocol event per agent, with its v4 kind — Settings'
-    /// "last event" and the self-check's "the hooks actually fire" (the
-    /// engine keeps the newest it has seen). Pure: the engine reads the file
+    /// "last event" and the report (the engine keeps the newest it has
+    /// seen). Pure: the engine reads the file
     /// once and hands the text here.
     package static func latestEvents(in text: String) -> [AgentID: (kind: String, tsMs: Int64)] {
         var latest: [AgentID: (kind: String, tsMs: Int64)] = [:]

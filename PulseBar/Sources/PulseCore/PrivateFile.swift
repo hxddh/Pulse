@@ -15,8 +15,8 @@ import Foundation
 /// weakest protection of anything Pulse writes: the attention ledger kept
 /// session titles — the user's own words, up to 160 characters — and set no
 /// mode at all; `attention.tsv` keeps the command an agent asked to run and
-/// the directory it asked from, and was created 0644. Since 23.0 the titles
-/// live in `session-log.json`, written through here.
+/// the directory it asked from, and was created 0644. `settings.json` and
+/// the hook-install ledger are written through here.
 public enum PrivateFile {
     public static let mode: mode_t = 0o600
 

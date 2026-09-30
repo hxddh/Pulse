@@ -2,7 +2,8 @@ import Foundation
 import AppKit
 import Testing
 import XCTest
-@testable import PulseBar
+@testable import PulseApp
+@testable import PulseQA
 @testable import PulseCore
 @testable import PulseHarvest
 
@@ -41,7 +42,7 @@ struct TrayInteractionTests {
         row.project = "app"
         row.liveProcess = true
         row.state = .running
-        row.eventMs = now - minute
+        row.lastEventMs = now - minute
         row.source = .hooks
         return row
     }
@@ -950,9 +951,9 @@ final class DetailPlanTests: XCTestCase {
         // minutes where the story line had already withdrawn it. Every
         // surface reads this one rule.
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
-        row.eventMs = now - 5 * 60 * 1000
+        row.lastEventMs = now - 5 * 60 * 1000
         XCTAssertTrue(row.selfReportFresh(at: now))
-        row.eventMs = now - 31 * 60 * 1000
+        row.lastEventMs = now - 31 * 60 * 1000
         XCTAssertFalse(row.selfReportFresh(at: now), "the headline and the detail page share this gate")
     }
 
@@ -960,7 +961,7 @@ final class DetailPlanTests: XCTestCase {
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
         row.lastWord = "Waiting for your review."
         row.state = .running
-        row.eventMs = now
+        row.lastEventMs = now
         let detail = DetailModel.make(row: row, lang: .en, nowMs: now)
         XCTAssertEqual(detail.lastMessage, "Waiting for your review.")
         XCTAssertFalse(row.isBlocked, "words never write Waiting")
@@ -1009,7 +1010,7 @@ final class RowActionNoticeTests: XCTestCase {
         row.task = "Fix the auth module"
         row.liveProcess = true
         row.state = .running
-        row.eventMs = Int64(Date().timeIntervalSince1970 * 1000)
+        row.lastEventMs = Int64(Date().timeIntervalSince1970 * 1000)
         row.source = .hooks
         return row
     }

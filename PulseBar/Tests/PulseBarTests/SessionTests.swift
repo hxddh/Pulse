@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 import XCTest
-@testable import PulseBar
+@testable import PulseApp
 @testable import PulseCore
 @testable import PulseHarvest
 
@@ -693,7 +693,7 @@ final class SnapshotBuilderTests: XCTestCase {
         r.sessionID = key
         r.task = task
         r.state = state
-        r.eventMs = now - 1_000
+        r.lastEventMs = now - 1_000
         return r
     }
 
@@ -972,7 +972,7 @@ final class RowContextTests: XCTestCase {
         var r = AgentRow(rowKey: "k", agent: .claude)
         r.cwd = cwd
         r.project = project
-        r.eventMs = eventMs
+        r.lastEventMs = eventMs
         return r
     }
 
@@ -1020,7 +1020,7 @@ final class RowPresentationTests: XCTestCase {
         var r = AgentRow(rowKey: "k", agent: .claude)
         r.cwd = cwd
         r.project = project
-        r.eventMs = eventMs
+        r.lastEventMs = eventMs
         r.liveProcess = live
         r.state = live ? .running : .recent
         return r
