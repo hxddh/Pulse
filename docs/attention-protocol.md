@@ -8,7 +8,8 @@ installer.
 **Runtime path:** `~/Library/Application Support/Pulse/events.tsv`
 (`PULSE_HOME` moves it). One file; nothing else is read.
 **Writers:** `pulse-hook <agent> <event>` → `PulseBar --hook` (native), and
-the app's own `done` for a dismissal. Nothing else writes it.
+the app's own `done` for a dismissal (`tool` = `:dismiss`). Nothing else
+writes it.
 **Swift source of truth:** `AttentionProtocol` / `AttentionRecord` (PulseCore),
 `EventLog` (PulseHarvest: append, read from a cursor, compact),
 `PulseHookReceiver` (the per-agent adapters), `HookContract` in
@@ -47,7 +48,7 @@ line is a header naming the protocol and the file's **generation**:
   line that is not a block (its first clock), the prompt its title came from
   (the first `working` line that says something) and its latest prompt (the
   turn's clock); and an **open block** (a `permission` / `question` /
-  `waiting` no later line in its session answers; a `status` line answers
+  `waiting` no later line in its session answers; a `:status` line answers
   nothing) is kept with every line after it. An answered block is never kept
   without its answer. Over half a MiB the
   per-session count and the window halve until it fits. The line being
@@ -98,7 +99,7 @@ the trailing tabs are part of the record.
 | `pid` | The agent process the hook ran under: the first ancestor of the hook whose argv matches the agent's catalog process rule. Never the hook's direct parent (usually a `sh -c` that exits with the hook) and never `1` — empty when unknown |
 | (reserved) | Written empty, never read. It once named a transcript file; Pulse reads no vendor file |
 | `landing` | Where the session can be reached, most specific first, `;`-separated: `tmux:%3`, `tmuxsock:<TMUX socket path>`, `iterm:<ITERM_SESSION_ID>`, `tty:/dev/ttys004`, `term:<TERM_PROGRAM>`, `app:<__CFBundleIdentifier>`; unknown keys are ignored (`docs/landing-hosts.md`) |
-| `tool` | The tool a `tool` line ran, or the tool a block is about (`Bash`, `AskUserQuestion`); on a `turn` line, `error` when the turn ended on an error; on a `tool` line, `status` when the event says only that work goes on (a status, a retry, a recoverable error) — never a step, never an answer; empty when the event names none |
+| `tool` | The tool a `tool` line ran, or the tool a block is about (`Bash`, `AskUserQuestion`); on a `turn` line, `error` when the turn ended on an error; on a `tool` line, `:status` when the event says only that work goes on (a status, a retry, a recoverable error) — never a step, never an answer; on a `done` line, `:dismiss` when the app wrote it (a dismissal in Pulse); empty when the event names none. Pulse's own markers begin with `:`, which no vendor tool name does: the receiver drops a leading `:` from a vendor's tool name, so a tool never spells a marker |
 
 Readers skip blank lines, `#` comments, and any other kind.
 
@@ -115,13 +116,13 @@ Readers skip blank lines, `#` comments, and any other kind.
 | Lifecycle | `start` | The session started or resumed |
 | | `working` | The user submitted a prompt (message = its text: the title's source) |
 | | `end` | The session ended |
-| Activity | `tool` | A tool ran (or a reply streamed): the session is working, and — when it names its tool — its last step. Never a wait. With tool = `status`: work goes on, no tool ran — not a step, and it answers no block |
+| Activity | `tool` | A tool ran (or a reply streamed): the session is working, and — when it names its tool — its last step. Never a wait. With tool = `:status`: work goes on, no tool ran — not a step, and it answers no block |
 
 `working` and `end` clear the session's block like `done`; `start` does
 unless the session is working. A `tool` line keeps a working session from
 reading stalled and answers a block raised before it in the same session —
 unless both name a tool and the names differ (a parallel tool is not the
-answer), or it is a `status` line.
+answer), or it is a `:status` line.
 
 The receiver writes only what an agent's own adapter read from one of its
 vendor events (`vendor-formats.md` has each agent's mapping): the kind words
@@ -143,7 +144,7 @@ guess from free text.
   agent's session-less entry in the folder it names, or every session-less
   one when it names none; a dismissal always names the folder).
 - A `tool` line that names its tool is a step: the session keeps its last
-  five (tool, target, time); a `status` line is not a step. A `working`
+  five (tool, target, time); a `:status` line is not a step. A `working`
   line starts a new turn (its clock), its text is the latest prompt, and the
   first that says something (not "continue") is the title. A `turn` line's
   message is the last words — or, with tool = `error`, the turn's error,
@@ -155,8 +156,13 @@ guess from free text.
   stamped after the raise, arrives: the ask was answered in the vendor's
   prompt. When the block names its tool (the `tool` column, else the
   `Tool: target` ask) and the tool line names one, only the same tool
-  answers it — a parallel tool finishing does not. A `status` line never
+  answers it — a parallel tool finishing does not. A `:status` line never
   answers it.
+- A `tool` line whose `tool` is the bare word `status` from Copilot or
+  OpenCode is read as `:status`: an earlier receiver wrote the marker that
+  way for those two agents only, and a replayed log must not turn it into a
+  step or an answer. It is never written; from any other agent `status` is
+  a tool.
 - A re-raise of the same kind within **20 s** is the same block (Claude's
   `PermissionRequest`, then its `Notification`): it keeps the first clock and
   the more specific ask — a command, a path or a question beats a bare tool
@@ -170,12 +176,16 @@ guess from free text.
   only clears — the user watched it finish.
 - A `done` stamped before the current block or turn began is about an
   earlier one and changes nothing.
-- A block a `done` cleared (a dismissal in Pulse, a vendor's "resolved") is
-  not raised again by its echo: a raise of the same kind within **20 s** of
-  the cleared block's raise, with no prompt or tool line since the `done`,
-  whose words say nothing new (the same ask, or only a generic "needs your
-  permission") is ignored — Claude's `Notification` after a dismissed
-  `PermissionRequest` does not turn the lamp red or post a banner again.
+- A block a dismissal in Pulse cleared (a `done` with `tool` = `:dismiss`)
+  is not raised again by its echo: a raise of the same kind within **20 s**
+  of the cleared block's raise, with no prompt or tool line since the
+  `done`, whose words say nothing new (the same ask, or only a generic
+  "needs your permission") is ignored — Claude's `Notification` after a
+  dismissed `PermissionRequest` does not turn the lamp red or post a banner
+  again. A vendor's own "resolved" (`done` with an empty `tool`: OpenCode
+  `permission.replied` / `question.replied`, Pi `ui_prompt_end`, Claude
+  `elicitation_complete`) has no echo: the same ask after it is a new ask,
+  and is raised.
 - A blocked line with `front` = `1` lights the lamp but raises no banner.
 - A session whose recorded pid is dead — or now runs another agent, or
   started after the first line that named it (a reused pid) — has ended.
@@ -190,7 +200,9 @@ guess from free text.
   and the v4 files are deleted at launch. The ninth column is reserved —
   written empty, never read — so a live log keeps its format (no new
   protocol version, no log deleted); `tool` = `error` on a `turn` line marks
-  a failed turn, and `tool` = `status` on a `tool` line marks work that is
-  not a tool (a reader that does not know it reads a tool named `status`).
+  a failed turn, `tool` = `:status` on a `tool` line marks work that is
+  not a tool, and `tool` = `:dismiss` on a `done` line marks the app's own
+  dismissal (a reader that does not know them reads a tool named so, and a
+  `done` like any other).
   Only the receiver and the app write the log; a kind is read only as
   spelled in the table above.

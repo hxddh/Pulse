@@ -55,6 +55,10 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     /// invalidate SwiftUI safe-area constraints in the middle of
     /// `cacheDisplay` and terminate the process with an exception.
     var captureInProgress = false
+    /// The status item's menu is up. `performClick` tracks the menu in a
+    /// nested run loop, and a click on the status item inside it would
+    /// otherwise show the menu again from within itself.
+    private var showingMenu = false
 
     init(store: StatusStore) {
         self.store = store
@@ -135,6 +139,7 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     /// A left click toggles the tray; a right click (or Control-click)
     /// shows the status item's menu.
     @objc private func statusItemPressed() {
+        guard !showingMenu else { return }
         let event = NSApp?.currentEvent
         let secondary = event?.type == .rightMouseDown
             || (event?.type == .leftMouseDown && event?.modifierFlags.contains(.control) == true)
@@ -148,6 +153,9 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     /// Open Pulse · Settings… · Quit Pulse — shown the system way: the
     /// menu is the status item's for exactly one click.
     private func showStatusMenu() {
+        guard !showingMenu else { return }
+        showingMenu = true
+        defer { showingMenu = false }
         close()
         let lang = store.lang
         let menu = NSMenu()

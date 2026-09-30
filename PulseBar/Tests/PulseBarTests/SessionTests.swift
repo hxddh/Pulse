@@ -646,8 +646,12 @@ struct SessionBookTests {
         }
         feed(HookFeed.write(.claude, "PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "npm test"]], at: t0).lines, at: t0)
         #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "blocked:permission")
-        // The person dismisses it in Pulse: a `done` for the session.
-        feed([AttentionRecord(agent: "claude", kind: "done", ms: t0 + 3 * second, session: "s1", cwd: "/Users/me/app")], at: t0 + 3 * second)
+        // The person dismisses it in Pulse: the app's own `done` (marked
+        // `:dismiss`) for the session.
+        let dismissal = StatusStore.dismissalRecord(agent: .claude, session: "s1", cwd: "/Users/me/app", nowMs: t0 + 3 * second)
+        #expect(dismissal.tool == AttentionRecord.dismissTool)
+        #expect(dismissal.isDismissal)
+        feed([dismissal], at: t0 + 3 * second)
         let echo = HookFeed.write(.claude, "Notification", [
             "notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash",
         ], at: t0 + 6 * second).lines
@@ -657,6 +661,40 @@ struct SessionBookTests {
         feed(HookFeed.write(.claude, "PostToolUse", ["tool_name": "Read"], at: t0 + 9 * second).lines, at: t0 + 9 * second)
         feed(HookFeed.write(.claude, "PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "rm -rf build"]], at: t0 + 11 * second).lines, at: t0 + 11 * second)
         #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "blocked:permission")
+    }
+
+    /// Only Pulse's own dismissal is echoed. After the vendor's own
+    /// "resolved" — OpenCode `permission.replied` / `question.replied`, Pi
+    /// `ui_prompt_end`, Claude `elicitation_complete` — the same ask again
+    /// inside the grace is a real second ask: red again, never swallowed.
+    @Test func theSameAskAgainAfterTheVendorsResolvedIsRaised() {
+        let openCode = playAt(.opencode, [
+            (0, "permission.asked", ["permission": "bash", "patterns": ["npm test"]]),
+            (2 * second, "permission.replied", [:]),
+            (5 * second, "permission.asked", ["permission": "bash", "patterns": ["npm test"]]),
+        ])
+        #expect(openCode.states == ["blocked:permission", "working", "blocked:permission"])
+        let openCodeQuestion = playAt(.opencode, [
+            (0, "question.asked", ["questions": [["question": "Which branch?"]]]),
+            (2 * second, "question.replied", [:]),
+            (4 * second, "question.asked", ["questions": [["question": "Which branch?"]]]),
+        ])
+        #expect(openCodeQuestion.states == ["blocked:question", "working", "blocked:question"])
+        let pi = playAt(.pi, [
+            (0, "ui_prompt_start", ["kind": "confirm", "title": "Delete build/?"]),
+            (2 * second, "ui_prompt_end", [:]),
+            (4 * second, "ui_prompt_start", ["kind": "confirm", "title": "Delete build/?"]),
+        ])
+        #expect(pi.states == ["blocked:permission", "working", "blocked:permission"])
+        let claude = playAt(.claude, [
+            (0, "Notification", ["notification_type": "elicitation_dialog", "message": "Pick a database"]),
+            (2 * second, "Notification", ["notification_type": "elicitation_complete"]),
+            (4 * second, "Notification", ["notification_type": "elicitation_dialog", "message": "Pick a database"]),
+        ])
+        #expect(claude.states == ["blocked:question", "working", "blocked:question"])
+        let resolved = HookFeed.write(.opencode, "permission.replied", [:], at: t0).lines.first
+        #expect(resolved?.kind == "done")
+        #expect(resolved?.isDismissal == false, "a vendor's resolved is not Pulse's dismissal")
     }
 
     /// A vendor's own "resolved" followed at once by a different ask (no
@@ -717,6 +755,42 @@ struct SessionBookTests {
         #expect(status?.kind == "tool")
         #expect(status?.tool == AttentionRecord.statusTool)
         #expect(openCode.book.sessions["opencode|s1"]?.steps.isEmpty == true, "a status is not a step")
+    }
+
+    /// The status marker is `:status` — a value no vendor tool name has. A
+    /// real tool named `status` is a step and answers its own block; a
+    /// vendor tool spelled like a marker loses its colon. An earlier
+    /// receiver wrote the marker as `status` for Copilot and OpenCode
+    /// only: those lines still replay as the marker.
+    @Test func theStatusMarkerCannotBeARealTool() {
+        #expect(AttentionRecord.statusTool == ":status")
+        let written = HookFeed.write(.opencode, "session.status", ["status": ["type": "busy"]], at: t0).lines.first
+        #expect(written?.tool == ":status")
+        // A Claude tool named `status` is a tool.
+        let claude = playAt(.claude, [
+            (0, "PermissionRequest", ["tool_name": "status", "tool_input": ["command": "git status"]]),
+            (2 * second, "PostToolUse", ["tool_name": "status"]),
+        ])
+        #expect(claude.states == ["blocked:permission", "working"], "a tool named status answers its own block")
+        let steps = claude.book.sessions["claude|s1"]?.steps.map(\.tool)
+        #expect(steps == ["status"])
+        // A vendor tool spelled like a marker is written without its colon.
+        let spoofed = HookFeed.write(.claude, "PostToolUse", ["tool_name": ":status"], at: t0).lines.first
+        #expect(spoofed?.tool == "status")
+        let dismissSpoof = HookFeed.write(.claude, "PostToolUse", ["tool_name": " :dismiss"], at: t0).lines.first
+        #expect(dismissSpoof?.tool == "dismiss")
+        // Legacy `status` lines from Copilot and OpenCode replay as the marker.
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: "copilot", kind: "permission", ms: t0, message: "Allow bash?", session: "s1"), nowMs: t0)
+        book.apply(AttentionRecord(agent: "copilot", kind: "tool", ms: t0 + second, session: "s1", tool: "status"), nowMs: t0 + second)
+        #expect(HookFeed.word(book.sessions["copilot|s1"]?.state) == "blocked:permission", "a legacy status line never answers")
+        let legacySteps = book.sessions["copilot|s1"]?.steps
+        #expect(legacySteps?.isEmpty == true)
+        let legacyCopilot = AttentionRecord.isStatus(tool: "status", agent: "copilot")
+        let legacyOpenCode = AttentionRecord.isStatus(tool: "status", agent: "opencode")
+        let claudeStatus = AttentionRecord.isStatus(tool: "status", agent: "claude")
+        #expect(legacyCopilot && legacyOpenCode)
+        #expect(!claudeStatus, "only the two agents whose lines ever carried it")
     }
 }
 

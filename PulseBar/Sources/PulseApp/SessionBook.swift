@@ -43,16 +43,17 @@ import Foundation
 ///   permission is granted in the vendor's own prompt — the next `tool` line
 ///   (or prompt) stamped after the raise is the answer. When the block and
 ///   the tool line both name their tool, only that tool answers it: a
-///   parallel tool finishing is not the person saying yes, and a `status`
+///   parallel tool finishing is not the person saying yes, and a `:status`
 ///   line (a retry, a recoverable error) is no answer at all. Every line is
 ///   applied, so a parallel tool written after the answer no longer
 ///   hides it.
 /// - **`done`** (the vendor's "resolved", or a dismissal in Pulse) clears the
 ///   session it names; an empty session clears only the agent's session-less
 ///   session in the folder it names (every session-less one of the agent
-///   when it names none), never one that has an id. The same block said
-///   again right after (same kind, inside the first raise's grace, no work
-///   since) stays cleared.
+///   when it names none), never one that has an id. After a dismissal in
+///   Pulse (`tool` = `:dismiss`) the same block said again right after
+///   (same kind, inside the first raise's grace, no work since) stays
+///   cleared; after the vendor's "resolved" it is raised again.
 /// - **An exit ends a session**: a process exit (kqueue) or a pid found dead
 ///   ends every live session that pid ran. Nothing here guesses "running".
 struct SessionBook: Equatable {
@@ -90,8 +91,8 @@ struct SessionBook: Equatable {
         var front: Bool
     }
 
-    /// The block a `done` cleared last — a dismissal in Pulse or the
-    /// vendor's "resolved" — and when.
+    /// The block a dismissal in Pulse (a `done` marked `:dismiss`) cleared
+    /// last, and when.
     struct ClearedBlock: Equatable, Sendable {
         var kind: AttentionKind
         var ask: String
@@ -151,9 +152,11 @@ struct SessionBook: Equatable {
         var steps: [Step] = []
         /// A turn waiting out the grace of the current block.
         var heldTurn: HeldTurn?
-        /// The block the last `done` cleared: the same block said again
-        /// right after (Claude's `Notification` about six seconds after its
-        /// `PermissionRequest`) with no work since is not raised again.
+        /// The block the last dismissal in Pulse cleared: the same block
+        /// said again right after (Claude's `Notification` about six seconds
+        /// after its `PermissionRequest`) with no work since is not raised
+        /// again. A vendor's own "resolved" `done` sets none — the same ask
+        /// after it is a new ask.
         var clearedBlock: ClearedBlock?
 
         var isEnded: Bool {
@@ -204,7 +207,7 @@ struct SessionBook: Equatable {
             for key in sessions.keys.sorted() {
                 guard let session = sessions[key], session.agent == agent, session.session.isEmpty else { continue }
                 if !folder.isEmpty, key != folderKey, session.cwd != redacted { continue }
-                changed = resolve(key, at: ms) || changed
+                changed = resolve(key, at: ms, dismissal: record.isDismissal) || changed
             }
             return changed
         default:
@@ -240,7 +243,7 @@ struct SessionBook: Equatable {
                 case .working:
                     break
                 case .blocked(let block):
-                    if Self.answers(tool: record.tool, block) { Self.answer(&session, at: ms) }
+                    if Self.answers(record, block) { Self.answer(&session, at: ms) }
                 case .idle, .yourTurn, .ended:
                     // A turn whose prompt Pulse did not see starts here;
                     // the error of the last one is over.
@@ -272,7 +275,7 @@ struct SessionBook: Equatable {
                 break
             }
         case .done:
-            _ = Self.clear(&session, at: ms)
+            _ = Self.clear(&session, at: ms, dismissal: record.isDismissal)
         case .end:
             Self.set(&session, .ended(atMs: ms), at: ms)
         }
@@ -315,12 +318,12 @@ struct SessionBook: Equatable {
         if session.title.isEmpty, TitleHeuristics.isMeaningful(text) { session.title = text }
     }
 
-    /// A `tool` line that names its tool is a step (a `status` line is
+    /// A `tool` line that names its tool is a step (a `:status` line is
     /// not). Lines are applied in file order, so the last `maxSteps` are
     /// the newest.
     private static func step(_ record: AttentionRecord, at ms: Int64, into session: inout Session) {
         let tool = record.tool.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !tool.isEmpty, !AttentionRecord.isStatus(tool: tool) else { return }
+        guard !tool.isEmpty, !record.isStatus else { return }
         var target = TitleHeuristics.firstLine(record.message, limit: stepTargetLimit)
         if target.caseInsensitiveCompare(tool) == .orderedSame { target = "" }
         session.steps.append(Step(tool: String(tool.prefix(64)), target: target, ms: ms))
@@ -332,8 +335,9 @@ struct SessionBook: Equatable {
     /// `Notification` about six seconds later): it keeps the earlier clock,
     /// and the more specific of the two asks (`askSpecificity`) — the
     /// earlier one on a tie — with its tool. A later raise with no words
-    /// keeps the earlier ones'. The same block said again after a `done`
-    /// cleared it (a dismissal between the two) is not raised again: same
+    /// keeps the earlier ones'. The same block said again after a dismissal
+    /// in Pulse cleared it (a `:dismiss` `done` between the two) is not
+    /// raised again: same
     /// kind, inside the grace of the first raise, no work since the clear,
     /// and words that say nothing new (the same ask, or only a generic
     /// "needs your permission").
@@ -461,12 +465,18 @@ struct SessionBook: Equatable {
     /// prompt). Anything else is left as it is. A `done` stamped before the
     /// state began is about an earlier one (a dismissal written while a new
     /// ask was being raised) and changes nothing.
-    private static func clear(_ session: inout Session, at ms: Int64) -> Bool {
+    private static func clear(_ session: inout Session, at ms: Int64, dismissal: Bool) -> Bool {
         if case .blocked = session.state, ms < session.stateSinceMs { return false }
         if case .yourTurn = session.state, ms < session.stateSinceMs { return false }
         switch session.state {
         case .blocked(let block):
-            session.clearedBlock = ClearedBlock(kind: block.kind, ask: block.ask, sinceMs: block.sinceMs, clearedMs: ms)
+            // Only Pulse's own dismissal is echoed by the vendor (Claude's
+            // `Notification` after the `PermissionRequest` the person
+            // dismissed). After the vendor's own "resolved" the same ask
+            // again is a new ask, and is raised.
+            session.clearedBlock = dismissal
+                ? ClearedBlock(kind: block.kind, ask: block.ask, sinceMs: block.sinceMs, clearedMs: ms)
+                : nil
             if let held = session.heldTurn {
                 endTurn(&session, at: held.ms, front: held.front)
             } else {
@@ -481,8 +491,8 @@ struct SessionBook: Equatable {
         }
     }
 
-    private mutating func resolve(_ key: String, at ms: Int64) -> Bool {
-        guard var session = sessions[key], Self.clear(&session, at: ms) else { return false }
+    private mutating func resolve(_ key: String, at ms: Int64, dismissal: Bool) -> Bool {
+        guard var session = sessions[key], Self.clear(&session, at: ms, dismissal: dismissal) else { return false }
         session.lastEventMs = max(session.lastEventMs, ms)
         sessions[key] = session
         return true
@@ -490,11 +500,11 @@ struct SessionBook: Equatable {
 
     /// Whether a `tool` line answers a block: it does unless both name a
     /// tool and the names differ (a parallel tool finishing is not the
-    /// answer), or the line is a `status` (work going on — a retry, a
+    /// answer), or the line is a `:status` (work going on — a retry, a
     /// recoverable error — is not the person answering).
-    static func answers(tool raw: String, _ block: Block) -> Bool {
-        let tool = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if AttentionRecord.isStatus(tool: tool) { return false }
+    static func answers(_ record: AttentionRecord, _ block: Block) -> Bool {
+        if record.isStatus { return false }
+        let tool = record.tool.trimmingCharacters(in: .whitespacesAndNewlines)
         if tool.isEmpty || block.tool.isEmpty { return true }
         return tool.caseInsensitiveCompare(block.tool) == .orderedSame
     }

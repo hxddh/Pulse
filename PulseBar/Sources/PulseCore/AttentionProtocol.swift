@@ -55,7 +55,9 @@ public enum AttentionKind: String, Sendable, CaseIterable {
 ///   `term:<TERM_PROGRAM>`;
 /// - `tool`: the tool a `tool` line ran, or the tool a block is about
 ///   (`Bash`); its target, when known, is the message. On a `turn` line,
-///   `error` says the turn ended on an error and the message is its text.
+///   `error` says the turn ended on an error and the message is its text;
+///   on a `tool` line, `:status` says work goes on and no tool ran; on a
+///   `done` line, `:dismiss` says the app wrote it (a dismissal).
 ///
 /// Writers clean every field (`AttentionProtocol.flatten`: no tabs, no line
 /// breaks of any kind) before building one.
@@ -74,15 +76,56 @@ public struct AttentionRecord: Equatable, Sendable {
     /// The `tool` column of a `turn` line that ended on an error.
     public static let errorTool = "error"
 
+    /// Pulse's own markers in the `tool` column begin with `:` — a value no
+    /// vendor tool name has (tool names are identifiers), so a marker is
+    /// never read as a tool and a tool is never read as a marker.
+    public static let reservedPrefix = ":"
+
     /// The `tool` column of a `tool` line that says only that work goes on
     /// — a status (OpenCode `session.status` busy / retry), a recoverable
     /// error (Copilot `errorOccurred`) — not that a tool ran. It is neither
     /// a step nor an answer to a block.
-    public static let statusTool = "status"
+    public static let statusTool = ":status"
 
-    /// Whether a `tool` line's `tool` column is the status marker.
-    public static func isStatus(tool: String) -> Bool {
-        tool.trimmingCharacters(in: .whitespacesAndNewlines) == statusTool
+    /// The `tool` column of the app's own `done` — a dismissal in Pulse (or
+    /// a finished turn looked at). Only this `done` makes the same block
+    /// said again right after stay cleared; a vendor's "resolved" does not.
+    public static let dismissTool = ":dismiss"
+
+    /// The status marker as an earlier receiver spelled it, read (never
+    /// written) so a log it wrote replays the same: a Copilot
+    /// `errorOccurred` or an OpenCode `session.status` line misread as a
+    /// tool named `status` would be a step, and could answer a block. Only
+    /// those two agents' lines ever carried it.
+    static let legacyStatusTool = "status"
+
+    /// Whether a `tool` line's `tool` column is the status marker, for the
+    /// agent that wrote it.
+    public static func isStatus(tool: String, agent: String) -> Bool {
+        let value = tool.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value == statusTool { return true }
+        guard value == legacyStatusTool else { return false }
+        let id = AgentCatalog.agent(named: agent)
+        return id == .copilot || id == .opencode
+    }
+
+    /// This line is a `tool` column status marker (`isStatus(tool:agent:)`).
+    public var isStatus: Bool { Self.isStatus(tool: tool, agent: agent) }
+
+    /// This line is the app's own `done` (`dismissTool`).
+    public var isDismissal: Bool {
+        kind == AttentionKind.done.rawValue
+            && tool.trimmingCharacters(in: .whitespacesAndNewlines) == Self.dismissTool
+    }
+
+    /// A vendor's tool name as the receiver may write it: a leading `:`
+    /// is dropped, so it can never spell one of Pulse's markers.
+    public static func vendorTool(_ name: String) -> String {
+        var value = name.trimmingCharacters(in: .whitespaces)
+        while value.hasPrefix(reservedPrefix) {
+            value = String(value.dropFirst()).trimmingCharacters(in: .whitespaces)
+        }
+        return value
     }
 
     public init(
@@ -150,7 +193,7 @@ public struct AttentionRecord: Equatable, Sendable {
 /// append-only event log (`events.tsv`, `EventLog`).
 ///
 /// Writers: `PulseHookReceiver` (through `EventLog.append`) and the app's
-/// own `done` for a dismissal.
+/// own `done` for a dismissal (`tool` = `:dismiss`).
 /// Reader: `SessionBook` (the app), every line in file order. Spec:
 /// `docs/attention-protocol.md`.
 public enum AttentionProtocol {

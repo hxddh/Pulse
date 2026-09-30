@@ -335,12 +335,34 @@ struct SettingsModelTests {
         #expect(!LoginItem.isPulsesOwnAgent(otherLabel))
         #expect(!LoginItem.isPulsesOwnAgent(Data("not a plist".utf8)))
     }
+
+    /// The LaunchAgent earlier versions wrote is adopted by registering
+    /// Pulse with macOS first: only once macOS has taken it does the plist
+    /// go. When macOS refuses, the plist (which still opens Pulse at
+    /// login) and the setting stay, and Settings says macOS did not take it.
+    @Test func theLegacyLaunchAgentGoesOnlyOnceMacOSHasTakenTheLoginItem() {
+        let taken = LoginAdoption.decide(hadLegacyAgent: true, state: .enabled)
+        let pending = LoginAdoption.decide(hadLegacyAgent: true, state: .requiresApproval)
+        let refused = LoginAdoption.decide(hadLegacyAgent: true, state: .off)
+        let notFound = LoginAdoption.decide(hadLegacyAgent: true, state: .unavailable)
+        let none = LoginAdoption.decide(hadLegacyAgent: false, state: .off)
+        let noneOn = LoginAdoption.decide(hadLegacyAgent: false, state: .enabled)
+        #expect(taken == .retireLegacyAndSync)
+        #expect(pending == .retireLegacyAndSync, "waiting for approval is taken: macOS holds it")
+        #expect(refused == .keepLegacy, "a failed register never loses the person's choice")
+        #expect(notFound == .keepLegacy)
+        #expect(none == .sync)
+        #expect(noneOn == .sync)
+        // Kept: the setting stays on, so the line says macOS did not take it.
+        let line = SettingsModel.loginLine(asked: true, state: .off)
+        #expect(line.note == .failed)
+    }
 }
 
 /// A settings change applies only what that setting needs: a mute or a
 /// notification switch touches nothing outside the file; the shortcut
 /// re-registers only for the shortcut; the language and Terminal
-/// automation re-project.
+/// automation re-project, and the language re-installs the main menu.
 @Suite("Setting effects")
 struct SettingEffectTests {
     @Test func eachSettingAppliesOnlyWhatItNeeds() {
@@ -361,7 +383,7 @@ struct SettingEffectTests {
         #expect(hotkey == [.hotkey])
         #expect(login == [.loginItem])
         #expect(updates == [.updateCheck])
-        #expect(language == [.bannerCategory, .reproject])
+        #expect(language == [.bannerCategory, .mainMenu, .reproject])
         #expect(automation == [.reproject])
         #expect(mute.isEmpty)
         #expect(notify.isEmpty)
@@ -372,6 +394,20 @@ struct SettingEffectTests {
             $0.allowTerminalAutomation = true
         }
         #expect(both == [.loginItem, .reproject])
+    }
+
+    /// The main menu is in the menu bar while Settings is open, and the
+    /// language is picked there: a language change re-installs it, or its
+    /// titles stay in the old language until Settings opens again.
+    @Test func aLanguageChangeReinstallsTheMainMenu() {
+        var next = PulseSettings()
+        next.language = .zh
+        let language = StatusStore.effects(from: PulseSettings(), to: next)
+        #expect(language.contains(.mainMenu))
+        var other = PulseSettings()
+        other.allowTerminalAutomation = true
+        let automation = StatusStore.effects(from: PulseSettings(), to: other)
+        #expect(!automation.contains(.mainMenu), "only the language")
     }
 
     /// The setup card's "Open at login" checkbox is the same setting as the
@@ -525,6 +561,19 @@ struct UninstallPlanTests {
         let en = plan.message(.en)
         #expect(en.hasPrefix(L10n.t(.uninstallNoHooks, .en)))
         #expect(!en.contains(L10n.t(.uninstallLogin, .en)))
+    }
+
+    /// The confirmation names the login item from macOS's read, or — not
+    /// read yet — from the setting. Either way the removal always asks
+    /// macOS to unregister (`finishUninstall`): the read may be stale.
+    @Test func theLoginItemIsNamedEvenBeforeMacOSIsRead() {
+        let folder = home.appendingPathComponent("Library/Application Support/Pulse")
+        let unreadAsked = UninstallPlan.make(installed: [], loginItem: nil, asked: true, folder: folder, home: home)
+        let unreadNotAsked = UninstallPlan.make(installed: [], loginItem: nil, asked: false, folder: folder, home: home)
+        let readOff = UninstallPlan.make(installed: [], loginItem: .off, asked: true, folder: folder, home: home)
+        #expect(unreadAsked.loginItem)
+        #expect(!unreadNotAsked.loginItem)
+        #expect(!readOff.loginItem, "macOS's answer wins once read")
     }
 
     /// The folder holds the record a byte-for-byte removal needs: it goes

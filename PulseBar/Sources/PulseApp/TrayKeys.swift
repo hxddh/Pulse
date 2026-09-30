@@ -17,9 +17,12 @@ import Foundation
 /// | ⌘D / ⌘⌫        | dismiss the selected wait              | dismiss         |
 /// | ⌘M             | mute / unmute the selected agent       | mute / unmute   |
 /// | ⌘R ⌘, ⌘Q       | refresh · settings · quit              | same            |
+/// | ⌘W             | close (as Esc here)                    | close           |
 ///
 /// A bare letter is not the tray's: the tray opens with a row selected, and a
-/// bare D or M must never dismiss or mute; the commands carry ⌘.
+/// bare D or M must never dismiss or mute; the commands carry ⌘. ⌘W is the
+/// tray's too: left to the system it would reach `performClose:` on the
+/// borderless panel, which has no close button, and beep.
 enum TrayKeys {
     enum Key: Equatable {
         case up, down, left, right, space, enter, escape
@@ -33,6 +36,8 @@ enum TrayKeys {
         case settings
         /// ⌘Q
         case quit
+        /// ⌘W
+        case close
     }
 
     struct State: Equatable {
@@ -85,6 +90,7 @@ enum TrayKeys {
         case .refresh: return done(.refresh)
         case .settings: return done(.openSettings)
         case .quit: return done(.quit)
+        case .close: return done(.closePanel)
         default: break
         }
 
@@ -135,7 +141,7 @@ enum TrayKeys {
         case .mute:
             guard let selected else { return done() }
             return done(.toggleMute(selected.key))
-        case .refresh, .settings, .quit:
+        case .refresh, .settings, .quit, .close:
             return done()
         }
     }
@@ -168,6 +174,7 @@ enum TrayKeys {
             case "r": return .refresh
             case ",": return .settings
             case "q": return .quit
+            case "w": return .close
             case "d": return .dismiss
             case "m": return .mute
             default: return nil

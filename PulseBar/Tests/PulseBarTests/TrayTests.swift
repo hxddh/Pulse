@@ -166,6 +166,25 @@ struct TrayInteractionTests {
         #expect(quit.effect == .quit)
     }
 
+    /// ⌘W is the tray's: it closes the panel as Esc does on the list —
+    /// left to the system it would reach `performClose:` on the borderless
+    /// panel and beep.
+    @Test func commandWClosesTheTray() {
+        let event = TrayKeys.key(keyCode: 13, characters: "w", command: true)
+        #expect(event == .close)
+        let bareW = TrayKeys.key(keyCode: 13, characters: "w", command: false)
+        #expect(bareW == nil, "a bare W is not the tray's")
+        let list = press(TrayKeys.State(selected: "a", detail: nil), [.close])
+        let escape = press(TrayKeys.State(selected: "a", detail: nil), [.escape])
+        #expect(list.effect == .closePanel)
+        #expect(list == escape, "on the list ⌘W is Esc")
+        let empty = press(TrayKeys.State(), [.close], rows: [])
+        #expect(empty.effect == .closePanel)
+        let detail = press(TrayKeys.State(selected: "b", detail: "b"), [.close])
+        #expect(detail.effect == .closePanel, "⌘W closes the tray from the detail page too")
+        #expect(detail.handled)
+    }
+
     @Test func aSelectionWhoseRowLeftMovesToTheFirstRow() {
         let gone = TrayKeys.State(selected: "zz", detail: nil)
         let moved = TrayKeys.normalize(gone, rows: rows)

@@ -259,7 +259,7 @@ final class StatusStore {
     /// Pure.
     nonisolated static func effects(from before: PulseSettings, to after: PulseSettings) -> Set<SettingEffect> {
         var out: Set<SettingEffect> = []
-        if before.language != after.language { out.formUnion([.bannerCategory, .reproject]) }
+        if before.language != after.language { out.formUnion([.bannerCategory, .mainMenu, .reproject]) }
         if before.launchAtLogin != after.launchAtLogin { out.insert(.loginItem) }
         if before.hotkey != after.hotkey { out.insert(.hotkey) }
         if before.updateCheckEnabled != after.updateCheckEnabled { out.insert(.updateCheck) }
@@ -270,6 +270,7 @@ final class StatusStore {
     private func apply(_ effect: SettingEffect) {
         switch effect {
         case .bannerCategory: notifier.languageChanged(lang)
+        case .mainMenu: MainMenu.install(lang: lang)
         case .loginItem: applyLaunchAtLoginIfChanged()
         case .hotkey: applyHotkey()
         case .updateCheck: UpdateCheck.shared.startIfEnabled(store: self)
@@ -321,17 +322,29 @@ final class StatusStore {
         if loginItem != state { loginItem = state }
     }
 
-    /// At launch: read the login item from macOS, and retire the
-    /// LaunchAgent plist earlier versions wrote (`com.pulse.app.plist`,
-    /// Pulse's own file) — registering Pulse with macOS instead when it was
-    /// there, so the person's choice is kept. Then macOS is the truth: the
-    /// setting follows what it says.
+    /// At launch: read the login item from macOS, and adopt the LaunchAgent
+    /// plist earlier versions wrote (`com.pulse.app.plist`, Pulse's own
+    /// file) — register Pulse with macOS first, and retire the plist only
+    /// once macOS has taken it, so the person's choice is never lost
+    /// (`LoginAdoption`). Then macOS is the truth: the setting follows what
+    /// it says — unless the register failed, when the plist and the setting
+    /// stay and Settings says macOS did not take it.
     func adoptLoginItem() {
         DispatchQueue.global(qos: .utility).async {
-            let hadLegacyAgent = LoginItem.retireLegacyAgent()
+            let hadLegacyAgent = LoginItem.hasLegacyAgent()
             let state = hadLegacyAgent ? LoginItem.setEnabled(true) : LoginItem.state
+            let adoption = LoginAdoption.decide(hadLegacyAgent: hadLegacyAgent, state: state)
+            if adoption == .retireLegacyAndSync { LoginItem.retireLegacyAgent() }
             Task { @MainActor [weak self] in
-                self?.syncLoginItem(state)
+                guard let self else { return }
+                switch adoption {
+                case .sync, .retireLegacyAndSync:
+                    self.syncLoginItem(state)
+                case .keepLegacy:
+                    // What macOS said, shown; the setting (and the plist
+                    // that still opens Pulse at login) left alone.
+                    self.landLoginItem(state)
+                }
             }
         }
     }
@@ -525,19 +538,28 @@ final class StatusStore {
     /// reads the line back; the book has already applied it, so it changes
     /// nothing.
     private func writeDone(agent: AgentID, session: String, cwd: String, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) {
-        let record = AttentionRecord(
-            agent: agent.rawValue,
-            kind: AttentionKind.done.rawValue,
-            ms: nowMs,
-            session: AttentionProtocol.flatten(session),
-            cwd: AttentionProtocol.flatten(cwd)
-        )
+        let record = Self.dismissalRecord(agent: agent, session: session, cwd: cwd, nowMs: nowMs)
         // A preview fixture's rows are not the book's; leave them on screen.
         if !previewFixtureActive { engine.apply(records: [record], nowMs: nowMs) }
         let line = record.line
         Self.doneWrites.async {
             EventLog.append(line, nowMs: nowMs)
         }
+    }
+
+    /// The app's own `done` line, marked `:dismiss`
+    /// (`AttentionRecord.dismissTool`): only it makes the vendor's echo of
+    /// the same ask stay cleared (`SessionBook`); a vendor's "resolved" does
+    /// not. Pure.
+    nonisolated static func dismissalRecord(agent: AgentID, session: String, cwd: String, nowMs: Int64) -> AttentionRecord {
+        AttentionRecord(
+            agent: agent.rawValue,
+            kind: AttentionKind.done.rawValue,
+            ms: nowMs,
+            session: AttentionProtocol.flatten(session),
+            cwd: AttentionProtocol.flatten(cwd),
+            tool: AttentionRecord.dismissTool
+        )
     }
 
     /// The `done` a dismissal writes, with the entry's own session spelling
@@ -678,6 +700,7 @@ final class StatusStore {
         let plan = UninstallPlan.make(
             installed: hooksStatus.installedAgents,
             loginItem: loginItem,
+            asked: settings.launchAtLogin,
             folder: HooksSupport.supportDir(),
             home: FileManager.default.homeDirectoryForCurrentUser
         )
@@ -711,7 +734,10 @@ final class StatusStore {
     private func finishUninstall(_ plan: UninstallPlan) {
         engine.stop()
         GlobalHotKey.uninstall()
-        if plan.loginItem { LoginItem.setEnabled(false) }
+        // Always: the plan's read of the login item may be stale (changed in
+        // System Settings since), and unregistering one that is off does
+        // nothing.
+        LoginItem.setEnabled(false)
         let folder = HooksSupport.supportDir()
         DebugLog.write("uninstall: deleting the support folder and quitting")
         do {
@@ -763,6 +789,10 @@ enum SettingEffect: Int, Comparable, Sendable {
     /// Re-register the banner's button titles: they are baked into the
     /// registered category and go stale on a language switch.
     case bannerCategory
+    /// Re-install the main menu: its titles are the language's, and it is
+    /// in the menu bar while Settings — where the language is picked — is
+    /// open.
+    case mainMenu
     /// Register (or unregister) Pulse's login item with macOS.
     case loginItem
     /// Re-register the global shortcut.

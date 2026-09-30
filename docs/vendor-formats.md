@@ -65,9 +65,9 @@ event Pulse does not install is not read. The kinds are the protocol's
 | | `agentStop` | `turn` |
 | | `notification` `permission_prompt` / `elicitation_dialog` | `permission` / `question` |
 | | `notification` `agent_idle` / `agent_completed` / `shell_completed` | ignored (background subagents and shells, not the session's turn) |
-| | `errorOccurred` | `turn`, tool = `error`, message = `error.message` when `recoverable: false`; else `tool`, tool = `status` |
+| | `errorOccurred` | `turn`, tool = `error`, message = `error.message` when `recoverable: false`; else `tool`, tool = `:status` |
 | **OpenCode** (plugin `~/.config/opencode/plugins/pulse.js`; payload as the last argument; a subagent's child session is dropped, its asks sent under the root session) | `session.created` | `start` |
-| | `session.status` `busy` / `retry` | `tool`, tool = `status` |
+| | `session.status` `busy` / `retry` | `tool`, tool = `:status` |
 | | `permission.asked` | `permission` (ask = `permission: patterns`) |
 | | `question.asked` | `question` (ask = first question) |
 | | `permission.replied` / `question.replied` / `question.rejected` | `done` |

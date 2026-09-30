@@ -321,8 +321,8 @@ package enum EventLog {
                 case .working?, .done?, .end?, .start?:
                     open = nil
                 case .tool?:
-                    // A `status` line is work going on, never an answer.
-                    if AttentionRecord.isStatus(tool: record.tool) { break }
+                    // A `:status` line is work going on, never an answer.
+                    if record.isStatus { break }
                     if openTool.isEmpty || record.tool.isEmpty
                         || record.tool.caseInsensitiveCompare(openTool) == .orderedSame {
                         open = nil
