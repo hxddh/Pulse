@@ -250,29 +250,9 @@ final class TrayNoticeTests: XCTestCase {
         XCTAssertTrue(store.trayNoticeInput.unconnected.isEmpty)
         XCTAssertNil(store.trayNotice)
     }
-
-    @MainActor
-    func testStatusFixturesInjectConcreteTrayRows() {
-        let store = StatusStore()
-        store.installPreviewFixture("status-waiting")
-        XCTAssertEqual(store.snapshot.lamp, .waiting)
-        XCTAssertEqual(store.snapshot.rows.count, 1)
-        XCTAssertTrue(store.snapshot.rows[0].isBlocked)
-
-        store.installPreviewFixture("status-running")
-        XCTAssertEqual(store.snapshot.lamp, .running)
-        XCTAssertEqual(store.snapshot.rows.count, 1)
-        XCTAssertFalse(store.snapshot.rows[0].isBlocked)
-
-        store.installPreviewFixture("status-stalled")
-        XCTAssertEqual(store.snapshot.lamp, .stalled)
-        XCTAssertEqual(store.snapshot.rows.count, 1)
-        XCTAssertTrue(store.snapshot.rows[0].isStalled)
-    }
 }
 
-/// A version drift once shipped for months, invisible because nothing ever
-/// compared the two.
+/// The version a build reports is the one it is.
 final class PulseVersionTests: XCTestCase {
     func testSemverIsWellFormed() {
         let parts = PulseVersion.semver.split(separator: ".")

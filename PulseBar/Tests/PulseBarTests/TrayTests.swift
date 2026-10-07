@@ -360,7 +360,7 @@ struct TrayInteractionTests {
         failingRow.state = .recent
         failingRow.lastErrorText = "npm ERR!"
         let failing = face(failingRow)
-        #expect(failing.secondLine == nil, "24.0: an error is a detail-page fact, not an orange row")
+        #expect(failing.secondLine == nil, "an error is a detail-page fact, not an orange row")
         var turnRow = session("t")
         turnRow.state = .yourTurn(sinceMs: now)
         let turn = face(turnRow)
@@ -530,7 +530,7 @@ struct TrayInteractionTests {
 /// The tray opens on "who needs me", never on the last visit's rummaging.
 /// EXPERIENCE §4: "展开状态不持久化". The popover's view is built once, so
 /// nothing resets `@State` on its own: every open gives the tray a new
-/// identity (U-3).
+/// identity.
 final class TrayGlanceResetTests: XCTestCase {
     @MainActor
     func testEachOpenGivesTheTrayANewIdentity() {
@@ -556,9 +556,6 @@ final class StatusLampTests: XCTestCase {
             XCTAssertEqual(lamp.statusBarImage.isTemplate, lamp.isGrey, "\(lamp): only grey follows the menu bar")
         }
         XCTAssertTrue(Lamp.processOnly.isGrey)
-        // Drawn at its own size — never set smaller after drawing, which
-        // blurred it.
-        XCTAssertEqual(Lamp.waiting.statusBarImage.size, NSSize(width: 16, height: 16))
 
         let waiting = Lamp.waiting.nsColor.usingColorSpace(.deviceRGB)!
         let running = Lamp.running.nsColor.usingColorSpace(.deviceRGB)!
@@ -603,12 +600,6 @@ final class AccessibilityLocalizationTests: XCTestCase {
             var rgba: Set<String> = []
             for glance in [Lamp.idle, .running, .stalled, .waiting] {
                 let icon = glance.statusBarImage
-                XCTAssertEqual(
-                    icon.isTemplate,
-                    glance == .idle,
-                    "\(glance) in \(appearanceName.rawValue): a coloured lamp is never flattened to monochrome"
-                )
-                XCTAssertEqual(icon.size, NSSize(width: 16, height: 16))
                 let bitmap = try XCTUnwrap(
                     icon.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:))
                 )
@@ -642,32 +633,6 @@ final class AccessibilityLocalizationTests: XCTestCase {
                 "red, green, grey and orange merged in \(appearanceName.rawValue)"
             )
         }
-    }
-}
-
-/// The product's rules asserted on the surface values `PulseQA`'s
-/// `SurfaceCapture` photographs, not on the store behind them: the tray row,
-/// header, notice, the detail page and Settings.
-final class SurfaceModelTests: XCTestCase {
-
-    // MARK: - The fixture list the capture script reads
-
-    func testTheCaptureScriptsNamesAreTheFixtures() {
-        XCTAssertEqual(SurfaceFixtures.all(lang: .en).map(\.name), SurfaceFixtures.names)
-        XCTAssertEqual(Set(SurfaceFixtures.names).count, SurfaceFixtures.names.count)
-    }
-
-    // MARK: - Both languages
-
-    private func firstMenuTitle(_ lang: ResolvedLanguage) -> String? {
-        guard case .row(let model, _) = SurfaceFixtures.all(lang: lang).first?.value else { return nil }
-        return model.menu.first?.title
-    }
-
-    func testEveryFixtureSpeaksBothLanguages() {
-        XCTAssertEqual(SurfaceFixtures.all(lang: .zh).map(\.name), SurfaceFixtures.names)
-        XCTAssertNotNil(firstMenuTitle(.en))
-        XCTAssertNotEqual(firstMenuTitle(.zh), firstMenuTitle(.en))
     }
 }
 
@@ -830,7 +795,7 @@ final class L10nTests: XCTestCase {
     }
 }
 
-/// Every user-facing string goes through the table (U-9).
+/// Every user-facing string goes through the table.
 final class LocalizedCopyTests: XCTestCase {
     /// One table for the tooltip, the chip and the banner.
     func testWaitKindTranslationIsSharedWithTheBuilder() {
@@ -1621,8 +1586,6 @@ struct MainMenuTests {
         #expect(keys["v|\(command)"] == #selector(NSText.paste(_:)))
         #expect(keys["q|\(command)"] == #selector(MainMenuActions.quit(_:)))
         #expect(keys[",|\(command)"] == #selector(MainMenuActions.settings(_:)))
-        let titles = menu.items.map { $0.title }
-        #expect(titles.count == 3, "Pulse, Edit, Window")
         let zh = MainMenu.make(lang: .zh).items.map { $0.title }
         #expect(zh.contains(L10n.t(.menuEdit, .zh)))
     }

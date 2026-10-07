@@ -1,8 +1,7 @@
 # Architecture notes
 
-The targets, the data flow from a hook's line to the menu bar, and the
-invariants are in [`AGENTS.md`](../AGENTS.md) ("Architecture",
-"Invariants") — that is the one description. The event log is
+The targets, the data flow and the invariants are in
+[`AGENTS.md`](../AGENTS.md); the event log is
 [`attention-protocol.md`](attention-protocol.md); per-agent facts are
 [`vendor-formats.md`](vendor-formats.md). This page keeps only what those do
 not say.
@@ -58,6 +57,34 @@ Settings is `SettingsWindowController` rendering `SettingsFace` from
 `SettingsModel`.
 Views do no I/O; every surface is a value with a fixture in
 `PulseQA/SurfaceFixtures.swift` and a capture from `scripts/qa_captures.sh`.
+
+## Landing — how ↩, a click or a banner reaches the prompt
+
+The hook records where its session lives (the v6 `landing` column, most
+specific first): `tmux:%3;tmuxsock:<socket>;iterm:w0t1p0:<uuid>;tty:/dev/ttys004;term:<TERM_PROGRAM>;app:<__CFBundleIdentifier>`.
+`LandingPlan.make(handle:cwd:pid:hostApp:)` (pure, once per projection)
+turns it into ordered steps; `TerminalFocus.land` (on the click) runs them
+until one succeeds and reports **exact**, **app only** or **failed** — never
+rounded up. The process table only fills what the hook did not say (tty,
+Warp, host editor) and gives process-only rows their fallback.
+
+| Handle | Steps | Precision |
+| --- | --- | --- |
+| `tmux:` (+ `tmuxsock:`) | `tmux [-S sock] switch-client ; select-window ; select-pane -t %N`, then activate the app owning the tmux client, else the `term:` / `app:` app | exact |
+| `iterm:` + `term:iTerm.app` | AppleScript: select the session whose `unique id` matches | exact |
+| `tty:` + Terminal / iTerm (or unknown) | AppleScript tab search by tty (running apps only) | exact |
+| `term:ghostty` / `WezTerm` / `kitty` / `WarpTerminal` | activate the running app | app |
+| `term:vscode` (`app:` tells Cursor, Windsurf… apart), `zed`, a host editor on the parent chain | `open -b <bundle> <cwd>`, then activate | app |
+| none, live pid | activate the first regular app on the pid's parent chain | app |
+| none | no Go; ↩ and banners open the detail page | — |
+
+The AppleScript steps are always planned: no Pulse setting gates them, and
+macOS's own Automation prompt on the first Go is the consent. The label is
+**Go to terminal** only when the first step is exact, otherwise **Open app**.
+An app-only landing says so — and, when an AppleScript step was tried, where
+to allow Automation. Nothing is launched to look for a session, no IDE
+extension is installed, nothing is typed into a terminal, and running apps
+are never enumerated at scan time.
 
 ## Version identity
 

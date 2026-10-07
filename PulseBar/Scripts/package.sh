@@ -10,7 +10,7 @@ VERSION="$(sed -n 's/.*static let semver = "\([^"]*\)".*/\1/p' Sources/PulseApp/
 VERSION="${VERSION:-0.0.0}"
 
 if [[ "$(uname -m)" != "arm64" ]]; then
-  echo "error: Pulse 0.48+ is built for Apple silicon (arm64); found $(uname -m)" >&2
+  echo "error: Pulse is built for Apple silicon (arm64); found $(uname -m)" >&2
   exit 1
 fi
 

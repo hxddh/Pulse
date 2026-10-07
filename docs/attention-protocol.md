@@ -15,12 +15,8 @@ writes it.
 `PulseHookReceiver` (the per-agent adapters), `HookContract` in
 `AgentCatalog.swift` (what is installed).
 
-Companion:
-
-- Product policy (what is installed, how it is removed) → [`attention-bridge.md`](attention-bridge.md)
-- Per agent — what each vendor event becomes, and where each contract was
-  read → [`vendor-formats.md`](vendor-formats.md) and
-  [`vendor-formats.json`](vendor-formats.json)
+What is installed, how it is removed, and what each vendor event becomes:
+[`vendor-formats.md`](vendor-formats.md).
 
 ## The file
 
@@ -99,7 +95,7 @@ the trailing tabs are part of the record.
 | `cwd` | Absolute project path; empty allowed |
 | `front` | `1` when the prompt's own window was frontmost as the event was raised, `0` when not, empty when unknown. Only written for blocked kinds, `turn` and `idle` |
 | `pid` | The agent process the hook ran under: the first ancestor of the hook whose argv matches the agent's catalog process rule. Never the hook's direct parent (usually a `sh -c` that exits with the hook) and never `1` — empty when unknown |
-| `landing` | Where the session can be reached, most specific first, `;`-separated: `tmux:%3`, `tmuxsock:<TMUX socket path>`, `iterm:<ITERM_SESSION_ID>`, `tty:/dev/ttys004`, `term:<TERM_PROGRAM>`, `app:<__CFBundleIdentifier>`; unknown keys are ignored (`docs/landing-hosts.md`) |
+| `landing` | Where the session can be reached, most specific first, `;`-separated: `tmux:%3`, `tmuxsock:<TMUX socket path>`, `iterm:<ITERM_SESSION_ID>`, `tty:/dev/ttys004`, `term:<TERM_PROGRAM>`, `app:<__CFBundleIdentifier>`; unknown keys are ignored (`architecture.md`, "Landing") |
 | `tool` | The tool a `tool` line ran, or the tool a block is about (`Bash`, `AskUserQuestion`); on a `turn` line, `error` when the turn ended on an error; on a `tool` line, `:status` when the event says only that work goes on (a status, a retry, a recoverable error) — never a step, never an answer; on a `done` line, `:dismiss` when the app wrote it (a dismissal in Pulse); empty when the event names none. Pulse's own markers begin with `:`, which no vendor tool name does: the receiver drops a leading `:` from a vendor's tool name, so a tool never spells a marker |
 
 Readers skip blank lines, `#` comments, and any other kind.
@@ -190,11 +186,7 @@ guess from free text.
 
 ## Versioning
 
-- v1–v5: see git history.
-- **v6**: v5 without its reserved ninth column — ten columns:
-  `agent kind ms message session cwd front pid landing tool`. A log whose
-  header is not v6 is treated as absent (emptied, started over, never read).
-  `tool` = `error` on a `turn` line marks a failed turn, `tool` = `:status`
-  on a `tool` line marks work that is not a tool, and `tool` = `:dismiss` on
-  a `done` line marks the app's own dismissal. Only the receiver and the app
-  write the log; a kind is read only as spelled in the table above.
+The protocol is v6: ten columns, and a log whose header is not v6 is treated
+as absent (emptied, started over, never read). A change to the columns, the
+kinds or the reserved `tool` markers is a new protocol version and a major
+release.

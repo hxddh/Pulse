@@ -491,8 +491,7 @@ final class BannerRevealTests: XCTestCase {
 final class DeliveryPlanningTests: XCTestCase {
     // MARK: - Waiting delivery must not trap on a duplicate row key
 
-    /// A queued edge and a fresh edge for the same session used to reach
-    /// `Dictionary(uniqueKeysWithValues:)` together and crash the app.
+    /// A queued edge and a fresh edge for the same session never trap.
     @MainActor
     func testAQueuedRowAndAFreshEdgeForTheSameSessionDoNotCrash() {
         var queued = AgentRow(rowKey: "codex|abc", agent: .codex)

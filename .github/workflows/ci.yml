@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   gates:
-    name: Source gates (version · catalog · surfaces · scenarios)
+    name: Source gates (version · catalog · icons · surfaces)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

@@ -1,19 +1,44 @@
 # Vendor contracts — every per-agent fact, and where each came from
 
-Pulse's state, and everything a row says, comes from the vendors' own hook /
-plugin / extension events. It reads no vendor file: no session store, no
-transcript. The title is the session's first prompt (the prompt event's own
-text), the last words and a turn's error are what the turn event carried,
-and the steps are the per-tool events (the tool and its target). Tokens,
-context, cost and plan are never read — a decision `catalog_check` holds.
-When a vendor changes a hook contract nothing fails loudly: an event stops
-arriving, or (worse) a new one is read as the wrong state. So each contract
-names the source it was read from.
+State, and everything a row says, comes from the vendors' own hook / plugin
+/ extension events; Pulse reads no vendor file. The title is the session's
+first prompt, the last words and a turn's error are what the turn event
+carried, and the steps are the per-tool events. When a vendor changes a hook
+contract nothing fails loudly — an event stops arriving, or a new one is read
+as the wrong state — so each contract names the source it was read from
+(`vendor-formats.json`). The line each event writes is
+[`attention-protocol.md`](attention-protocol.md).
 
-This is the one place per-agent facts live (with `vendor-formats.json`);
-the protocol (`attention-protocol.md`), the install policy
-(`attention-bridge.md`) and the observability contract
-(`observability-matrix.md`) link here instead of repeating them.
+## Install policy
+
+- **Observe-only events.** Never PreToolUse, beforeShellExecution,
+  BeforeTool, `tool.execute.before`, `tool_call`, permissionRequest or any
+  other hook that can gate or change a decision
+  (`HookContract.gatingEvents`), and never an answer: `pulse-hook` prints
+  nothing and exits 0 at once. Claude's and Codex's entries are `async`.
+- **Byte-for-byte reversible.** Before Pulse first writes a file it records
+  the file's bytes (or that it did not exist) in
+  `~/Library/Application Support/Pulse/hook-installs.json`. A removal puts
+  the file back exactly when it is still what Pulse wrote (a file that did
+  not exist is deleted again); a file edited since loses only Pulse's
+  entries. Pulse's mark is the whole `pulse-hook` command (a path ending in
+  `/pulse-hook`, or the bare word) — a user's `impulse-hook.sh` is not
+  Pulse's. Invalid JSON, JSONC with comments and a `hooks` value that is not
+  "event → array" are never rewritten, and the reason is said; only the
+  `hooks` member is rewritten, every other key keeps its order and format;
+  CRLF line ends and a UTF-8 BOM are kept. A module file of the same name
+  that Pulse did not write is never overwritten.
+- **Only agents on this Mac.** An agent whose vendor folder (`~/.claude`,
+  `~/.gemini`, …) does not exist gets no install. One agent's broken config
+  fails only that agent. An agent whose install failed is not offered again
+  by the setup card; the card says why.
+- **One writer.** The installer writes the native `pulse-hook` launcher into
+  every contract; nothing else writes the event log but it and the app's own
+  dismissal. The hook records the agent's pid (the first ancestor matching
+  the catalog's process rule — never the direct `sh -c` parent, never 1) and
+  the landing handles, from `sysctl` and the environment only: it never
+  forks and never runs `ps`. `pulse-hook` refuses an agent outside the roster
+  (and Grok calling Claude's hooks).
 
 ## Where each hook is installed
 
@@ -33,10 +58,7 @@ Every installed command is `pulse-hook <agent> <vendor event name>`; the
 payload is the vendor's JSON on stdin (the two modules: the last argument).
 Only the agent's own adapter reads it. A payload that is not a JSON object —
 cut off at the 1 MiB stdin bound, broken, or plain text — writes nothing,
-and so does an event the adapter does not know. Only observe-only events are
-installed; `HookContract.gatingEvents` lists the ones that never are, and an
-event Pulse does not install is not read. The kinds are the protocol's
-(`attention-protocol.md`).
+and so does an event the adapter does not know or Pulse does not install.
 
 | Agent | Vendor event | Pulse |
 | --- | --- | --- |
@@ -111,25 +133,18 @@ files (grouped by component) that exercise the contract; each must exist and
 mention the agent.
 
 `scripts/catalog_check.py` (in `gates.sh`) fails when an agent has no entry,
-an entry carries anything besides `hooks`, a repo block lacks a full commit or watch list, the
-events disagree with the catalog, a named test file does not exist or never
-mentions the agent, or the manifest names an agent the catalog no longer has.
-It also holds two facts about the events themselves: an agent that can raise
-a block installs at least one event that answers it
-(`HookContract.answerEvents`: a per-tool activity event, or the vendor's own
-"replied" / "prompt closed"), and Claude, Codex, Gemini and Copilot install
-their per-tool activity event (`PostToolUse`, `AfterTool`, `postToolUse`) —
+an entry carries anything besides `hooks`, a repo block lacks a full commit
+or watch list, the events disagree with the catalog, a named test file is
+missing or never mentions the agent, or a contract lists a gating event. It
+also holds two facts: an agent that can raise a block installs an event that
+answers it (`HookContract.answerEvents`: a per-tool event, or the vendor's
+own "replied" / "prompt closed"), and Claude, Codex, Gemini and Copilot
+install their per-tool event (`PostToolUse`, `AfterTool`, `postToolUse`) —
 the answer to a permission, and the only silence that means a stall
 (`HookContract.reportsToolActivity`). Each was checked non-blocking at exit 0
-with empty output against the pinned source (Codex: `engine/discovery.rs`
-runs every event but `SessionEnd` async when asked; Gemini: "Global hook
-mechanics"; Copilot: "postToolUse output"). Codex is `hooks.json` only:
-Pulse never touches its `config.toml`. Claude also installs
-`PostToolUseFailure` (after a tool call fails; its output cannot change the
-outcome), which answers a block for that tool like `PostToolUse`; it does
-not install `PermissionDenied`, whose `hookSpecificOutput.retry` can change
-what the model does. Every event the receiver reads becomes one line of the
-one event log (`docs/attention-protocol.md`), tool activity included.
+with empty output against the pinned source. Claude also installs
+`PostToolUseFailure` (its output cannot change the outcome), never
+`PermissionDenied` (its `retry` can change what the model does).
 **Changing a hook contract means updating its block and its test in the same
 change.**
 

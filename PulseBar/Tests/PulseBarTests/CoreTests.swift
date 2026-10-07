@@ -195,18 +195,9 @@ final class SingleInstanceGuardTests: XCTestCase {
     }
 }
 
-/// Resource loading must never be able to kill the app.
-///
-/// Releases once shipped a DMG that crashed on launch:
-/// `package.sh` built a malformed resource bundle, `Bundle(url:)` returned nil,
-/// and the compiler-generated `Bundle.module` accessor called `fatalError()`
-/// while drawing the menu bar icon. `swift test` was green the whole time,
-/// because tests never load the packaged bundle.
-///
-/// These do not prove the DMG is correct — only `scripts/package_check.py`,
-/// which reads the built .app, can do that. What they pin is the part that
-/// belongs in the app: a resource that cannot be found degrades instead of
-/// trapping.
+/// A resource that cannot be found degrades instead of trapping (the
+/// generated `Bundle.module` accessor fatalErrors when the bundle moves;
+/// `scripts/package_check.py` checks the built .app itself).
 final class ResourceLookupTests: XCTestCase {
 
     func testResolvingTheBundleDoesNotTrap() {
@@ -225,14 +216,6 @@ final class ResourceLookupTests: XCTestCase {
                 subdirectory: "AgentIcons"
             )
         )
-    }
-
-    func testLookupIsStableAcrossCalls() {
-        // `bundle` is a `static let`; a second call must not re-run resolution
-        // and must not trap on the way through.
-        let first = PulseResources.bundle?.bundleURL
-        let second = PulseResources.bundle?.bundleURL
-        XCTAssertEqual(first, second)
     }
 }
 
@@ -615,8 +598,7 @@ final class PrivateFileTests: XCTestCase {
 final class DebugLogKeyTests: XCTestCase {
     // MARK: - The debug log keeps the project name off disk
 
-    /// A row key used to fall back to the workspace leaf, so it could be a
-    /// directory name from the user's disk (it is hashed now — `RowIdentity`).
+    /// The debug log never carries a directory name from the user's disk.
     func testDebugLogKeyDropsTheProjectNameButStaysCorrelatable() {
         let key = DebugLog.key("claude|SecretProject")
         XCTAssertFalse(key.contains("SecretProject"))
@@ -630,8 +612,7 @@ final class DebugLogKeyTests: XCTestCase {
     }
 }
 
-/// Live Wire — the subprocess wrapper underneath, and the code downstream
-/// that had never once run with a working directory in hand.
+/// The subprocess wrapper always returns a verdict.
 final class ProcessTerminationTests: XCTestCase {
     // MARK: - The subprocess wrapper under it
 

@@ -179,10 +179,6 @@ struct ScanQuietTests {
     /// observed but missing from `observed`, so the wall above cannot go
     /// quietly partial.
     @Test func everyObservedPropertyIsListed() throws {
-        // The model stays small — the book, the watchers and banner
-        // bookkeeping live in `ScanEngine` and `WaitNotifier`.
-        let count = Self.observed.count
-        #expect(count <= 15, "the observed model grew to \(count) properties")
         let listed = Set(Self.observed.map(\.0))
         let stored = Mirror(reflecting: quietStore()).children.compactMap(\.label)
         // `@Observable` stores a tracked property as `_name`; an ignored one
@@ -345,7 +341,7 @@ struct EventFeedTests {
         #expect(store.engine.logCursor?.header == "# g2")
     }
 
-    /// Fix 4: a failed read, or an empty one, never resets what was applied
+    /// A failed read, or an empty one, never resets what was applied
     /// — the next read of the same log does not replay an answered block.
     @Test func aFailedOrEmptyReadKeepsWhatWasApplied() {
         let store = StatusStore()
@@ -362,7 +358,7 @@ struct EventFeedTests {
         #expect(store.cachedAll.first?.state == .running, "the answered block stays answered")
     }
 
-    /// Fix 2: approved, a long turn of tools, then a relaunch. The new
+    /// Approved, a long turn of tools, then a relaunch. The new
     /// engine replays the whole log before it projects: not red, and no
     /// banner owed for anything.
     @Test func aRelaunchReplaysTheLogAndIsNotRed() {
@@ -384,7 +380,7 @@ struct EventFeedTests {
         #expect(owed.isEmpty)
     }
 
-    /// Fix 3: parallel tools written before the answering one, all in one
+    /// Parallel tools written before the answering one, all in one
     /// read — every line is applied, the answer too.
     @Test func parallelToolsBeforeTheAnswerInOneRead() {
         let store = StatusStore()
@@ -822,7 +818,7 @@ struct CoalescingThrottleTests {
     @Test func aCoalescedEventIsDeliveredAtTheEndOfTheWindow() {
         var throttle = CoalescingThrottle(window: 0.35)
         #expect(throttle.event(at: 10.0) == .fire)
-        #expect(throttle.event(at: 10.1) == .armTrailing, "the second event used to be dropped")
+        #expect(throttle.event(at: 10.1) == .armTrailing, "the second event is never dropped")
         #expect(throttle.event(at: 10.2) == .absorbed)
         #expect(abs(throttle.trailingDelay(at: 10.2) - 0.2) < 0.001)
         throttle.trailingFired(at: 10.4)

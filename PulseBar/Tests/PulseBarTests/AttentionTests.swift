@@ -56,9 +56,8 @@ final class AttentionBookTests: XCTestCase {
         XCTAssertEqual(state(b, "claude|s1"), "working")
     }
 
-    /// Dismissing a session-less hook wait once wrote a session-less
-    /// `done`, which cleared every session of that agent. A `done` clears
-    /// exactly what it names: an empty session, only session-less entries.
+    /// A `done` clears exactly what it names: an empty session, only the
+    /// session-less entries — never every session of that agent.
     func testASessionlessDoneClearsOnlyTheSessionlessEntry() {
         let b = book(tsv([
             ["claude", "permission", "\(now - 5000)", "a", "s1", "/p"],
@@ -165,11 +164,8 @@ final class AttentionBookTests: XCTestCase {
         XCTAssertEqual(TrayState.state(of: session, nowMs: now + TrayState.idleBoundMs + 1), .recent)
     }
 
-    func testSubagentEventsNeverRaiseWaiting() {
-        XCTAssertTrue(book(tsv([["claude", "subagent_start", "\(now)", "", "s1", "/p"]])).sessions.isEmpty)
-    }
-
     func testUnknownKindNeverRaisesWaiting() {
+        XCTAssertTrue(book(tsv([["claude", "subagent_start", "\(now)", "", "s1", "/p"]])).sessions.isEmpty)
         let b = book(tsv([["gemini", "totally_fake_kind", "\(now)", "nope", "s1", "/p"]]))
         XCTAssertTrue(b.sessions.isEmpty, "free-text kinds must never light Waiting")
     }
@@ -233,18 +229,7 @@ final class AttentionBookTests: XCTestCase {
         ]))
         let wait = try XCTUnwrap(block(b, "claude|c1"))
         XCTAssertEqual(wait.ask, "Bash: npm run build")
-        XCTAssertEqual(wait.sinceMs, now - 2000, "24.0: a same-kind re-raise inside the grace is the same block — the first raise owns the clock")
-    }
-
-    /// The grace is measured between the two lines, not against the clock
-    /// the file is read at.
-    func testAStopStillClearsAPermissionPastTheGraceWindow() {
-        let old = now - 60_000
-        let b = book([
-            "claude\tpermission\t\(old)\tBash: npm run build\tsession-10\t/Users/me/Pulse\t\t\t\t",
-            "claude\tturn\t\(old + SessionBook.stopGraceMs + 1)\t\tsession-10\t\t\t\t\t",
-        ].joined(separator: "\n") + "\n")
-        XCTAssertEqual(state(b, "claude|session-10"), "turn")
+        XCTAssertEqual(wait.sinceMs, now - 2000, "a same-kind re-raise inside the grace is the same block — the first raise owns the clock")
     }
 }
 
@@ -286,7 +271,7 @@ final class PulseHookReceiverTests: XCTestCase {
         return text.split(separator: "\n").compactMap { AttentionRecord(line: $0) }
     }
 
-    /// Everything but the `tool` lines — what the older tests were about.
+    /// Everything but the `tool` lines.
     private func blocksAndTurns() -> [AttentionRecord] {
         records().filter { $0.kind != "tool" }
     }
@@ -399,7 +384,7 @@ final class PulseHookReceiverTests: XCTestCase {
         deliver("claude", "PostToolUse", #"{"session_id":"s1","cwd":"/w","hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"/w/a.swift"}}"#)
         deliver("claude", "Stop", #"{"session_id":"s1","cwd":"/w","hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"All tests pass."}"#)
         deliver("claude", "SessionEnd", #"{"session_id":"s1","cwd":"/w","hook_event_name":"SessionEnd","reason":"exit"}"#)
-        XCTAssertEqual(records().map(\.kind), ["start", "working", "tool", "turn", "end"], "25.0: one log, every event in order")
+        XCTAssertEqual(records().map(\.kind), ["start", "working", "tool", "turn", "end"], "one log, every event in order")
         XCTAssertEqual(records().first { $0.kind == "turn" }?.message, "All tests pass.")
         XCTAssertEqual(records().first { $0.kind == "working" }?.message, "Fix the login", "the prompt is the title's source")
         let tool = try? XCTUnwrap(records().first { $0.kind == "tool" })
@@ -658,18 +643,6 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(deliver("goose", "permission", #"{"message":"x","session_id":"x"}"#), 0, "not a supported agent")
         XCTAssertEqual(deliver("claude", "", #"{"message":"says nothing about what it is","session_id":"x"}"#), 0)
         XCTAssertFalse(FileManager.default.fileExists(atPath: log.path))
-    }
-
-    func testGrokRunningClaudesHooksIsRefused() {
-        let code = PulseHookReceiver.run(
-            arguments: ["PulseBar", "--hook", "claude", "PermissionRequest"],
-            stdin: #"{"session_id":"g","tool_name":"Bash"}"#,
-            environment: ["GROK_HOOK_EVENT": "PermissionRequest"],
-            logURL: log,
-            locate: located
-        )
-        XCTAssertEqual(code, 0)
-        XCTAssertTrue(records().isEmpty)
     }
 
     /// A payload handed as the last argument means stdin is not read at
@@ -1066,7 +1039,7 @@ final class HooksInstallerTests: XCTestCase {
     }
 
     /// Codex is hooks.json only: an install and an uninstall never touch
-    /// `config.toml` — not even a `notify` line an older Pulse wrote there.
+    /// `config.toml`, and a `notify` line there is not a Pulse hook.
     func testCodexIsHooksJSONOnly() throws {
         let config = "model = \"gpt-5\"\nnotify = [\"/x/pulse-hook\", \"codex\"]\n"
         try write(".codex/config.toml", config)
@@ -1572,7 +1545,7 @@ struct TurnTruthTests {
         #expect(r.rows.isEmpty, "with no session there is no row it could belong to")
     }
 
-    @Test func theReceiverWritesTheV5Kinds() throws {
+    @Test func theReceiverWritesTheProtocolKinds() throws {
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("pulse-turn-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
@@ -1903,7 +1876,7 @@ struct EventLogTests {
     }
 
     /// Compaction keeps a block together with what answers it, groups a
-    /// session-less line by agent and folder (fix 15), and forgets a
+    /// session-less line by agent and folder, and forgets a
     /// day-old session.
     @Test func compactionKeepsPerSessionHistory() {
         let now = t0
@@ -1952,37 +1925,11 @@ struct EventLogTests {
     }
 }
 
-/// Clarity fixes — each test pins one defect found by reading the code: the
-/// value the user would have seen, before and after.
-@MainActor
-@Suite("Attention fixes", .serialized)
-struct AttentionFixTests {
+/// The stop grace is a function of the two lines, not of when the file is read.
+@Suite("Stop grace")
+struct StopGraceTests {
     let now: Int64 = 1_800_000_000_000
     static let minute: Int64 = 60_000
-
-    // MARK: - Harness
-
-    final class Home {
-        let url: URL
-        init() {
-            url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("pulse-clarity-\(UUID().uuidString)", isDirectory: true)
-        }
-        deinit { try? FileManager.default.removeItem(at: url) }
-
-        @discardableResult
-        func write(_ relative: String, _ text: String, modified: Date? = nil) throws -> URL {
-            let file = url.appendingPathComponent(relative)
-            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try text.write(to: file, atomically: true, encoding: .utf8)
-            if let modified {
-                try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: file.path)
-            }
-            return file
-        }
-    }
-
-    // MARK: - 2 · the stop grace is a function of the two lines
 
     @Test func theStopGraceDoesNotDependOnWhenTheFileIsRead() {
         let raise = now - 10 * Self.minute

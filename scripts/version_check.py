@@ -8,8 +8,6 @@ Everything else that carries a version string must agree with it:
   - README.md              → the `**版本：`x.y.z`**` badge
   - README.md              → 「下载 DMG」link must target `/tag/v{semver}`
 
-(The legacy Zig shell carried two more copies; that tree was removed in 0.22.)
-
 Run: python3 scripts/version_check.py [--fix]
 Exit 1 on any mismatch (with --fix, rewrites the followers and exits 0).
 """

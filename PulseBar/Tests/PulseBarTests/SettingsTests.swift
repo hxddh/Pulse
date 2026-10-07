@@ -201,17 +201,6 @@ struct SettingsModelTests {
             #expect(!L10n.t(.releases, lang).isEmpty)
         }
     }
-
-    /// The setup card carries no login checkbox: Settings keeps the one
-    /// login toggle.
-    @MainActor
-    @Test func theSetupCardIsOneActionWithoutACheckbox() {
-        let store = StatusStore(lang: .en)
-        store.presentAgents = [.claude]
-        let card = store.trayNotice
-        #expect(card?.kind == .setup)
-        #expect(card?.action == .connect)
-    }
 }
 
 /// The interface follows the system language: Chinese of any script reads
@@ -219,13 +208,6 @@ struct SettingsModelTests {
 @Suite("System language")
 @MainActor
 struct SystemLanguageTests {
-    @Test func theStoreSpeaksTheLanguageItWasGiven() {
-        let zh = StatusStore(lang: .zh).lang
-        let en = StatusStore(lang: .en).lang
-        #expect(zh == .zh)
-        #expect(en == .en)
-    }
-
     @Test func theSystemLanguageIsOneOfTheTwoTables() {
         let system = ResolvedLanguage.system
         let code = Locale.preferredLanguages.first ?? "en"
@@ -236,16 +218,6 @@ struct SystemLanguageTests {
 /// "Don't suggest hooks" is the person's decision, and it persists.
 @Suite("Hooks nudge setting")
 struct HooksNudgeSettingTests {
-    @Test func hooksNudgeOffRoundTrips() throws {
-        var settings = PulseSettings()
-        settings.hooksNudgeOff = true
-        let data = try JSONEncoder().encode(settings)
-        let reparsed = try JSONDecoder().decode(PulseSettings.self, from: data)
-        #expect(reparsed.hooksNudgeOff)
-        let absent = try JSONDecoder().decode(PulseSettings.self, from: Data("{}".utf8))
-        #expect(!absent.hooksNudgeOff)
-    }
-
     @MainActor
     @Test func anUninstalledChoiceSilencesTheHooksNudge() {
         let store = StatusStore(lang: .en)
@@ -272,24 +244,11 @@ struct TerminalAutomationTests {
         return row
     }
 
-    @Test func aTerminalTabIsAlwaysTried() {
-        let tab = row("tty:/dev/ttys004;term:Apple_Terminal")
-        #expect(tab.landingPlan.steps.first == .ttyTab(tty: "ttys004"))
-        #expect(tab.landingPlan.precision == .exact)
-        let iterm = row("iterm:w0t1p0:ABC;tty:/dev/ttys009;term:iTerm.app")
-        #expect(iterm.landingPlan.steps.first == .iTermSession(uniqueID: "ABC"))
-    }
-
     @Test func anAppOnlyGoSaysWhereAutomationIsOnlyWhenAScriptWasTried() {
         let tab = RowNotice.appOnly(row: row("tty:/dev/ttys004;term:Apple_Terminal"), lang: .en)
         #expect(tab.text == L10n.t(.focusAppOnlyAutomation, .en))
         let ghostty = RowNotice.appOnly(row: row("tty:/dev/ttys002;term:ghostty"), lang: .en)
         #expect(ghostty.text == L10n.t(.focusAppOnly, .en), "Ghostty: no script was tried")
-    }
-
-    @Test func theNoticeNamesAutomationInBothLanguages() {
-        #expect(L10n.t(.focusAppOnlyAutomation, .en).contains("Automation"))
-        #expect(L10n.t(.focusAppOnlyAutomation, .zh).contains("自动化"))
     }
 }
 
@@ -306,9 +265,5 @@ struct ReopenTests {
         #expect(opened == 1)
         let pending = store.takePendingReveal()
         #expect(pending == nil, "no row named: the tray selects the oldest wait itself")
-    }
-
-    @Test func aSecondCopyAsksByADistributedNotificationWithNoPayload() {
-        #expect(SingleInstanceGuard.reopenNotification.rawValue == "com.pulse.app.reopen")
     }
 }

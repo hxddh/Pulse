@@ -310,7 +310,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         win.title = store.tr(.settingsTitle)
         win.identifier = NSUserInterfaceItemIdentifier("pulse-settings")
         win.styleMask = [.titled, .closable, .miniaturizable]
-        // One page of short groups (EXPERIENCE.md §6).
+        // One page of short groups (EXPERIENCE.md, Settings).
         win.setContentSize(NSSize(width: 500, height: 620))
         win.contentMinSize = NSSize(width: 460, height: 420)
         win.isReleasedWhenClosed = false
