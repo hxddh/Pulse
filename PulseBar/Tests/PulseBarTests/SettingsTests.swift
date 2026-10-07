@@ -187,7 +187,7 @@ struct SettingsModelTests {
     @Test func theSettingsPageShowsTheLoginItem() {
         let store = StatusStore(lang: .en)
         store.settings.launchAtLogin = true
-        store.landLoginItem(.requiresApproval)
+        store.land(\.loginItem, .requiresApproval)
         let model = store.settingsModel
         #expect(model.launchAtLogin)
         #expect(model.loginNote == .needsApproval)
@@ -252,9 +252,9 @@ struct HooksNudgeSettingTests {
         store.installPreviewFixture("waiting")
         store.presentAgents = [.claude, .codex]
         store.notifyAuthorized = true
-        #expect(!store.setupAgents.isEmpty)
+        #expect(!store.trayNoticeInput.unconnected.isEmpty)
         store.settings.hooksNudgeOff = true
-        #expect(store.setupAgents.isEmpty)
+        #expect(store.trayNoticeInput.unconnected.isEmpty)
     }
 }
 
@@ -302,7 +302,7 @@ struct ReopenTests {
         let store = StatusStore(lang: .en)
         var opened = 0
         store.showTray = { opened += 1 }
-        store.reopen()
+        store.requestTrayReveal()
         #expect(opened == 1)
         let pending = store.takePendingReveal()
         #expect(pending == nil, "no row named: the tray selects the oldest wait itself")

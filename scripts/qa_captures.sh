@@ -6,7 +6,7 @@
 #                                       # header, the notice, the detail page,
 #                                       # Settings) in zh/en × light/dark, with
 #                                       # a contact sheet and a manifest per pass
-#   ./scripts/qa_captures.sh status     # the tray panel and the menu-bar lamp
+#   ./scripts/qa_captures.sh status     # the tray and the menu-bar lamp
 #                                       # for each status-* fixture, zh·light
 #                                       # and en·dark
 #
@@ -166,8 +166,8 @@ status_captures() {
         --tray-fixture="$fixture" \
         --appearance="$appearance" \
         -AppleLanguages "$(apple_languages "$language")" \
-        --open-tray-panel \
-        --capture-tray-panel="$tray" \
+        --open-tray \
+        --capture-tray="$tray" \
         --capture-status-item="$lamp" &
       local pid=$!
       if ! wait_for_files "$timeout" "$tray" "$lamp"; then

@@ -228,7 +228,7 @@ enum SurfaceFixtures {
             installFailure: HooksSupport.Status.failureText([.gemini: .invalidJSON], lang: lang)
         )) ?? TrayNoticeModel(
             kind: .setupFailed, text: "", actionTitle: "", action: .openHooksSettings,
-            systemImage: "exclamationmark.triangle", tone: .attention
+            systemImage: "exclamationmark.triangle", tone: .stalled
         )
     }
 

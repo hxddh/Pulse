@@ -24,7 +24,8 @@ struct SettingsView: View {
             store.performSettings(action)
         }
         .onAppear {
-            store.landHooksStatus(HooksSupport.probeStatus())
+            store.land(\.hooksStatus, HooksSupport.probeStatus())
+            store.refreshPresentAgents()
             store.refreshLoginItem()
             PulseNotify.refreshAuthorization()
         }
@@ -36,13 +37,14 @@ extension StatusStore {
     /// The Settings page as a value.
     var settingsModel: SettingsModel {
         var warning: String?
-        if isVersionMismatch, let bundle = PulseVersion.bundleVersion {
+        // A stale `Pulse.app` beside a fresh build; never for a QA fixture,
+        // whose host bundle's version is unrelated to Pulse.
+        if !previewFixtureActive, case .mismatch(let bundle) = PulseVersion.channel {
             warning = String(format: tr(.versionMismatchHint), PulseVersion.semver, bundle)
         } else if PulseVersion.distributionChannel == "preview" {
             warning = tr(.buildPreview)
         }
         let build = PulseVersion.buildLine
-        let present = Set(AgentID.priority.filter(HooksInstaller.vendorPresent))
         let login = SettingsModel.loginLine(asked: settings.launchAtLogin, state: loginItem)
         return SettingsModel(
             lang: lang,
@@ -50,11 +52,11 @@ extension StatusStore {
             loginNote: login.note,
             notifications: SettingsModel.notifications(notifyAuthorized),
             hooksStatus: hooksStatus.label(lang: lang),
-            hooksInstalled: hooksInstalled,
+            hooksInstalled: !hooksStatus.installedAgents.isEmpty,
             hooksBusy: hooksStatus.isWorking,
             hookAgents: SettingsModel.hookAgents(
                 installed: hooksStatus.installedAgents,
-                present: present,
+                present: presentAgents,
                 lastEventMs: engine.latestHookEventMs,
                 nowMs: Int64(Date().timeIntervalSince1970 * 1000),
                 lang: lang,
@@ -62,7 +64,7 @@ extension StatusStore {
             ),
             absentAgents: SettingsModel.absentAgents(
                 installed: hooksStatus.installedAgents,
-                present: present,
+                present: presentAgents,
                 failed: hooksStatus.failures
             ),
             version: build.isEmpty ? PulseVersion.about : "\(PulseVersion.about) · \(build)",
@@ -75,8 +77,8 @@ extension StatusStore {
         switch action {
         case .setLaunchAtLogin(let on): setLaunchAtLogin(on)
         case .openLoginItems: LoginItem.openSystemSettings()
-        case .enableNotifications: requestNotificationAuthorization()
-        case .openNotificationSettings: openSystemNotificationSettings()
+        case .enableNotifications: PulseNotify.requestAuthorizationAfterUserAction()
+        case .openNotificationSettings: PulseNotify.openSystemSettings()
         case .installHooks, .uninstallHooks:
             if let job = SettingsModel.hooksJob(action) { runHooks(job) }
         case .copyReport: copyReport()
@@ -93,7 +95,7 @@ extension StatusStore {
             version: "\(PulseVersion.fingerprint) · \(PulseVersion.distributionChannel)",
             macOS: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
             installed: hooksStatus.installedAgents,
-            present: Set(AgentID.priority.filter(HooksInstaller.vendorPresent)),
+            present: presentAgents,
             failed: hooksStatus.failures,
             lastEventMs: engine.latestHookEventMs,
             nowMs: Int64(Date().timeIntervalSince1970 * 1000),
@@ -169,12 +171,12 @@ struct SettingsFace: View {
                     Button(t(.openLoginItems)) { send(.openLoginItems) }
                 } label: {
                     Text(t(.loginItemNeedsApproval))
-                        .foregroundStyle(PulseTheme.Tone.attention.color)
+                        .foregroundStyle(PulseTheme.warning)
                 }
             case .failed?:
                 Label(t(.loginItemFailed), systemImage: "exclamationmark.triangle")
                     .font(PulseTheme.Font.caption)
-                    .foregroundStyle(PulseTheme.Tone.attention.color)
+                    .foregroundStyle(PulseTheme.warning)
             case nil:
                 EmptyView()
             }
@@ -191,7 +193,7 @@ struct SettingsFace: View {
                     Button(t(.openNotificationSettings)) { send(.openNotificationSettings) }
                 } label: {
                     Text(t(.notifyDenied))
-                        .foregroundStyle(PulseTheme.Tone.attention.color)
+                        .foregroundStyle(PulseTheme.warning)
                 }
             case .allowed:
                 LabeledContent {
@@ -213,13 +215,13 @@ struct SettingsFace: View {
             } label: {
                 Text(t(.settingsHooksTitle))
                 Text(model.hooksStatus)
-                    .foregroundStyle(model.hooksInstalled ? AnyShapeStyle(.secondary) : AnyShapeStyle(PulseTheme.Tone.attention.color))
+                    .foregroundStyle(model.hooksInstalled ? AnyShapeStyle(.secondary) : AnyShapeStyle(PulseTheme.warning))
             }
             ForEach(model.hookAgents) { line in
                 LabeledContent {
                     Text(line.state)
                         .foregroundStyle(
-                            line.failed ? AnyShapeStyle(PulseTheme.Tone.attention.color)
+                            line.failed ? AnyShapeStyle(PulseTheme.warning)
                                 : line.installed ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary)
                         )
                 } label: {
@@ -273,10 +275,86 @@ struct SettingsFace: View {
                 if let warning = model.buildWarning {
                     Text(warning)
                         .font(PulseTheme.Font.caption)
-                        .foregroundStyle(PulseTheme.Tone.attention.color)
+                        .foregroundStyle(PulseTheme.warning)
                 }
             }
             Button(t(.releases)) { send(.openReleases) }
         }
+    }
+}
+
+/// AppKit-hosted settings window — reliable for LSUIElement / accessory apps.
+@MainActor
+final class SettingsWindowController: NSObject, NSWindowDelegate {
+    static let shared = SettingsWindowController()
+
+    /// Read by `PulseQA`'s settings capture.
+    private(set) var window: NSWindow?
+    private var hosting: NSHostingController<SettingsView>?
+    private(set) var isOpen = false
+
+    /// Where it scrolls is `store.settingsFocus`, set by
+    /// `StatusStore.openSettings(focus:)`.
+    func show(store: StatusStore) {
+        // Fast path: reuse window + hosting; SettingsView already observes store.
+        if let window, let hosting {
+            hosting.rootView = SettingsView(store: store)
+            window.title = store.tr(.settingsTitle)
+            present(window)
+            return
+        }
+
+        let root = SettingsView(store: store)
+        let host = NSHostingController(rootView: root)
+        let win = NSWindow(contentViewController: host)
+        win.title = store.tr(.settingsTitle)
+        win.identifier = NSUserInterfaceItemIdentifier("pulse-settings")
+        win.styleMask = [.titled, .closable, .miniaturizable]
+        // One page of short groups (EXPERIENCE.md §6).
+        win.setContentSize(NSSize(width: 500, height: 620))
+        win.contentMinSize = NSSize(width: 460, height: 420)
+        win.isReleasedWhenClosed = false
+        win.delegate = self
+        win.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        hosting = host
+        window = win
+        present(win)
+    }
+
+    private func present(_ window: NSWindow) {
+        isOpen = true
+        if !window.isVisible {
+            window.center()
+        }
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        NSApp?.activate(ignoringOtherApps: true)
+        // Escalate only if the window did not become key (the slow path):
+        // Pulse is a regular app while Settings is open, an accessory again
+        // once it closes. Flipping the policy is the slow part, so it stays
+        // `.accessory` whenever it can.
+        DispatchQueue.main.async {
+            if !window.isKeyWindow {
+                if NSApp?.activationPolicy() != .regular {
+                    NSApp?.setActivationPolicy(.regular)
+                }
+                window.makeKeyAndOrderFront(nil)
+                NSApp?.activate(ignoringOtherApps: true)
+            }
+        }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        isOpen = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            if SettingsWindowController.shared.isOpen { return }
+            if NSApp?.activationPolicy() != .accessory {
+                NSApp?.setActivationPolicy(.accessory)
+            }
+        }
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        isOpen = true
     }
 }

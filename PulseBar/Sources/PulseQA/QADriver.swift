@@ -11,8 +11,8 @@ import SwiftUI
 //   --tray-fixture=<name>       a fixed world instead of this Mac's sessions
 //   --open-settings             open Settings
 //   --open-tray-preview         host the tray in a normal window
-//   --open-tray-panel           open the tray panel
-//   --capture-tray-panel=<png>  photograph the tray panel
+//   --open-tray                 open the tray (the status item's popover)
+//   --capture-tray=<png>        photograph the tray
 //   --capture-status-item=<png> photograph the menu-bar item
 //   --capture-settings=<png>    photograph Settings
 //
@@ -78,7 +78,7 @@ enum QADriver {
                 AppServices.store.openSettings()
             }
         }
-        // Hosts the exact TrayPanel view in a normal window so layout and
+        // Hosts the exact tray view in a normal window so layout and
         // accessibility regressions are testable without Screen Recording or
         // UI automation permissions.
         if arguments.contains("--open-tray-preview") {
@@ -86,19 +86,19 @@ enum QADriver {
                 TrayPreviewWindowController.shared.show(store: AppServices.store)
             }
         }
-        if arguments.contains("--open-tray-panel") {
+        if arguments.contains("--open-tray") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                StatusPanelController.shared?.show()
+                StatusItemController.shared?.show()
             }
         }
-        if let path = value("--capture-tray-panel=", in: arguments) {
+        if let path = value("--capture-tray=", in: arguments) {
             DispatchQueue.main.asyncAfter(deadline: .now() + captureDelay) {
-                StatusPanelController.shared?.capture(to: URL(fileURLWithPath: path))
+                QADriver.captureTray(to: URL(fileURLWithPath: path))
             }
         }
         if let path = value("--capture-status-item=", in: arguments) {
             DispatchQueue.main.asyncAfter(deadline: .now() + captureDelay) {
-                StatusPanelController.shared?.captureStatusItem(to: URL(fileURLWithPath: path))
+                StatusItemController.shared?.captureStatusItem(to: URL(fileURLWithPath: path))
             }
         }
         if let path = value("--capture-settings=", in: arguments) {
@@ -110,58 +110,31 @@ enum QADriver {
     }
 }
 
-extension StatusPanelController {
-    /// Render this process's own panel for visual QA without Screen Recording,
-    /// Accessibility, Apple Events, or UI automation permissions.
-    func capture(to url: URL) {
-        captureInProgress = true
-        // `--open-tray-panel` is commonly paired with capture. Calling
-        // `show()` again in that case resizes an already-visible SwiftUI host
-        // while AppKit is in its display cycle — the exact macOS 26 path that
-        // raises `_postWindowNeedsUpdateConstraints`. Reuse the settled panel
-        // instead of starting a second layout transaction.
-        if panel.isVisible {
-            panel.makeKeyAndOrderFront(nil)
-        } else {
-            show()
+extension QADriver {
+    /// Photograph the tray — the same SwiftUI root the popover hosts, on a
+    /// fresh glance, drawn offscreen like every surface fixture
+    /// (`SurfaceCapture.render`), so no Screen Recording, Accessibility or
+    /// automation permission is asked. The popover's own material and arrow
+    /// are the system's and are not in the picture.
+    static func captureTray(to url: URL) {
+        let store = AppServices.store
+        let ui = TrayUI(store: store)
+        ui.open()
+        let view = AnyView(TrayView(store: store, ui: ui))
+        let width = Double(TrayChrome.width)
+        // The first pass measures the list (`TrayUI.listHeight` keeps it);
+        // the second is drawn at that height.
+        _ = SurfaceCapture.render(view, width: width, appearance: NSApp.effectiveAppearance)
+        guard let image = SurfaceCapture.render(view, width: width, appearance: NSApp.effectiveAppearance),
+              SurfaceCapture.write(image, to: url) else {
+            DebugLog.write("tray capture failed")
+            return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) { [weak self] in
-            guard let self else { return }
-            defer {
-                self.captureInProgress = false
-                self.close()
-            }
-            // Capture the window root, not only the rounded material child.
-            // Capturing only `effectView` hid rectangular frame artefacts from
-            // visual QA even though they were visible on the real desktop.
-            let surface = self.rootView
-            // `show()` has already sized and laid out the panel. A display pass
-            // is enough to flush the layer tree without asking SwiftUI to
-            // invalidate its constraints recursively during the snapshot.
-            surface.displayIfNeeded()
-            let bounds = surface.bounds
-            guard bounds.width > 0, bounds.height > 0 else {
-                DebugLog.write("tray capture failed — empty surface")
-                return
-            }
-            guard let bitmap = surface.bitmapImageRepForCachingDisplay(in: bounds) else {
-                DebugLog.write("tray capture failed — no bitmap")
-                return
-            }
-            surface.cacheDisplay(in: bounds, to: bitmap)
-            guard let data = bitmap.representation(using: .png, properties: [:]) else {
-                DebugLog.write("tray capture failed — no PNG representation")
-                return
-            }
-            do {
-                try data.write(to: url, options: .atomic)
-                DebugLog.write("tray capture wrote \(url.path)")
-            } catch {
-                DebugLog.write("tray capture failed \(error.localizedDescription)")
-            }
-        }
+        DebugLog.write("tray capture wrote \(url.path)")
     }
+}
 
+extension StatusItemController {
     /// Capture only this app's status-bar button for appearance QA.
     ///
     /// `cacheDisplay` renders a view owned by this process, so this proves the

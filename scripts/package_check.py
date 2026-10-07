@@ -33,7 +33,7 @@ BUNDLE_NAME = "PulseBar_PulseApp.bundle"
 QA_ONLY_MARKERS = [
     b"--capture-surfaces=",
     b"--tray-fixture=",
-    b"--capture-tray-panel=",
+    b"--capture-tray=",
     b"--appearance=",
 ]
 

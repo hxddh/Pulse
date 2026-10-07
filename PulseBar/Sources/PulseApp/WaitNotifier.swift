@@ -45,7 +45,7 @@ final class WaitNotifier {
         PulseNotify.registerCategories(lang: model.lang)
         PulseNotify.configure { [weak self] granted in
             Task { @MainActor in
-                self?.model?.landNotifyAuthorized(granted)
+                self?.model?.land(\.notifyAuthorized, granted)
                 self?.deliverPendingIfPossible()
                 DebugLog.write("notify authorization granted=\(String(describing: granted))")
             }
@@ -160,7 +160,7 @@ final class WaitNotifier {
         inFlight.remove(key)
         // A banner Notification Center refused is said in the tray, not
         // only in debug.log; the next accepted one clears it.
-        model?.landWaitingBannerFailed(!success)
+        model?.land(\.waitingBannerFailed, !success)
         if success {
             // Answered while the request was in flight: it goes as it came.
             withdraw(ledger.markNotified(key, nowMs: nowMs, bannerID: bannerID))

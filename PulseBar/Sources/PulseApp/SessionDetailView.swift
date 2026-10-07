@@ -103,7 +103,7 @@ struct SessionDetailFace: View {
             if let why = model.why {
                 Text(why)
                     .font(PulseTheme.Font.body)
-                    .foregroundStyle(model.lamp.tone == .attention ? AnyShapeStyle(PulseTheme.Tone.attention.color) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(model.lamp == .stalled ? AnyShapeStyle(PulseTheme.warning) : AnyShapeStyle(.secondary))
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !model.steps.isEmpty {
@@ -123,7 +123,7 @@ struct SessionDetailFace: View {
                 section(t(.detailErrorHeading)) {
                     Text(error)
                         .font(PulseTheme.Font.code)
-                        .foregroundStyle(PulseTheme.Tone.attention.color)
+                        .foregroundStyle(PulseTheme.warning)
                         .lineLimit(4)
                         .textSelection(.enabled)
                 }
@@ -186,34 +186,5 @@ struct FactGrid: View {
             }
         }
         .font(PulseTheme.Font.caption)
-    }
-}
-
-/// The lamp's shape in its tone — filled, ring, hollow or dotted
-/// (`LampFace`). The same vocabulary as the menu-bar glyph.
-struct LampShapeView: View {
-    let lamp: LampFace
-    var size: CGFloat = 9
-
-    private var color: Color { lamp.tone == .idle ? Color.secondary : lamp.tone.color }
-
-    var body: some View {
-        Group {
-            switch lamp.shape {
-            case .filled:
-                Circle().fill(color)
-            case .ring:
-                ZStack {
-                    Circle().strokeBorder(color, lineWidth: 1.4)
-                    Circle().fill(color).frame(width: size * 0.36, height: size * 0.36)
-                }
-            case .hollow:
-                Circle().strokeBorder(color, lineWidth: 1.4)
-            case .dotted:
-                Circle().strokeBorder(color, style: StrokeStyle(lineWidth: 1.4, dash: [1.4, 1.6]))
-            }
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
     }
 }

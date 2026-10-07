@@ -244,10 +244,10 @@ enum TerminalFocus {
     }
 }
 
-/// Reveal the app-owned panel directly.
+/// Reveal the tray directly.
 ///
 /// This intentionally has no Accessibility or Apple Events fallback. A
-/// reopen and a notification action call the panel controller owned by this
+/// reopen and a notification action call the status item owned by this
 /// process, so they cannot trigger an Automation permission prompt.
 ///
 /// Prefer `StatusStore.requestTrayReveal(rowKey:)` when a concrete Waiting row
@@ -255,7 +255,7 @@ enum TerminalFocus {
 enum TrayReveal {
     static func show() {
         Task { @MainActor in
-            StatusPanelController.shared?.show()
+            StatusItemController.shared?.show()
         }
     }
 }

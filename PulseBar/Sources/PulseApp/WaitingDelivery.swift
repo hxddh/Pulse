@@ -97,7 +97,7 @@ struct WaitingBanner: Equatable {
     static func thread(rowKey: String) -> String { "pulse.waiting." + rowKey }
 
     static func make(_ row: AgentRow, lang: ResolvedLanguage) -> WaitingBanner {
-        let project = AgentRow.shortProject(row.project.isEmpty ? row.cwd : row.project)
+        let project = TitleHeuristics.shortProject(row.project.isEmpty ? row.cwd : row.project)
         let title = project.isEmpty ? row.agent.displayName : "\(row.agent.displayName) · \(project)"
         let task = row.usefulTask.map { clip($0) } ?? ""
         return WaitingBanner(title: title, subtitle: task, body: body(row, lang: lang), threadID: thread(rowKey: row.rowKey))

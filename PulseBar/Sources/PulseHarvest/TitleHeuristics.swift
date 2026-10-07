@@ -1,9 +1,9 @@
 import Foundation
 import PulseCore
 
-/// What a session title is, and what it is not. A library can ask without
-/// depending on the app's row model; `AgentRow`'s static functions forward
-/// here, so there is one vocabulary.
+/// What a session title is, and what it is not, and how a place is written:
+/// one vocabulary for the event reader and the row (`AgentRow.usefulTask`,
+/// `shortPlace`, `displayPath`).
 package enum TitleHeuristics {
     /// A title is at most this many characters.
     package static let titleLimit = 120
@@ -23,6 +23,43 @@ package enum TitleHeuristics {
         chromeTitles.contains(
             value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         )
+    }
+
+    /// The title, when it is a real goal — not a vendor placeholder, the
+    /// agent's own name ("Claude", "Claude session"), a slash command or a
+    /// bare path, a tool identifier or a lone file. A `[label](URL)` link
+    /// keeps its label: titles are plain labels, not Markdown.
+    package static func usefulTitle(_ raw: String, agentName: String) -> String? {
+        let title = raw.replacingOccurrences(
+            of: #"!?\[([^\]\n]{1,240})\]\((?:https?|file)://[^)\n]+\)"#,
+            with: "$1",
+            options: .regularExpression
+        )
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, !isChromeTitle(title) else { return nil }
+        let low = title.lowercased()
+        let agent = agentName.lowercased()
+        if low == agent { return nil }
+        if [" session", " thread", " chat", " task", " agent"].contains(where: { low == agent + $0 }) { return nil }
+        if title.hasPrefix("/"), !title.contains(" ") { return nil }
+        if looksLikeToolIdentifier(title) || looksLikeFilenameOnlyTitle(title) { return nil }
+        return title
+    }
+
+    /// `update_plan`, `Bash`, namespaced MCP leaves — never a user goal.
+    package static func looksLikeToolIdentifier(_ raw: String) -> Bool {
+        let low = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !low.isEmpty, !low.contains(" ") else { return false }
+        let known: Set<String> = [
+            "bash", "shell", "exec", "read", "write", "grep", "glob",
+            "update_plan", "todowrite", "todo_write", "run_terminal_cmd",
+            "run_terminal_command", "batch_execute",
+        ]
+        return known.contains(low)
+            || low.contains(":")
+            || low.hasPrefix("mcp_") || low.hasPrefix("mcp.")
+            || low.hasSuffix("_plan") || low.hasSuffix("_todo")
+            || (low.hasPrefix("run_") && low.contains("terminal"))
     }
 
     package static func looksLikeFilenameOnlyTitle(_ raw: String) -> Bool {
@@ -51,6 +88,37 @@ package enum TitleHeuristics {
         if s.range(of: #"^[0-9a-fA-F-]{16,}$"#, options: .regularExpression) != nil { return "" }
         if s.count > 24 { return String(s.prefix(23)) + "…" }
         return s
+    }
+
+    /// A folder written the way a person would: "" for the home directory
+    /// (it is not a project), `~` for home, the tail of a deep path, the
+    /// short name of a relative one.
+    package static func displayPath(_ raw: String, home: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isHomeLike(trimmed, home: home) else { return "" }
+        guard trimmed.hasPrefix("/") else { return shortProject(trimmed) }
+        var path = trimmed
+        if !home.isEmpty, path.hasPrefix(home + "/") {
+            path = "~" + path.dropFirst(home.count)
+        }
+        let parts = path.split(separator: "/").map(String.init)
+        if parts.count > 3 {
+            return (path.hasPrefix("~") ? "~/…/" : "/…/") + parts.suffix(2).joined(separator: "/")
+        }
+        return path
+    }
+
+    /// Every spelling of "the home directory" this data can produce
+    /// (`-Users-name` decoded to `users-name`, the bare account name, `~`).
+    package static func isHomeLike(_ raw: String, home: String) -> Bool {
+        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s == "~" || s == "~/" { return true }
+        guard !home.isEmpty else { return false }
+        if s == home || s == home + "/" { return true }
+        let user = (home as NSString).lastPathComponent.lowercased()
+        guard !user.isEmpty else { return false }
+        let low = s.lowercased()
+        return low == user || low == "users-\(user)" || low == "-users-\(user)"
     }
 
     // MARK: - Prompts

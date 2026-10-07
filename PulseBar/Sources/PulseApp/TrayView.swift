@@ -1,12 +1,13 @@
 // The tray: a header that says why the lamp is lit, at most one notice, a
 // list of one-line sessions in an order that holds still while it is open
-// (every session; it scrolls inside the panel's height), and a detail page
-// one click or one key away. Every key goes
-// through `TrayKeys.reduce` (the panel's key monitor calls `TrayUI.handle`);
-// the faces here render values.
+// (every session; it scrolls inside the tray's height), and a detail page
+// one click or one key away. It lives in the status item's popover
+// (`StatusItemController`); every key goes through `TrayKeys.reduce` (the
+// tray's key monitor calls `TrayUI.handle`); the faces here render values.
 
-import SwiftUI
 import AppKit
+import Observation
+import SwiftUI
 
 // MARK: - Tray chrome
 
@@ -15,14 +16,11 @@ enum TrayChrome {
     /// title instead of thirty, still narrow beside the system popovers.
     static let width: CGFloat = 448
     static let padX: CGFloat = PulseTheme.Space.l
-    /// The height the panel may grow to before the list scrolls. One
-    /// number, read by the list and by `StatusPanelController` (which also
-    /// clamps it to the screen).
-    static let maxHeight: CGFloat = 760
-    /// The list's share of it: the panel minus header, notice and margin.
-    static let maxListHeight: CGFloat = maxHeight - 120
+    /// The list's height before it scrolls; `StatusItemController` also
+    /// keeps it inside the screen's visible frame.
+    static let maxListHeight: CGFloat = 640
     /// The selected row's fill (the pointer's or the keyboard's) is inset
-    /// from the panel edge.
+    /// from the tray's edge.
     static let highlightInset: CGFloat = PulseTheme.Space.s
     /// One hit target for every compact header control.
     static let headerControlSize: CGFloat = 28
@@ -35,9 +33,9 @@ enum TrayChrome {
     static let identityMaxWidth: CGFloat = 112
 }
 
-// MARK: - Tray panel
+// MARK: - The tray
 
-/// Measured height of the row list, so the panel is sized by its content.
+/// Measured height of the row list, so the tray is sized by its content.
 private struct ContentHeightKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
@@ -45,24 +43,12 @@ private struct ContentHeightKey: PreferenceKey {
     }
 }
 
-/// Owns nothing but the tray's identity: re-identifying the subtree per open
-/// resets every piece of per-view state (the measured height).
+/// The tray's root — the popover's content, and what `PulseQA` hosts in a
+/// plain window to photograph it.
 @MainActor
-struct TrayPanelHost: View {
+struct TrayView: View {
     var store: StatusStore
     var ui: TrayUI
-
-    var body: some View {
-        TrayPanel(store: store, ui: ui)
-            .id(store.traySessionToken)
-    }
-}
-
-@MainActor
-struct TrayPanel: View {
-    var store: StatusStore
-    var ui: TrayUI
-    @State private var measuredHeight: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(store: StatusStore, ui: TrayUI) {
@@ -70,7 +56,7 @@ struct TrayPanel: View {
         self.ui = ui
     }
 
-    private func t(_ key: L10n.Key) -> String { store.tr(key) }
+    private func t(_ key: L10n.Key) -> String { L10n.t(key, store.lang) }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -83,9 +69,12 @@ struct TrayPanel: View {
             }
         }
         .frame(width: TrayChrome.width)
-        // The one motion when the detail page opens or closes; the panel's
-        // frame follows without an animation of its own.
+        // The one motion when the detail page opens or closes; the popover
+        // follows the new size.
         .animation(PulseTheme.motion(reduced: reduceMotion), value: ui.keys.detail)
+        // Every open is a fresh glance: a new identity drops the last one's
+        // view state (its scroll position).
+        .id(ui.generation)
     }
 
     private var list: some View {
@@ -136,8 +125,10 @@ struct TrayPanel: View {
                 )
             }
             .scrollIndicators(.automatic)
-            .frame(height: min(max(measuredHeight, 40), CGFloat(ui.maxListHeight)))
-            .onPreferenceChange(ContentHeightKey.self) { measuredHeight = $0 }
+            .frame(height: min(max(ui.listHeight, 40), CGFloat(ui.maxListHeight)))
+            .onPreferenceChange(ContentHeightKey.self) { height in
+                if ui.listHeight != height { ui.listHeight = height }
+            }
             .onChange(of: ui.keys.selected) { _, key in
                 // Follow the keyboard, not the pointer.
                 guard let key, key != ui.pointerSelection else { return }
@@ -150,7 +141,7 @@ struct TrayPanel: View {
 
     private var emptyState: some View {
         HStack(spacing: PulseTheme.Space.m) {
-            PulseMarkView(size: 28, tone: .secondary)
+            PulseMarkView(size: 28)
             VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
                 Text(t(.noAgentsDetected))
                     .font(PulseTheme.Font.hero)
@@ -214,10 +205,9 @@ struct TrayHeaderFace: View {
         var text = Text("")
         for (index, count) in model.counts.enumerated() {
             if index > 0 { text = text + separator }
-            let numberColor: Color = count.tone == .idle ? .secondary : count.tone.color
             text = text
-                + Text("\(count.count) ").foregroundStyle(numberColor).monospacedDigit()
-                + Text(count.label).foregroundStyle(count.tone == .idle ? Color.secondary : Color.primary)
+                + Text("\(count.count) ").foregroundStyle(count.tone.color).monospacedDigit()
+                + Text(count.label).foregroundStyle(count.tone.isGrey ? Color.secondary : Color.primary)
         }
         return text
     }
@@ -234,7 +224,7 @@ struct TrayNoticeFace: View {
     var body: some View {
         HStack(alignment: .center, spacing: PulseTheme.Space.s) {
             Image(systemName: model.systemImage)
-                .foregroundStyle(model.tone == .idle ? Color.secondary : model.tone.color)
+                .foregroundStyle(model.tone.color)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
                 Text(model.text)
@@ -256,8 +246,8 @@ struct TrayNoticeFace: View {
         .padding(.horizontal, PulseTheme.Space.s)
         .padding(.vertical, PulseTheme.Space.xs + 2)
         .background(
-            (model.tone == .idle ? Color.primary : model.tone.color)
-                .opacity(model.tone == .idle ? PulseTheme.Fill.subtle : PulseTheme.Fill.waitTint),
+            (model.tone.isGrey ? Color.primary : model.tone.color)
+                .opacity(model.tone.isGrey ? PulseTheme.Fill.subtle : PulseTheme.Fill.waitTint),
             in: RoundedRectangle(cornerRadius: PulseTheme.Radius.card, style: .continuous)
         )
         .accessibilityElement(children: .contain)
@@ -424,7 +414,7 @@ struct TrayRowFace: View {
     private static func secondLineStyle(_ kind: TrayRowModel.SecondLine.Kind) -> AnyShapeStyle {
         switch kind {
         case .ask: return AnyShapeStyle(.secondary)
-        case .warning: return AnyShapeStyle(PulseTheme.Tone.attention.color)
+        case .warning: return AnyShapeStyle(PulseTheme.warning)
         case .step: return AnyShapeStyle(.tertiary)
         }
     }
@@ -457,12 +447,209 @@ struct TrayRowFace: View {
             if !model.age.isEmpty {
                 Text(model.age)
                     .font(PulseTheme.Font.caption)
-                    .foregroundStyle(model.lamp.tone == .waiting ? AnyShapeStyle(PulseTheme.Tone.waiting.color) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(model.lamp == .waiting ? AnyShapeStyle(model.lamp.color) : AnyShapeStyle(.secondary))
                     .monospacedDigit()
                     .lineLimit(1)
                     .fixedSize()
             }
         }
         .frame(minHeight: Self.lineHeight)
+    }
+}
+
+// MARK: - The tray's state
+
+/// The tray's per-open state: the selection (the keyboard's or the
+/// pointer's), the detail page, the frozen row order and the height the list
+/// may use on this screen. Owned by `StatusItemController`, reset on every
+/// open, and changed only through `TrayKeys.reduce`, a click or the pointer
+/// entering a row — never by a view's own state.
+@MainActor
+@Observable
+final class TrayUI {
+    let store: StatusStore
+    var keys = TrayKeys.State()
+    /// The order the rows had when the tray opened, newcomers appended.
+    var frozen: [String] = []
+    /// Every row that has been on screen this glance. While the tray is open
+    /// they stay listed, in their place, as long as they exist.
+    var pinned: Set<String> = []
+    /// The row the pointer selected last. The list scrolls to a selection
+    /// the keyboard made, never to one the pointer made — a row that moved
+    /// under a still pointer would select the next one.
+    @ObservationIgnored var pointerSelection: String?
+    /// Where the pointer was when it last selected a row, or when the tray
+    /// opened. A hover with the pointer still there — the list appeared, or
+    /// scrolled to the keyboard's selection, under a pointer that did not
+    /// move — selects nothing.
+    @ObservationIgnored var pointer: CGPoint?
+    /// The list's height budget on the current screen.
+    var maxListHeight: Double = Double(TrayChrome.maxListHeight)
+    /// The list's measured height. Kept across opens, so a tray opens at
+    /// about its size and is corrected before it is shown.
+    var listHeight: CGFloat = 0
+    /// Moves on every open: the tray takes a new identity (`TrayView`), so
+    /// nothing of the last glance's view state carries over.
+    private(set) var generation = 0
+    /// Asks the tray to close (Esc on the list, ⌘W).
+    @ObservationIgnored var onClose: () -> Void = {}
+
+    init(store: StatusStore) {
+        self.store = store
+    }
+
+    // MARK: - What the tray lists
+
+    /// The rows on screen — every row, the ones already shown this glance
+    /// in the frozen order, then newcomers (`TrayOrder.openWindow`). The
+    /// list scrolls inside the tray's height.
+    var displayRows: [AgentRow] {
+        TrayOrder.openWindow(
+            all: store.cachedAll,
+            window: store.snapshot.rows,
+            pinned: pinned,
+            frozen: frozen
+        )
+    }
+
+    /// The row whose detail page is open, while it still exists.
+    var detailRow: AgentRow? {
+        guard let key = keys.detail else { return nil }
+        return store.cachedAll.first { $0.rowKey == key }
+    }
+
+    private func reducerRows() -> [TrayKeys.Row] {
+        var rows = displayRows.map { TrayKeys.Row($0) }
+        if let detail = detailRow, !rows.contains(where: { $0.key == detail.rowKey }) {
+            rows.append(TrayKeys.Row(detail))
+        }
+        return rows
+    }
+
+    private func lookup(_ key: String) -> AgentRow? {
+        store.cachedAll.first { $0.rowKey == key }
+    }
+
+    // MARK: - Lifecycle
+
+    /// A new glance: nothing carries over from the last one. One
+    /// gesture — a menu-bar click and the shortcut both open on the first
+    /// row, which the projection's order makes the oldest wait
+    /// (`TrayState.assemble`: waits first, the oldest first, an unknown
+    /// clock last).
+    func open(pointer: CGPoint? = nil) {
+        generation &+= 1
+        frozen = store.snapshot.rows.map(\.rowKey)
+        pinned = Set(frozen)
+        pointerSelection = nil
+        self.pointer = pointer
+        var next = TrayKeys.State()
+        next.selected = displayRows.first?.rowKey
+        if keys != next { keys = next }
+        applyPendingReveal()
+    }
+
+    /// A reveal from a banner or a jump: select the row — and open its
+    /// detail when asked — even while another detail page is open. A reveal
+    /// for a row that no longer exists is dropped.
+    func applyPendingReveal() {
+        guard let reveal = store.takePendingReveal() else { return }
+        guard lookup(reveal.rowKey) != nil else { return }
+        var next = keys
+        next.selected = reveal.rowKey
+        next.detail = reveal.detail ? reveal.rowKey : nil
+        if keys != next { keys = next }
+    }
+
+    /// A scan landed: newcomers take the next place, a detail page whose row
+    /// left closes, and the selection stays on a row that is on screen.
+    func absorbScan() {
+        let extended = TrayOrder.extend(frozen, with: store.cachedAll)
+        if extended != frozen { frozen = extended }
+        let nextPinned = pinned.union(displayRows.map(\.rowKey))
+        if nextPinned != pinned { pinned = nextPinned }
+        var next = keys
+        if let detail = next.detail, lookup(detail) == nil { next.detail = nil }
+        next = TrayKeys.normalize(next, rows: displayRows.map { TrayKeys.Row($0) })
+        if keys != next { keys = next }
+    }
+
+    // MARK: - Keys
+
+    /// One key from the tray's monitor. False: not the tray's key.
+    func handle(_ key: TrayKeys.Key) -> Bool {
+        pointerSelection = nil
+        let outcome = TrayKeys.reduce(keys, key, rows: reducerRows())
+        let next = TrayKeys.normalize(outcome.state, rows: displayRows.map { TrayKeys.Row($0) })
+        if keys != next { keys = next }
+        if let effect = outcome.effect { perform(effect) }
+        return outcome.handled
+    }
+
+    private func perform(_ effect: TrayKeys.Effect) {
+        switch effect {
+        case .focus(let key):
+            if let row = lookup(key) { store.focusTerminal(row) }
+        case .dismiss(let key):
+            if let row = lookup(key) { store.dismissWaiting(row) }
+        case .refresh:
+            store.engine.refresh(reason: "manual")
+        case .openSettings:
+            store.openSettings()
+        case .closeTray:
+            onClose()
+        case .quit:
+            store.quit()
+        }
+    }
+
+    // MARK: - Clicks
+
+    func send(_ action: TrayRowModel.Action, row: AgentRow) {
+        switch action {
+        case .primary:
+            if row.canFocusTerminal {
+                store.focusTerminal(row)
+            } else {
+                showDetail(row.rowKey)
+            }
+        case .details: showDetail(row.rowKey)
+        case .dismiss: store.dismissWaiting(row)
+        case .focus: store.focusTerminal(row)
+        }
+    }
+
+    func send(_ action: DetailModel.Action, row: AgentRow) {
+        switch action {
+        case .back: closeDetail()
+        case .focus: store.focusTerminal(row)
+        case .dismiss: store.dismissWaiting(row)
+        }
+    }
+
+    /// The pointer moved onto a row: it is the selection — one highlight,
+    /// as in a menu. Not while a detail page is open (no row is on screen),
+    /// and not when the pointer is where it was (`pointer`).
+    func hover(_ key: String, at location: CGPoint) {
+        guard keys.detail == nil, location != pointer else { return }
+        pointer = location
+        pointerSelection = key
+        var next = keys
+        next.selected = key
+        if keys != next { keys = next }
+    }
+
+    func showDetail(_ key: String) {
+        var next = keys
+        next.detail = key
+        next.selected = key
+        if keys != next { keys = next }
+    }
+
+    func closeDetail() {
+        var next = keys
+        if let open = next.detail { next.selected = open }
+        next.detail = nil
+        if keys != next { keys = next }
     }
 }

@@ -43,7 +43,6 @@ struct ScanQuietTests {
             ("settingsFocus", \StatusStore.settingsFocus),
             ("setupConnected", \StatusStore.setupConnected),
             ("snapshot", \StatusStore.snapshot),
-            ("traySessionToken", \StatusStore.traySessionToken),
             ("waitingBannerFailed", \StatusStore.waitingBannerFailed),
         ]
     }
@@ -170,7 +169,7 @@ struct ScanQuietTests {
         tick(store)
         let fired = watch(store, Self.observed)
         var next = store.snapshot
-        next.headerTitle = "1 running"
+        next.title = "1"
         store.snapshot = next
         #expect(fired.names == ["snapshot"], "only what changed, and nothing else: \(fired.names)")
     }
@@ -225,14 +224,14 @@ struct ScanQuietTests {
         #expect(loop.deliveries == 0, "a settings write does not touch the lamp")
 
         var next = store.snapshot
-        next.headerTitle = "2 running"
+        next.title = "2"
         store.snapshot = next
-        next.headerTitle = "3 running"
+        next.title = "3"
         store.snapshot = next
         for _ in 0..<10 where loop.deliveries == 0 { await Task.yield() }
         #expect(loop.deliveries == 1, "a burst in one turn is one delivery")
 
-        next.headerTitle = "4 running"
+        next.title = "4"
         store.snapshot = next
         for _ in 0..<10 where loop.deliveries == 1 { await Task.yield() }
         #expect(loop.deliveries == 2, "and the loop re-arms")
@@ -247,7 +246,7 @@ struct ScanQuietTests {
         next.updatedAt = current.updatedAt.addingTimeInterval(2)
         #expect(!PulseSnapshot.needsPublish(next: next, current: current), "same world, two seconds later")
 
-        next.headerTitle = "1 running"
+        next.title = "1"
         #expect(PulseSnapshot.needsPublish(next: next, current: current), "content moved")
     }
 
@@ -272,8 +271,8 @@ struct ScanQuietTests {
         #expect(!PulseSnapshot.needsPublish(next: second, current: first))
     }
 
-    /// Only a wait's age is drawn in seconds; a running row's fresh activity
-    /// is no reason to redraw every tick.
+    /// Nothing is drawn in seconds: a running row's fresh activity is no
+    /// reason to redraw every tick.
     @Test func freshActivityOnARunningRowDoesNotRepublish() {
         let t0 = Date(timeIntervalSince1970: 1_800_000_000)
         var current = PulseSnapshot()
@@ -303,7 +302,7 @@ struct ScanQuietTests {
 
         var next = current
         next.updatedAt = t0.addingTimeInterval(2)
-        #expect(PulseSnapshot.needsPublish(next: next, current: current), "a 20 s wait is drawn in seconds — it moves every tick")
+        #expect(!PulseSnapshot.needsPublish(next: next, current: current), "a 20 s wait says \"now\" — it does not move every tick")
 
         current.rows[0].state = .blocked(RowWait(kind: "Permission", sinceMs: Int64(t0.timeIntervalSince1970 * 1000) - 600_000))
         next.rows = current.rows
@@ -380,7 +379,7 @@ struct EventFeedTests {
         let row = relaunched.cachedAll.first
         #expect(row?.isBlocked == false)
         #expect(row?.isYourTurn == true)
-        #expect(relaunched.snapshot.glance != .waiting)
+        #expect(relaunched.snapshot.lamp != .waiting)
         let owed = relaunched.notifier.ledger.queuedKeys
         #expect(owed.isEmpty)
     }
@@ -712,7 +711,7 @@ struct HookToBannerTests {
             let listed = store.cachedAll.contains { $0.rowKey == key }
             #expect(listed, "\(name): its session is a row")
             if item.agent.waitingSource == .none {
-                let glance = store.snapshot.glance
+                let glance = store.snapshot.lamp
                 #expect(glance != .waiting, "\(name) never reports a wait")
                 let owed = store.notifier.ledger.queuedKeys
                 #expect(owed.isEmpty, "\(name): no banner")
@@ -721,11 +720,11 @@ struct HookToBannerTests {
                 land(store, log: log, at: ms)
                 let turn = store.cachedAll.first { $0.rowKey == key }?.isYourTurn
                 #expect(turn == true, "\(name): its turn is quiet")
-                let after = store.snapshot.glance
+                let after = store.snapshot.lamp
                 #expect(after != .waiting, "\(name)")
                 continue
             }
-            let red = store.snapshot.glance
+            let red = store.snapshot.lamp
             #expect(red == .waiting, "\(name): the ask turns the lamp red")
             let owed = store.notifier.ledger.queuedKeys
             #expect(owed == [key], "\(name): its banner is owed")
@@ -733,7 +732,7 @@ struct HookToBannerTests {
                 ms += 1_000
                 deliver(item.agent, event, log: log, at: ms)
                 land(store, log: log, at: ms)
-                let still = store.snapshot.glance
+                let still = store.snapshot.lamp
                 #expect(still == .waiting, "\(name): \(event.name) is not the answer")
             }
             // Notification Center accepts the banner.
@@ -742,7 +741,7 @@ struct HookToBannerTests {
             ms += 1_000
             deliver(item.agent, item.answer, log: log, at: ms)
             land(store, log: log, at: ms)
-            let out = store.snapshot.glance
+            let out = store.snapshot.lamp
             #expect(out != .waiting, "\(name): the answer puts the lamp out")
             let blocked = store.cachedAll.first { $0.rowKey == key }?.isBlocked
             #expect(blocked == false, "\(name)")

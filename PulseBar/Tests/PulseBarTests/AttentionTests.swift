@@ -1294,12 +1294,12 @@ final class HooksInstallerTests: XCTestCase {
         let now: Int64 = 1_800_000_000_000
         let lines = SettingsModel.hookAgents(
             installed: [.claude, .codex], present: [.claude, .codex, .cursor, .gemini],
-            lastEventMs: [.claude: now - 12_000], nowMs: now, lang: .en
+            lastEventMs: [.claude: now - 12 * 60_000], nowMs: now, lang: .en
         )
         XCTAssertEqual(lines.map(\.agent), [.claude, .codex, .cursor, .gemini])
         let claude = lines[0]
         XCTAssertTrue(claude.installed)
-        XCTAssertEqual(claude.lastEvent, String(format: L10n.t(.settingsHookLastEvent, .en), DurationFormat.label(seconds: 12, lang: .en)))
+        XCTAssertEqual(claude.lastEvent, String(format: L10n.t(.settingsHookLastEvent, .en), L10n.duration(12 * 60, .en)))
         XCTAssertNil(claude.note)
         let codex = lines.first { $0.agent == .codex }
         XCTAssertEqual(codex?.lastEvent, L10n.t(.settingsHookNoEvent, .en))
@@ -1527,8 +1527,7 @@ struct TurnTruthTests {
         let row = try #require(r.rows.first)
         #expect(row.isYourTurn)
         #expect(row.liveProcess)
-        #expect(r.snapshot.glance == .idle)
-        #expect(r.snapshot.lamp == LampFace(shape: .hollow, tone: .idle))
+        #expect(r.snapshot.lamp == .idle)
         #expect(r.snapshot.title == "")
         #expect(r.snapshot.tooltip == L10n.t(.lampRuleTurn, .en))
     }
@@ -1543,7 +1542,7 @@ struct TurnTruthTests {
         }
         #expect(row.isBlocked == c.expect.waiting)
         #expect(row.isYourTurn == c.expect.yourTurn)
-        #expect((r.snapshot.glance == .waiting) == c.expect.red)
+        #expect((r.snapshot.lamp == .waiting) == c.expect.red)
         let turns = r.rows.filter { $0.isYourTurn }.count
         #expect(turns == (c.expect.yourTurn ? 1 : 0))
         #expect((row.wait?.inFront ?? false) == c.expect.inFront)

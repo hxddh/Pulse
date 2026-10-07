@@ -129,7 +129,7 @@ down only:
 | --- | --- | --- |
 | `PulseCore` | library | the agent catalog, bounded and private IO, process supervision, the cadence, the debug log (members `public`) |
 | `PulseHarvest` | library | the event sources: the event log (`EventLog`: append, read from a cursor, compact, match a rewrite to what was applied), libproc `AgentProcesses`, `RowIdentity`, `TitleHeuristics` (members `package`) |
-| `PulseApp` | library | `SessionBook` → `TrayState` → `StatusStore`, `ScanEngine`, `WaitNotifier` + `WaitLedger`, the hook receiver and installer, every view; owns the resources (`PulseResources`, never `Bundle.module`) |
+| `PulseApp` | library | `SessionBook` → `TrayState` → `StatusStore`, `ScanEngine`, `WaitNotifier` + `WaitLedger`, the hook receiver and installer, the pure surface models (`Models`: `AgentRow`, `Lamp`; `TrayRowModel` + `DetailModel`; `TrayModels`: header, notice, order, `TrayKeys`, banner routing; `SettingsModel`), `StatusItemController` (the lamp and the tray's `NSPopover`) and every view; owns the resources (`PulseResources`, never `Bundle.module`) |
 | `PulseBar` | executable | `PulseBarMain.main()` and nothing else — the shipping app |
 | `PulseQA` | executable | `SurfaceFixtures`, `SurfaceCapture`, `StatusStoreFixture`, `TrayPreviewWindowController`, `QADriver` (`@testable import PulseApp`, debug only) |
 
@@ -148,9 +148,14 @@ most once per tick →
 person waits 30 s and its app leaving the front) and withdraws each banner
 when its wait is answered, dismissed or ends (`WaitLedger` keeps the ids).
 `TrayRowModel` says every row's headline and why (the detail page says the
-same words), and `TrayState.lampSentence` the lamp's one-sentence rule. How
-Pulse reads a session is in Settings → Hooks → "Copy report", not on the
-detail page.
+same words), `TrayState.lampSentence` the lamp's one-sentence rule, and one
+`Lamp` is the state's shape and colour everywhere — the menu bar, a row,
+the header's counts. Every duration is `L10n.duration` / `L10n.ago`
+(`DateComponentsFormatter`; "now" below a minute). `StatusItemController`
+shows the tray as an `NSPopover` on the status button (`TrayView` in an
+`NSHostingController`); its key monitor feeds `TrayKeys.reduce`. How Pulse
+reads a session is in Settings → Hooks → "Copy report", not on the detail
+page.
 
 ## Working on it
 

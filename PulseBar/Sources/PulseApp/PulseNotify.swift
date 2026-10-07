@@ -111,6 +111,13 @@ enum PulseNotify {
         }
     }
 
+    /// Notification permission lives in System Settings, not in Pulse.
+    static func openSystemSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     /// macOS lets Pulse send Time Sensitive banners: its notification
     /// settings say `timeSensitiveSetting == .enabled`, which happens only
     /// with the entitlement. Read with the authorization.
@@ -201,37 +208,6 @@ enum PulseNotify {
             }
             DispatchQueue.main.async {
                 deliver.value(error == nil)
-            }
-        }
-    }
-}
-
-enum SettingsPresenter {
-    /// Prefer staying `.accessory` — flipping activation policy is the slow part.
-    /// Called from UI actions only, i.e. on the main thread.
-    static func prepareToOpen() {
-        MainActor.assumeIsolated {
-            NSApp?.activate(ignoringOtherApps: true)
-        }
-    }
-
-    static func ensureKeyableIfNeeded() {
-        MainActor.assumeIsolated {
-            if NSApp?.activationPolicy() != .regular {
-                NSApp?.setActivationPolicy(.regular)
-                NSApp?.activate(ignoringOtherApps: true)
-            }
-        }
-    }
-
-    static func restoreAccessoryIfNeeded() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            if SettingsWindowController.shared.isOpen { return }
-            let settingsOpen = (NSApp?.windows ?? []).contains { win in
-                win.isVisible && win.identifier?.rawValue == "pulse-settings"
-            }
-            if !settingsOpen, NSApp?.activationPolicy() != .accessory {
-                NSApp?.setActivationPolicy(.accessory)
             }
         }
     }

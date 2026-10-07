@@ -5,14 +5,14 @@ import SwiftUI
 /// Opt-in visual QA host for the tray content.
 ///
 /// It is reachable only through `--open-tray-preview`; no production control
-/// links to it. The actual `TrayPanel` is hosted unchanged so screenshot tests
+/// links to it. The actual `TrayView` is hosted unchanged so screenshot tests
 /// inspect the shipped view rather than a hand-maintained mock.
 @MainActor
 final class TrayPreviewWindowController: NSObject, NSWindowDelegate {
     static let shared = TrayPreviewWindowController()
 
     private var window: NSWindow?
-    private var hosting: NSHostingController<TrayPanel>?
+    private var hosting: NSHostingController<TrayView>?
     private weak var store: StatusStore?
     private var ui: TrayUI?
 
@@ -22,13 +22,13 @@ final class TrayPreviewWindowController: NSObject, NSWindowDelegate {
         self.ui = ui
         ui.open()
         if let window, let hosting {
-            hosting.rootView = TrayPanel(store: store, ui: ui)
+            hosting.rootView = TrayView(store: store, ui: ui)
             present(window)
             store.trayDidAppear()
             return
         }
 
-        let host = NSHostingController(rootView: TrayPanel(store: store, ui: ui))
+        let host = NSHostingController(rootView: TrayView(store: store, ui: ui))
         host.sizingOptions = [.intrinsicContentSize]
         let win = NSWindow(contentViewController: host)
         win.title = "Pulse Tray Preview"

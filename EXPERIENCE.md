@@ -67,7 +67,7 @@ Tray 展开细节 → Prefs 只改开关与连接。
 
 ## 3. Glance（菜单栏）
 
-**图标本身就是信号。** 菜单栏与托盘行用**同一套灯形**（`LampFace`）：
+**图标本身就是信号。** 菜单栏、托盘行与详情页用**同一个灯**（`Lamp`）：
 
 | 形状 | 意思 | 菜单栏何时是它 |
 | --- | --- | --- |
@@ -85,16 +85,17 @@ Tray 展开细节 → Prefs 只改开关与连接。
 红、绿、橙把状态色画进像素、不是 template —— 那是产品唯一的扫视信号。`NSStatusBarButton.contentTintColor`
 必须保持 `nil`，让相邻标题由菜单栏自己的 effective appearance 保持对比度。
 
-**按钮的手感跟系统菜单一样**：按下鼠标就打开（不等松开）；托盘开着时按钮保持按下的高亮，关上才弹起；
+**按钮的手感跟系统菜单一样**：按下鼠标就打开（不等松开），再按一次就关（关掉弹出框的那次按下不会又把它打开）；
+托盘开着时按钮保持按下的高亮，关上才弹起；
 右键（或 Control-点按）是一个小菜单：「打开 Pulse」「设置…」、分隔线、「退出 Pulse」。
 应用还有一个隐藏的主菜单（App：关于 / 设置 ⌘, / 退出 ⌘Q；编辑：撤销、重做、剪切、拷贝、粘贴、全选；
 窗口：关闭 ⌘W、最小化）：配件型 App 不显示它（设置窗开着、Pulse 暂时是普通 App 时菜单栏会显示），
 它只负责把标准快捷键送到当前窗口 —— ⌘W 关设置窗，⌘C / ⌘A 作用于可选中的文字。
-托盘开着时 ⌘W 是托盘自己的键（关托盘），不落到无边框面板上响一声。
+托盘开着时 ⌘W 是托盘自己的键（关托盘），不落到弹出框窗口上响一声。
 
 **标题：只有卡住时才有。** 其余时候只有图标。有等待时标题是**数量与最久的等待时长**：
-`2 · 4m`；刚发生（不到 5 秒）的等待只写数量 `1`。预算 **≤ 8 个显示宽度**（CJK 算两格），
-超限只留数量。不写 Agent 名、不写项目、不写 token。
+`2 · 4m`；不到一分钟的等待只写数量 `1`。预算 **≤ 8 个显示宽度**（CJK 算两格），
+放不下时去掉点两侧的空格（`2·4分钟`），再放不下只留数量。不写 Agent 名、不写项目、不写 token。
 
 **Tooltip 一行**：决定颜色的那条规则（`TrayState.lampSentence`），例如「红：有 Agent 在等你。」
 「灰：有 Agent 在运行，但 Pulse 只看到进程。」—— 不列会话、不堆多行；会话由托盘来说。
@@ -112,20 +113,20 @@ VoiceOver 读同一句（空闲时读「空闲」）。
 
 ---
 
-## 4. Tray（下拉面板）
+## 4. Tray（弹出框）
 
 ### 结构（固定顺序）
 
 ```
 ① Header：按状态着色的计数（一行）· ⋯
 ② 至多一条提示（一个动作）
-③ 会话列表（一行一个会话，列出每一个；超出面板高度就在面板里滚动；会话簿至多 256 个会话）
+③ 会话列表（一行一个会话，列出每一个；超出托盘高度就在托盘里滚动；会话簿至多 256 个会话）
 ```
 
 托盘**没有分组、没有折叠、没有展开卡、没有过滤框、没有刷新按钮**：列表按灯的顺序排
 （需要你 → 运行中 → 停滞 → 最近），每个会话一行，更多的东西在详情页里，一个键就到。
 
-**没有折叠、没有「另有 N 个」、没有「显示全部」**：每个会话都在列表里，列表在面板的高度上限
+**没有折叠、没有「另有 N 个」、没有「显示全部」**：每个会话都在列表里，列表在托盘的高度上限
 （测量后封顶，并且不超出屏幕可见区域）里滚动；键盘移动选中时列表跟着滚到它。「最近」的会话 45 分钟后离开列表，
 不再另写一行说它们。
 
@@ -138,11 +139,16 @@ VoiceOver 读同一句（空闲时读「空闲」）。
 离开列表 —— 一个 Cursor 或 OpenCode 进程一整天跑着很多会话，它们不该一直挂着。会话记下的进程号
 若已换成别的程序（或是之后才启动的进程），就当会话已结束。
 
-面板宽度固定，高度**由内容决定**（测量后封顶，并且不超出屏幕可见区域）。
-**帧动画只在行数变化时发生**：普通扫描、进出详情页都不让面板边缘动（详情页自己有
-一次淡入淡出，不叠第二个动画）。
+**托盘是状态栏按钮下的系统弹出框**（`NSPopover`，`.transient`）：系统材质（macOS 26 上是 Liquid Glass）、
+箭头指着按钮、点外面就关，Pulse 不画自己的窗口外框与阴影。宽度固定，高度**由内容决定**（列表测量后封顶，
+并且不超出屏幕可见区域）；打开前先排好版，弹出框以它的尺寸出现，不是先小后长。行数变化或进出详情页时
+弹出框跟着内容改变高度（详情页自己有一次淡入淡出）。
 
-**打开期间顺序冻结。** 面板打开时各行的位置就定了：扫描改变了排序也不挪动，新行追加在末尾，
+**托盘是键盘表面。** 配件型 App 的窗口只在 App 活跃时收到按键，所以打开托盘时 Pulse 成为活跃 App；
+切到别的 App、打开设置窗、或去了某一行的终端，托盘都会关；用 Esc / ⌘W / 再点按钮关掉时，若打开前
+是别的 App 在前台，把键盘交还给它。
+
+**打开期间顺序冻结。** 托盘打开时各行的位置就定了：扫描改变了排序也不挪动，新行追加在末尾，
 离开的行消失；新的排序在下次打开时生效 —— 指针下的行永远不会被换走（纯函数 `TrayOrder`）。
 打开期间列出的是本次已经显示过、且仍存在的每一行，再在末尾追加新出现的行
 （`TrayOrder.openWindow`）：一个新的等待排到最前时，不会挪动或挤出正显示的任何一行。
@@ -187,8 +193,8 @@ Header 不写更新时间，也不走钟：灯与行本身就是最新的。
 - 项目有最大宽度，**主行先截断**，项目不会把它挤没。
 - 项目与主行相同时不重复（主行已经是项目时，项目位置留空）。
 - **时间只有一个**：需要你的行是等了多久（`4m`，红色）；运行中的行是本回合已经跑了多久
-  （`14 分`，从开始这一回合的那句提示算起，不到一分钟写 `<1 分`；不知道回合何时开始时退回最后一次动静）；
-  其余是最后一次动静（`3 分前`）。
+  （`14m` / `14分钟`，从开始这一回合的那句提示算起，不到一分钟写「刚刚」；不知道回合何时开始时退回最后一次动静）；
+  其余是最后一次动静（`3m ago` / `3分钟前`）。
 - 「轮到你」的行带一个灰色小字「轮到你」。
 - **第二行只给三种情况**：需要你的行写问题本身（Agent 原话，一行，次级色；不知道原话时写
   等待种类）；停滞的行写橙色的原因（`TrayRowModel.why`，点名上一步：「已经 23 分钟 没有新动静——上一步：
@@ -220,7 +226,7 @@ Header 不写更新时间，也不走钟：灯与行本身就是最新的。
 | 空心 | 轮到你、最近 | 灰 |
 | 虚线圈 | 仅进程 | 灰（永不橙） |
 
-取值是纯函数 `LampFace.row`，`LampShapeView` 绘制；菜单栏用同一套形状（§3）。
+取值是 `Lamp(row)`，`LampShapeView` 绘制；菜单栏用同一个灯（§3，`Lamp(TrayState.lampRule(counts:))`）。
 
 #### 状态编码上限
 
@@ -234,7 +240,7 @@ Header 不写更新时间，也不走钟：灯与行本身就是最新的。
 
 #### 键盘
 
-每个键都走同一个纯函数 `TrayKeys.reduce(state, key) → (state, effect)`；面板的按键监视器把事件
+每个键都走同一个纯函数 `TrayKeys.reduce(state, key) → (state, effect)`；托盘的按键监视器把事件
 转成键再交给它，所以**不管哪个视图有焦点，每个键在每个状态下都有效**（详情页、空列表）。
 
 | 键 | 列表 | 详情页 |
@@ -242,10 +248,10 @@ Header 不写更新时间，也不走钟：灯与行本身就是最新的。
 | ↑ ↓ | 选择行 | — |
 | ↩ | 前往：能聚焦就聚焦终端，否则打开详情（= 点行身） | 前往 |
 | → / 空格 | 详情（= 点「›」或 ⌥-点） | — |
-| ← / Esc | Esc：关面板 | 返回 |
+| ← / Esc | Esc：关托盘 | 返回 |
 | ⌘D / ⌘⌫ | 忽略所选的等待 | 忽略 |
 | ⌘R · ⌘, · ⌘Q | 刷新 · 设置 · 退出 | 同左 |
-| ⌘W | 关面板（同 Esc） | 关面板 |
+| ⌘W | 关托盘（同 Esc） | 关托盘 |
 
 **不带 ⌘ 的字母不是托盘的键。** 托盘打开时已经选中了一行，一个裸的 D 决不能忽略所选的
 等待；命令都带 ⌘（⌘D 只对等待行）。托盘底部没有按键说明：行的右键菜单每一项
@@ -340,23 +346,22 @@ Pulse」（只在计划里试过 iTerm 会话或 Terminal / iTerm 标签时这�
 
 装 hooks 只在两处：设置、托盘的设置卡。
 
-#### 面板只有一个表面
+#### 托盘只有一个表面
 
-**面板的可读性不能取决于用户的壁纸。**
+**托盘的可读性不能取决于用户的壁纸。**
 
-- 面板由应用自有的无边框 `NSPanel` + 单个材质视图（macOS 26 上是 `NSGlassEffectView`，之前是
-  `NSVisualEffectView(.menu)`）独占表面；`TrayPanel` 四边贴合，没有系统私有容器的额外 content inset。
-  不要在圆角面板里再画一块矩形材质或颜色 —— 多出来的 inset 会变成第二个表面，面板会读成一个贴上去的盒子。
+- 表面是弹出框自己的系统材质；`TrayView` 是透明的，不在里面再画一块矩形材质或颜色 —— 那会变成
+  第二个表面，托盘会读成一个贴上去的盒子。
 - **绝不把随外观变化的颜色存进 `let`。** `static let` 是只初始化一次的全局量，首次绘制时的外观
   被冻在里面，之后再切主题都不动。要么在 `body` 里读，要么用渲染时逐帧解析的 token
   （`Material` / `.primary` / `.secondary`）。
-- 分割线内缩到文字边距。通宽的分割线是表格线，两条就把面板切成条带。
+- 分割线内缩到文字边距。通宽的分割线是表格线，两条就把托盘切成条带。
 
 **一套字阶，一套卡片纪律。** `PulseTheme` 统一间距、圆角、填充、语义字号和每个状态一种颜色
 （系统动态色），每个调用点声明这行**是什么角色**而不是它喜欢哪个数字；托盘 `TrayChrome` 保留紧凑
 网格，同一节奏派生；唯一动效曲线（easeOut 0.16）。
 
-**头部不放灯。** 菜单栏的标记就在 40px 之上，同形同色同 `glance`；头部只说行内说不清的事。
+**头部不放灯。** 菜单栏的灯就在 40px 之上；头部只说行内说不清的事。
 
 ### 空态
 
@@ -367,9 +372,10 @@ Pulse」（只在计划里试过 iTerm 会话或 Terminal / iTerm 标签时这�
 ### 文案
 
 跟随系统语言，没有语言选择器：首选语言以 zh 开头读中文表，其余读英文（`ResolvedLanguage.system`，启动时读一次）。
-中文只有一张简体表：繁体系统（zh-Hant、zh-TW、zh-HK）也读简体。相对时间用人话（刚刚 / 4 分钟前），不用 ISO；句子里的时长说全
-（「4 分钟」），只有菜单栏标题与行尾的等待时长用紧凑写法（「4 分」）；**VoiceOver 念的时长说全单位**
-（「4 minutes」「1 hour」「less than a minute」「4 分钟」），从不念画出来的「4m」。
+中文只有一张简体表：繁体系统（zh-Hant、zh-TW、zh-HK）也读简体。相对时间用人话（刚刚 / 4分钟前），不用 ISO。
+时长都由 `DateComponentsFormatter` 按界面语言排出（`L10n.duration` / `L10n.ago`）：一个单位、向下取整，
+画出来的用缩写（「4m」「4分钟」），**VoiceOver 念的说全单位**（「4 minutes」「1 hour」「4分钟」），从不念画出来的「4m」；
+不到一分钟一律是同一个词「now」/「刚刚」（一个键），所以没有逐秒跳动的时间。
 带数量的话分单复数，不写「session(s)」。
 英文用美式拼写（Gray）。中文里一个可能本身是中文的占位符不与汉字隔空格（「上一步：刚刚」）。
 **所有面向用户的串都必须走 `L10n`** —— 包括 VoiceOver 标签与菜单。
@@ -404,7 +410,7 @@ for permission · 4m ago」；仅进程说「在 Pulse 之前启动——下一�
    某个 App 静不静音、专注模式，都在 macOS 的通知设置里 —— Pulse 没有自己的开关
 3. **Hooks —— 也是诊断** —— 七个 Agent 各自的官方 hook / 插件 / 扩展：总状态与两个按钮「全部安装」
    「全部移除」（「全部安装」装这台 Mac 上的每个 Agent）；这台 Mac 上的每个 Agent 一行，只写状态、不带按钮：
-   已安装 / 未安装 / 安装失败及原因（橙色，界面语言，不出现路径）、「最近事件 12 秒前」或「还没有事件」。
+   已安装 / 未安装 / 安装失败及原因（橙色，界面语言，不出现路径）、「最近事件 12分钟前」（不到一分钟是「最近事件：刚刚」）或「还没有事件」。
    Codex 与 Cursor 注明「不会报告它在等你——只显示运行中和轮到你」；不在这台 Mac 上的 Agent 合成一行
    「这台 Mac 上没有：…」。安装与移除逐个 Agent 进行：一个 Agent 的设置文件坏了（不是合法 JSON、
    或那里有不是 Pulse 写的文件），只有它失败，其余照常装上；运行期间按钮置灰，一次只跑一个。安装只改写
@@ -450,7 +456,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 1. **先状态，后细节** —— Waiting > Running > meta
 2. **有数据才显示** —— 没有就不占位
 3. **一行一个意思** —— 不把原因、任务、项目揉进同一行；放不下的进详情页，不往行里塞
-4. **同一事实在面板里只出现一次**。头部只说行内说不清的事（计数）；芯片不得复述标题；
+4. **同一事实在托盘里只出现一次**。头部只说行内说不清的事（计数）；芯片不得复述标题；
    **运行中是常态，常态不发徽章**。规则写完的下一步就是逐处对照，否则它只在写它的那个地方成立
 5. **家目录不是项目。** 无法定位的会话不发明名字。同一个目录不得因为数据来源不同产生两个名字
 6. **不承诺没有的精度。** 行上的相对时间不到一分钟就说「刚刚」，不显示秒
@@ -472,7 +478,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 事件日志读失败时只排一个重试（5 秒起翻倍，封顶 60 秒），不因此少发横幅：只有启动那次重放是基线。
 
 **扫描不重绘**（场景 BY）：一轮扫描发现的世界与上一轮相同时，store 不发布任何变更，
-托盘与设置都不重算；屏上有一分钟以内的秒级等待时间时照常逐拍刷新，分钟级时间
+托盘与设置都不重算；屏上没有秒级时间（不到一分钟都写「刚刚」），分钟级时间
 每分钟刷新一次。一阵工具行只动了行的安静事实（上一步、时钟）时，每拍至多落地一次，由时钟那一拍补上
 （场景 DI）；状态变了（阻塞、结束、停滞恢复）当场落地。`debug.log` 每轮的「apply」行也只在内容变化时写。
 
@@ -552,7 +558,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
   Focus，也不把仅激活 App 写成「跳到该会话」；什么都没有就不给聚焦按钮，通知路径退回打开托盘
   并**进入该行的详情页**（Go-Look Closure）。
 - 无 Apple Developer ID 时不标 `stable`。
-- 列表不设上限、不折叠：每个会话都列出，多了就在面板里滚动，没有被静默丢下的行。
+- 列表不设上限、不折叠：每个会话都列出，多了就在托盘里滚动，没有被静默丢下的行。
 
 **没测到的那一半不写 0。** 任何成对呈现的量，只印测到的那一半，两半都没有整条事实消失。
 
@@ -579,8 +585,8 @@ fail-open —— 句子里就说清楚它回落到哪儿。
 
 | 规格 | 文件 |
 | --- | --- |
-| Glance 标题 / 灯 | `PulseApp/StatusPanelController.swift` → `updateStatusItem` / `pulseStatusLamp`（图标像素：`PulseBrand.statusBarIcon`） |
-| Tray 结构 | `PulseApp/TrayPanelViews.swift` → `TrayPanel` |
+| Glance 标题 / 灯 | `PulseApp/StatusItemController.swift` → `updateStatusItem` / `dipLamp`（图标像素：`PulseTheme.swift` → `Lamp.statusBarImage`） |
+| Tray 结构 | `PulseApp/StatusItemController.swift`（`NSPopover`、按键、焦点交还）→ `TrayView.swift` → `TrayView` |
 | Prefs 布局与诊断 | `PulseApp/SettingsViews.swift` → `SettingsView` / `SettingsFace`；`SettingsModel.swift`（Hooks 行、报告） |
 | 投影：行、排序、灯、标题、边沿 | `PulseApp/TrayState.swift` → `TrayState.project` |
 | 行的每一句话与灯的一句规则 | `PulseApp/TrayRowModel.swift`（纯函数：headline / why / 状态词 / 步骤与时间的说法；语言与时刻是输入）· `TrayState.lampRule` / `lampSentence` |
@@ -590,19 +596,19 @@ fail-open —— 句子里就说清楚它回落到哪儿。
 | Agent 目录（一处加 agent） | `PulseCore/AgentCatalog.swift` |
 | 会话状态（事件 → 状态） | `PulseApp/SessionBook.swift` → `SessionBook.apply` |
 | 标题（提示词的清洗与取舍） | `PulseHarvest/TitleHeuristics.swift` |
-| 进程 | `PulseHarvest/AgentProcesses.swift`（libproc）· `PulseApp/ProcessExitWatch.swift`（退出源；跨更新状态在 `ScanEngine.swift`） |
-| 状态与设置面 | `PulseApp/StatusStore.swift`（模型与 intent）+ `StatusStoreViews.swift` · `ScanEngine.swift`（扫描）· `WaitNotifier.swift`（横幅）· `PulseSettings.swift`（`settings.json`） |
+| 进程 | `PulseHarvest/AgentProcesses.swift`（libproc）· `PulseApp/Watchers.swift` → `ProcessExitWatch`（退出源；跨更新状态在 `ScanEngine.swift`） |
+| 状态与设置面 | `PulseApp/StatusStore.swift`（模型与 intent）· `ScanEngine.swift`（扫描）· `WaitNotifier.swift`（横幅）· `PulseSettings.swift`（`settings.json`） |
 | 行的数据与状态 | `PulseApp/Models.swift` → `AgentRow` · `RowState` · `RowWait` · `RowSource` |
 | 主题 | `PulseApp/PulseTheme.swift` |
-| 托盘行的脸 | `TrayRowModel.swift`（纯值：灯、身份、主行、时间、第二行、菜单、VoiceOver）→ `TrayPanelViews.swift` → `TrayRowFace`；详情页是 `DetailModel` → `SessionDetailFace` |
-| 灯形 | `LampFace.swift`（行与菜单栏同一套：实心 / 环 / 空心 / 虚线；橙只给停滞） |
-| 托盘的键与状态 | `TrayKeys.swift`（纯 reducer `TrayKeys.reduce`、`BannerRoute`、`BannerIntent`）· `TrayModels.swift`（`TrayHeaderModel` / `TrayNoticeModel` / `TrayOrder`）· `TrayUI.swift`（每次打开的状态，面板的按键监视器调用它） |
-| 值化的表面 | `TrayRowModel.swift` · `DetailModel.swift` · `LampFace.swift` · `TrayModels.swift` · `TrayKeys.swift` · `SettingsModel.swift`；夹具 `PulseQA/SurfaceFixtures.swift`，截图 `PulseQA/SurfaceCapture.swift` + `scripts/qa_captures.sh`，`scripts/surface_check.py` 核对 |
-| 节奏（事件驱动 + 便宜的时钟） | `PulseCore/ProbeSchedule.swift` + `PulseApp/PowerMonitor.swift` |
+| 托盘行的脸 | `TrayRowModel.swift`（纯值：灯、身份、主行、时间、第二行、菜单、VoiceOver；详情页的 `DetailModel`）→ `TrayView.swift` → `TrayRowFace`；详情页 → `SessionDetailFace` |
+| 灯 | `Models.swift` → `Lamp`（行、菜单栏、计数与提示同一个：实心红 / 环绿 / 带缺口的环橙 / 空心灰 / 虚线灰；橙只给停滞）；颜色与菜单栏图像在 `PulseTheme.swift` |
+| 托盘的键与状态 | `TrayModels.swift`（纯值：`TrayHeaderModel` / `TrayNoticeModel` / `TrayOrder` / reducer `TrayKeys.reduce` / `BannerRoute` / `BannerIntent`）· `TrayView.swift` → `TrayUI`（每次打开的状态，托盘的按键监视器调用它） |
+| 值化的表面 | `Models.swift` · `TrayRowModel.swift` · `TrayModels.swift` · `SettingsModel.swift`；夹具 `PulseQA/SurfaceFixtures.swift`，截图 `PulseQA/SurfaceCapture.swift` + `scripts/qa_captures.sh`，`scripts/surface_check.py` 核对 |
+| 节奏（事件驱动 + 便宜的时钟） | `PulseCore/ProbeSchedule.swift` + `PulseApp/Watchers.swift`（`AttentionWatcher` / `PowerMonitor`） |
 | 文案 | `PulseApp/L10n.swift` |
-| 状态项的手感、右键菜单、VoiceOver 只报新等待 | `PulseApp/StatusPanelController.swift`（`statusItemPressed` / `showStatusMenu`）· `TrayRowModel.swift` → `WaitAnnouncement` |
-| 隐藏的主菜单、再打开就开托盘 | `PulseApp/PulseApp.swift` → `MainMenu` / `applicationShouldHandleReopen` · `SingleInstanceGuard.swift` · `StatusStore.reopen` |
-| 登录项 | `PulseApp/AppUtilities.swift` → `LoginItem`（`SMAppService.mainApp`）· `SettingsModel.loginLine` |
+| 状态项的手感、右键菜单、VoiceOver 只报新等待 | `PulseApp/StatusItemController.swift`（`buttonPressed` / `showMenu`）· `TrayRowModel.swift` → `WaitAnnouncement` |
+| 隐藏的主菜单、再打开就开托盘 | `PulseApp/PulseApp.swift` → `MainMenu` / `applicationShouldHandleReopen` · `SingleInstanceGuard.swift` · `StatusStore.requestTrayReveal` |
+| 登录项 | `PulseApp/PulseSettings.swift` → `LoginItem`（`SMAppService.mainApp`）· `SettingsModel.loginLine` |
 | 界面语言 | `PulseApp/L10n.swift` → `ResolvedLanguage.system`（跟随系统，启动时读一次） |
 | 版本 / 构建指纹 | `PulseApp/Models.swift` → `PulseVersion` |
 | Attention 协议（v6 事件日志） | `PulseCore/AttentionProtocol.swift`、`PulseHarvest/EventLog.swift`、`PulseApp/PulseHookReceiver.swift`；契约 [`docs/attention-protocol.md`](docs/attention-protocol.md) |

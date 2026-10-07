@@ -101,6 +101,22 @@ public struct AttentionRecord: Equatable, Sendable {
             && tool.trimmingCharacters(in: .whitespacesAndNewlines) == Self.dismissTool
     }
 
+    /// The app's own `done` for a dismissal (or a finished turn looked
+    /// at): under exactly the session the entry carried — an empty one,
+    /// with its folder, clears only that agent's session-less entry there —
+    /// and marked `dismissTool`, so the vendor's echo of the same ask stays
+    /// cleared.
+    public static func dismissal(agent: String, session: String, cwd: String, ms: Int64) -> AttentionRecord {
+        AttentionRecord(
+            agent: agent,
+            kind: AttentionKind.done.rawValue,
+            ms: ms,
+            session: AttentionProtocol.flatten(session),
+            cwd: AttentionProtocol.flatten(cwd),
+            tool: dismissTool
+        )
+    }
+
     /// A vendor's tool name as the receiver may write it: a leading `:`
     /// is dropped, so it can never spell one of Pulse's markers.
     public static func vendorTool(_ name: String) -> String {

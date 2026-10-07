@@ -77,21 +77,57 @@ enum PulseVersion {
     }
 }
 
-enum GlanceKind: Equatable {
-    case idle
-    case running
-    case stalled
-    case waiting
+/// The lamp: one state, drawn the same way in the menu bar, beside a row,
+/// on the detail page, in the header's counts and on a notice. The shape
+/// says what the session needs, the colour how it is going — so the state
+/// reads without colour too.
+///
+/// | lamp          | shape                | colour |
+/// | ------------- | -------------------- | ------ |
+/// | `waiting`     | filled               | red    |
+/// | `running`     | ring (circle + dot)  | green  |
+/// | `stalled`     | ring + a corner notch| orange |
+/// | `idle`        | hollow               | grey   |
+/// | `processOnly` | dotted               | grey   |
+///
+/// Orange is **only** a stall (an error is a detail-page fact); a process
+/// with no session is grey dotted — never orange, never green. The colours
+/// and the menu-bar image are `PulseTheme`'s (`Lamp.color`,
+/// `Lamp.statusBarImage`). Pure.
+enum Lamp: String, CaseIterable, Equatable, Sendable {
+    case waiting, running, stalled, idle, processOnly
 
-    /// VoiceOver reads this instead of the icon. It used to be hardcoded
-    /// English, so a Chinese user heard "Needs attention" in an otherwise
-    /// localized interface.
+    /// The lamp beside one row.
+    init(_ row: AgentRow) {
+        switch row.state {
+        case .blocked: self = .waiting
+        case .processOnly: self = .processOnly
+        case .running: self = row.isStalled ? .stalled : .running
+        case .yourTurn, .recent: self = .idle
+        }
+    }
+
+    /// The menu-bar lamp for the rule that set it.
+    init(_ rule: TrayState.LampRule) {
+        switch rule {
+        case .blocked: self = .waiting
+        case .stalled: self = .stalled
+        case .running: self = .running
+        case .processOnly: self = .processOnly
+        case .yourTurn, .recent, .idle: self = .idle
+        }
+    }
+
+    /// Grey: the menu bar draws it as a template, in its own colour.
+    var isGrey: Bool { self == .idle || self == .processOnly }
+
+    /// What VoiceOver says for the state.
     var accessibilityKey: L10n.Key {
         switch self {
-        case .idle: return .a11yIdle
+        case .waiting: return .a11yWaiting
         case .running: return .a11yRunning
         case .stalled: return .a11yStalled
-        case .waiting: return .a11yWaiting
+        case .idle, .processOnly: return .a11yIdle
         }
     }
 }
@@ -291,114 +327,25 @@ struct AgentRow: Identifiable, Hashable {
     }
 
 
-    // MARK: - Titles
+    // MARK: - Titles and places (`TitleHeuristics` decides)
 
-    static func isChromeTitle(_ value: String) -> Bool { TitleHeuristics.isChromeTitle(value) }
-
-    /// The task, when it is a real goal — not a vendor placeholder, the
-    /// agent's own name, a slash command, a tool identifier or a lone file.
-    var usefulTask: String? {
-        let raw = task.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else { return nil }
-        let t = Self.displayTaskTitle(raw)
-        if Self.isChromeTitle(t) { return nil }
-        let low = t.lowercased()
-        let agent = agent.displayName.lowercased()
-        if low == agent { return nil }
-        let genericSuffixes = [" session", " thread", " chat", " task", " agent"]
-        if genericSuffixes.contains(where: { low == agent + $0 }) { return nil }
-        if t.hasPrefix("/"), !t.contains(" ") { return nil }
-        if Self.looksLikeInternalToolIdentifier(t) { return nil }
-        if TitleHeuristics.looksLikeFilenameOnlyTitle(t) { return nil }
-        return t
-    }
-
-    /// Session titles are plain UI labels, not a Markdown renderer: keep a
-    /// `[label](URL)` link's label, and name a few bare commands.
-    static func displayTaskTitle(_ raw: String) -> String {
-        let cleaned = raw.replacingOccurrences(
-            of: #"!?\[([^\]\n]{1,240})\]\((?:https?|file)://[^)\n]+\)"#,
-            with: "$1",
-            options: .regularExpression
-        )
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-        let compact = cleaned
-            .lowercased()
-            .replacingOccurrences(of: " ", with: "")
-            .replacingOccurrences(of: "·", with: "")
-        switch compact {
-        case "piupdate", "updatepi", "upgradepi":
-            return "Update Pi and extensions"
-        case "pilist", "listpi":
-            return "List Pi agents"
-        case "update", "upgrade":
-            return "Update agent packages"
-        case "resume":
-            return "Resume agent session"
-        default:
-            return cleaned
-        }
-    }
-
-    /// `update_plan`, namespaced MCP leaves, etc. — never a user goal.
-    static func looksLikeInternalToolIdentifier(_ raw: String) -> Bool {
-        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty, !t.contains(" ") else { return false }
-        let low = t.lowercased()
-        if low.contains(":") { return true } // mcp:server:tool
-        let known: Set<String> = [
-            "bash", "shell", "exec", "read", "write", "grep", "glob",
-            "update_plan", "todowrite", "todo_write", "run_terminal_cmd",
-            "run_terminal_command", "batch_execute",
-        ]
-        if known.contains(low) { return true }
-        if low.hasPrefix("mcp_") || low.hasPrefix("mcp.") { return true }
-        if low.hasSuffix("_plan") || low.hasSuffix("_todo") { return true }
-        if low.hasPrefix("run_") && low.contains("terminal") { return true }
-        return false
-    }
-
-    static func shortProject(_ raw: String) -> String { TitleHeuristics.shortProject(raw) }
+    /// The task, when it is a real goal.
+    var usefulTask: String? { TitleHeuristics.usefulTitle(task, agentName: agent.displayName) }
 
     /// The short project name a row shows beside the agent.
-    var shortPlace: String { Self.shortProject(project.isEmpty ? cwd : project) }
+    var shortPlace: String { TitleHeuristics.shortProject(project.isEmpty ? cwd : project) }
 
     /// Where this session lives, written the way a person would write it.
-    /// The home directory is not a project, and a deep path keeps its tail.
     var displayPath: String {
-        let raw = cwd.isEmpty ? project : cwd
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        if Self.isHomeLike(trimmed, home: home) { return "" }
-        guard trimmed.hasPrefix("/") else { return Self.shortProject(trimmed) }
-        var path = trimmed
-        if !home.isEmpty, path.hasPrefix(home + "/") {
-            path = "~" + path.dropFirst(home.count)
-        }
-        let parts = path.split(separator: "/").map(String.init)
-        if parts.count > 3 {
-            return (path.hasPrefix("~") ? "~/…/" : "/…/") + parts.suffix(2).joined(separator: "/")
-        }
-        return path
-    }
-
-    /// Every spelling of "the home directory" this data can produce
-    /// (`-Users-name` decoded to `users-name`, the bare account name, `~`).
-    static func isHomeLike(_ raw: String, home: String) -> Bool {
-        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if s == "~" || s == "~/" { return true }
-        guard !home.isEmpty else { return false }
-        if s == home || s == home + "/" { return true }
-        let user = (home as NSString).lastPathComponent.lowercased()
-        guard !user.isEmpty else { return false }
-        let low = s.lowercased()
-        return low == user || low == "users-\(user)" || low == "-users-\(user)"
+        TitleHeuristics.displayPath(
+            cwd.isEmpty ? project : cwd,
+            home: FileManager.default.homeDirectoryForCurrentUser.path
+        )
     }
 }
 
-/// Tray rows are grouped under a heading rather than relying on sort order
-/// alone — five rows in one undifferentiated stack read as five equals.
+/// The order of the tray's states: waits first, then running, stalled and
+/// recent (`TrayState.assemble` sorts by it).
 enum TraySection: Int, CaseIterable, Hashable {
     case needsYou = 0
     case running = 1
@@ -407,20 +354,37 @@ enum TraySection: Int, CaseIterable, Hashable {
 }
 
 struct PulseSnapshot: Equatable {
-    var glance: GlanceKind = .idle
+    /// The menu-bar lamp (`Lamp(TrayState.lampRule(counts:))`).
+    var lamp: Lamp = .idle
     var title: String = ""
     /// One line: the rule that set the lamp (`TrayState.lampSentence`).
     var tooltip: String = "Pulse"
-    /// Glance state spoken by VoiceOver, in the resolved language.
+    /// The lamp as VoiceOver says it, in the resolved language.
     var accessibilityLabel: String = ""
-    /// `counts` in words, which VoiceOver announces when they change ("1
-    /// needs you · 2 running").
-    var headerTitle: String = ""
     var rows: [AgentRow] = []
     /// Every row counted once by its state.
     var counts = TrayState.Counts()
-    /// The menu-bar lamp's shape and tone (`LampFace.glance`).
-    var lamp: LampFace = .idle
-    var totalCount: Int = 0
     var updatedAt: Date = .distantPast
+}
+
+extension PulseSnapshot {
+    /// Equal in everything a surface draws — `updatedAt` aside.
+    func sameContent(as other: PulseSnapshot) -> Bool {
+        var mine = self
+        mine.updatedAt = other.updatedAt
+        return mine == other
+    }
+
+    /// Minute labels ("4m", "3m ago") need a redraw at most this often when
+    /// nothing else moved.
+    static let minuteLabelRefresh: TimeInterval = 60
+
+    /// Whether `next` must replace `current` for the surfaces to stay true:
+    /// its content changed, or a minute passed and a relative-time label on
+    /// screen moves. Nothing else about an unchanged world is worth a redraw.
+    static func needsPublish(next: PulseSnapshot, current: PulseSnapshot) -> Bool {
+        current.updatedAt == .distantPast
+            || !next.sameContent(as: current)
+            || next.updatedAt.timeIntervalSince(current.updatedAt) >= minuteLabelRefresh
+    }
 }

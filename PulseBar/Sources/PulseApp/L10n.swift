@@ -50,6 +50,31 @@ enum L10n {
         names.joined(separator: lang == .zh ? "、" : ", ")
     }
 
+    /// A duration as the interface writes it — drawn "4m" / "4分钟",
+    /// spoken "4 minutes" / "4分钟" — in one unit, rounded down; "now" /
+    /// "刚刚" below a minute (one key, so nothing is redrawn every tick).
+    /// `DateComponentsFormatter`, in the interface's language. Pure.
+    static func duration(_ seconds: Double, _ lang: ResolvedLanguage, spoken: Bool = false) -> String {
+        guard seconds >= 60 else { return t(.now, lang) }
+        let unit: Double = seconds >= 3600 ? 3600 : 60
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: lang == .zh ? "zh-Hans" : "en")
+        let formatter = DateComponentsFormatter()
+        formatter.calendar = calendar
+        formatter.unitsStyle = spoken ? .full : .abbreviated
+        formatter.allowedUnits = [.hour, .minute]
+        formatter.maximumUnitCount = 1
+        return formatter.string(from: (seconds / unit).rounded(.down) * unit) ?? t(.now, lang)
+    }
+
+    /// How long ago `ms` was, against the caller's clock: "12m ago" /
+    /// "12分钟前" (spoken "12 minutes ago"), or "now" alone — never "now ago".
+    static func ago(_ ms: Int64, nowMs: Int64, _ lang: ResolvedLanguage, spoken: Bool = false) -> String {
+        let seconds = Double(nowMs - ms) / 1000
+        guard seconds >= 60 else { return t(.now, lang) }
+        return String(format: t(.agoFormat, lang), duration(seconds, lang, spoken: spoken))
+    }
+
     /// English copy.
     private static func en(_ key: Key) -> String {
         switch key {
@@ -58,7 +83,6 @@ enum L10n {
         case .needsYou: return "Needs you"
         case .waitingN: return "need you"
         case .runningN: return "running"
-        case .recent1: return "1 recent"
         case .recentN: return "recent"
         case .settings: return "Settings…"
         case .quit: return "Quit Pulse"
@@ -94,10 +118,6 @@ enum L10n {
         case .terminalDetectedNoDetails: return "Terminal session running · activity feed unavailable"
         case .appDetectedNoDetails: return "Agent app running · session feed unavailable"
         case .versionMismatchHint: return "This build is %@ but its app bundle says %@ — reinstall Pulse."
-        case .durNow: return "now"
-        case .durSec: return "%ds"
-        case .durMin: return "%dm"
-        case .durHour: return "%dh"
         case .notificationsSection: return "Notifications"
         case .notifyNotConfigured: return "Notifications are not enabled yet. Pulse will not ask until you choose Enable."
         case .enableNotifications: return "Enable notifications"
@@ -111,6 +131,7 @@ enum L10n {
         case .a11yWaiting: return "Needs you"
         case .moreActions: return "More actions"
         case .agoFormat: return "%@ ago"
+        case .now: return "now"
         case .stalled: return "Stalled"
         case .notifFocus: return "Go"
         case .buildPreview: return "Preview build · ad-hoc signed · not notarized"
@@ -169,10 +190,6 @@ enum L10n {
         case .setupStepCodex: return "Codex: run /hooks in Codex and trust Pulse"
         case .setupStepRestart: return "Sessions already running appear after their next step"
         case .focusAppOnlyAutomation: return "Opened the app — to land on the tab itself, allow Pulse in System Settings → Privacy & Security → Automation"
-        case .durSecSpoken: return "%ds"
-        case .durMinSpoken: return "%dm"
-        case .durHourSpoken: return "%dh"
-        case .durUnderMinute: return "<1m"
         case .stepStalled: return "Nothing new for %@ — last step: %@"
         case .stepHeading: return "Recent steps"
         case .stepThisTurn: return "This turn"
@@ -194,14 +211,6 @@ enum L10n {
         case .openLoginItems: return "Open Login Items"
         case .a11yNewWait: return "%@ needs you: %@"
         case .a11yNewWaitNoAsk: return "%@ needs you"
-        case .durNowFull: return "just now"
-        case .durUnderMinuteFull: return "less than a minute"
-        case .durSecFull1: return "1 second"
-        case .durSecFullN: return "%d seconds"
-        case .durMinFull1: return "1 minute"
-        case .durMinFullN: return "%d minutes"
-        case .durHourFull1: return "1 hour"
-        case .durHourFullN: return "%d hours"
         }
     }
 
@@ -213,7 +222,6 @@ enum L10n {
         case .needsYou: return "需要你"
         case .waitingN: return "需要你"
         case .runningN: return "运行中"
-        case .recent1: return "1 个最近会话"
         case .recentN: return "最近"
         case .settings: return "设置…"
         case .quit: return "退出 Pulse"
@@ -249,10 +257,6 @@ enum L10n {
         case .terminalDetectedNoDetails: return "终端会话正在运行 · 暂无活动数据"
         case .appDetectedNoDetails: return "Agent 应用正在运行 · 暂无会话数据"
         case .versionMismatchHint: return "程序版本是 %@，但应用包标记为 %@——请重新安装 Pulse。"
-        case .durNow: return "刚刚"
-        case .durSec: return "%d 秒"
-        case .durMin: return "%d 分"
-        case .durHour: return "%d 小时"
         case .notificationsSection: return "通知"
         case .notifyNotConfigured: return "通知尚未启用。点「启用通知」后 Pulse 才会请求权限。"
         case .enableNotifications: return "启用通知"
@@ -266,6 +270,7 @@ enum L10n {
         case .a11yWaiting: return "需要你"
         case .moreActions: return "更多操作"
         case .agoFormat: return "%@前"
+        case .now: return "刚刚"
         case .stalled: return "停滞"
         case .notifFocus: return "前往"
         case .buildPreview: return "预览版 · ad-hoc 签名 · 未公证"
@@ -324,10 +329,6 @@ enum L10n {
         case .setupStepCodex: return "Codex：在 Codex 里运行 /hooks 并信任 Pulse"
         case .setupStepRestart: return "已在运行的会话会在它们的下一步之后出现"
         case .focusAppOnlyAutomation: return "已打开应用——要直接落到那个标签页，请在 系统设置 → 隐私与安全性 → 自动化 中允许 Pulse"
-        case .durSecSpoken: return "%d 秒"
-        case .durMinSpoken: return "%d 分钟"
-        case .durHourSpoken: return "%d 小时"
-        case .durUnderMinute: return "<1 分"
         case .stepStalled: return "已经 %@ 没有新动静——上一步：%@"
         case .stepHeading: return "最近几步"
         case .stepThisTurn: return "本回合"
@@ -349,14 +350,6 @@ enum L10n {
         case .openLoginItems: return "打开登录项"
         case .a11yNewWait: return "%@ 需要你：%@"
         case .a11yNewWaitNoAsk: return "%@ 需要你"
-        case .durNowFull: return "刚刚"
-        case .durUnderMinuteFull: return "不到 1 分钟"
-        case .durSecFull1: return "1 秒"
-        case .durSecFullN: return "%d 秒"
-        case .durMinFull1: return "1 分钟"
-        case .durMinFullN: return "%d 分钟"
-        case .durHourFull1: return "1 小时"
-        case .durHourFullN: return "%d 小时"
         }
     }
 
@@ -364,7 +357,7 @@ enum L10n {
     /// and that format specifiers match (a mismatched %d crashes String(format:)).
     enum Key: CaseIterable {
         case noAgents, noAgentsDetected, needsYou, waitingN, runningN
-        case recent1, recentN, recent
+        case recentN, recent
         case settings, quit
         case focusExact, focusApp, focusOpenTray, ignoreWait
         case focusFailed, focusAppOnly
@@ -379,14 +372,13 @@ enum L10n {
         case terminalSession, appSession
         case terminalDetectedNoDetails, appDetectedNoDetails
         case versionMismatchHint
-        case durNow, durSec, durMin, durHour
         case notificationsSection, notifyNotConfigured
         case enableNotifications, notifyDenied, openNotificationSettings
         case uninstallHooks
         case emptyHint
         case a11yIdle, a11yRunning, a11yStalled, a11yWaiting
         case moreActions
-        case agoFormat
+        case agoFormat, now
         case stalled
         case notifFocus
         case buildPreview, releases, notifyAllowed
@@ -430,40 +422,11 @@ enum L10n {
         case explainIdle, explainEnded, explainQuiet, explainSilent
         case setupFound, setupConnect, setupDone, setupGotIt, setupStepCodex, setupStepRestart
         case focusAppOnlyAutomation
-        case durSecSpoken, durMinSpoken, durHourSpoken
-        case durUnderMinute
         case stepStalled, stepHeading, stepThisTurn
         case setupFailedAction
         case menuOpenPulse, menuAbout, menuEdit, menuUndo, menuRedo, menuCut, menuCopy, menuPaste, menuSelectAll
         case menuWindow, menuClose, menuMinimize
         case loginItemNeedsApproval, loginItemFailed, openLoginItems
         case a11yNewWait, a11yNewWaitNoAsk
-        case durNowFull, durUnderMinuteFull
-        case durSecFull1, durSecFullN, durMinFull1, durMinFullN, durHourFull1, durHourFullN
-    }
-}
-
-/// Shared duration wording — pure, so the projection (`TrayState`) can put
-/// the elapsed wait in the menu bar.
-enum DurationFormat {
-    /// `spoken`: the words a sentence uses ("4 分钟", not the menu bar's
-    /// compact "4 分") — the same in English.
-    static func label(seconds ago: Double, lang: ResolvedLanguage, spoken: Bool = false) -> String {
-        if ago < 5 { return L10n.t(.durNow, lang) }
-        if ago < 60 { return String(format: L10n.t(spoken ? .durSecSpoken : .durSec, lang), Int(ago)) }
-        if ago < 3600 { return String(format: L10n.t(spoken ? .durMinSpoken : .durMin, lang), Int(ago / 60)) }
-        return String(format: L10n.t(spoken ? .durHourSpoken : .durHour, lang), Int(ago / 3600))
-    }
-
-    /// What VoiceOver says: full units, singular and plural ("4 minutes",
-    /// "1 hour", "4 分钟") — never the compact "4m" drawn beside a row.
-    static func full(seconds ago: Double, lang: ResolvedLanguage) -> String {
-        func count(_ n: Int, _ one: L10n.Key, _ many: L10n.Key) -> String {
-            n == 1 ? L10n.t(one, lang) : String(format: L10n.t(many, lang), n)
-        }
-        if ago < 5 { return L10n.t(.durNowFull, lang) }
-        if ago < 60 { return count(Int(ago), .durSecFull1, .durSecFullN) }
-        if ago < 3600 { return count(Int(ago / 60), .durMinFull1, .durMinFullN) }
-        return count(Int(ago / 3600), .durHourFull1, .durHourFullN)
     }
 }

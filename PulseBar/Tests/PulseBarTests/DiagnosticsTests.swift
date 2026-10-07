@@ -167,7 +167,7 @@ final class TrayNoticeTests: XCTestCase {
         store.installPreviewFixture("waiting")
         store.presentAgents = [.claude, .codex]
 
-        XCTAssertFalse(store.setupAgents.isEmpty)
+        XCTAssertFalse(store.trayNoticeInput.unconnected.isEmpty)
         XCTAssertEqual(store.trayNotice?.kind, .setup)
         XCTAssertEqual(store.trayNotice?.action, .connect)
         XCTAssertFalse(store.tr(.emptyHint).localizedCaseInsensitiveContains("install hooks"))
@@ -181,7 +181,7 @@ final class TrayNoticeTests: XCTestCase {
         let store = StatusStore()
         store.notifyAuthorized = true
         store.presentAgents = [.codex, .claude]
-        XCTAssertEqual(store.setupAgents, [.claude, .codex], "roster order")
+        XCTAssertEqual(store.trayNoticeInput.unconnected, [.claude, .codex], "roster order")
         XCTAssertEqual(store.trayNotice?.text, String(format: store.tr(.setupFound), "Claude, Codex"))
         store.hooksStatus = .installed([.claude, .codex])
         XCTAssertNil(store.trayNotice, "connected: nothing to set up")
@@ -197,9 +197,9 @@ final class TrayNoticeTests: XCTestCase {
         store.notifyAuthorized = true
         store.presentAgents = []
         XCTAssertTrue(store.cachedAll.contains { $0.liveProcess })
-        XCTAssertTrue(store.setupAgents.isEmpty, "running is not being on this Mac")
+        XCTAssertTrue(store.trayNoticeInput.unconnected.isEmpty, "running is not being on this Mac")
         store.presentAgents = [.gemini]
-        XCTAssertEqual(store.setupAgents, [.gemini])
+        XCTAssertEqual(store.trayNoticeInput.unconnected, [.gemini])
     }
 
     /// An agent whose install failed is never offered "Connect" again —
@@ -211,10 +211,10 @@ final class TrayNoticeTests: XCTestCase {
         store.notifyAuthorized = true
         store.presentAgents = [.claude, .codex, .gemini]
         store.hooksStatus = .installed([.claude], failed: [.gemini: .invalidJSON])
-        XCTAssertEqual(store.setupAgents, [.codex], "Gemini failed: not offered again")
+        XCTAssertEqual(store.trayNoticeInput.unconnected, [.codex], "Gemini failed: not offered again")
         XCTAssertEqual(store.trayNotice?.kind, .setup)
         store.hooksStatus = .installed([.claude, .codex], failed: [.gemini: .invalidJSON])
-        XCTAssertTrue(store.setupAgents.isEmpty)
+        XCTAssertTrue(store.trayNoticeInput.unconnected.isEmpty)
         let card = store.trayNotice
         XCTAssertEqual(card?.kind, .setupFailed)
         XCTAssertEqual(card?.action, .openHooksSettings)
@@ -247,7 +247,7 @@ final class TrayNoticeTests: XCTestCase {
         store.hooksStatus = .all
         store.notifyAuthorized = true
 
-        XCTAssertTrue(store.setupAgents.isEmpty)
+        XCTAssertTrue(store.trayNoticeInput.unconnected.isEmpty)
         XCTAssertNil(store.trayNotice)
     }
 
@@ -255,18 +255,17 @@ final class TrayNoticeTests: XCTestCase {
     func testStatusFixturesInjectConcreteTrayRows() {
         let store = StatusStore()
         store.installPreviewFixture("status-waiting")
-        XCTAssertEqual(store.snapshot.glance, .waiting)
+        XCTAssertEqual(store.snapshot.lamp, .waiting)
         XCTAssertEqual(store.snapshot.rows.count, 1)
-        XCTAssertEqual(store.snapshot.totalCount, 1)
         XCTAssertTrue(store.snapshot.rows[0].isBlocked)
 
         store.installPreviewFixture("status-running")
-        XCTAssertEqual(store.snapshot.glance, .running)
+        XCTAssertEqual(store.snapshot.lamp, .running)
         XCTAssertEqual(store.snapshot.rows.count, 1)
         XCTAssertFalse(store.snapshot.rows[0].isBlocked)
 
         store.installPreviewFixture("status-stalled")
-        XCTAssertEqual(store.snapshot.glance, .stalled)
+        XCTAssertEqual(store.snapshot.lamp, .stalled)
         XCTAssertEqual(store.snapshot.rows.count, 1)
         XCTAssertTrue(store.snapshot.rows[0].isStalled)
     }

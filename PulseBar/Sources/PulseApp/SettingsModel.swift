@@ -74,7 +74,7 @@ struct SettingsModel: Equatable {
         /// Installed / not installed, or why the last install failed.
         var state: String
         var installed: Bool
-        /// "last event 12s ago" / "no event yet"; empty when not installed.
+        /// "last event 12m ago" / "no event yet"; empty when not installed.
         var lastEvent: String
         /// Said for an agent whose hook never reports a wait.
         var note: String?
@@ -112,10 +112,9 @@ struct SettingsModel: Equatable {
             var lastEvent = ""
             if isInstalled {
                 if let ms = lastEventMs[agent], ms > 0 {
-                    let seconds = Double(max(0, nowMs - ms)) / 1000
-                    lastEvent = seconds < 5
+                    lastEvent = nowMs - ms < 60_000
                         ? t(.settingsHookLastEventNow)
-                        : String(format: t(.settingsHookLastEvent), DurationFormat.label(seconds: seconds, lang: lang, spoken: true))
+                        : String(format: t(.settingsHookLastEvent), L10n.duration(Double(nowMs - ms) / 1000, lang))
                 } else {
                     lastEvent = t(.settingsHookNoEvent)
                 }

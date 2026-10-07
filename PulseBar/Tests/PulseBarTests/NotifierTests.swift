@@ -277,9 +277,9 @@ struct BannerWithdrawalTests {
     @Test func theNotifierRoutesAStaleClickToTheTray() {
         let store = StatusStore()
         store.installPreviewFixture("status-waiting")
-        store.clearPendingRevealRowKey()
+        _ = store.takePendingReveal()
         store.notifier.handleBannerClick(agent: "claude", session: "gone", rowKey: "claude|gone")
-        #expect(store.pendingRevealRowKey == nil, "no stale routing: the tray opens on its own selection")
+        #expect(store.pendingReveal?.rowKey == nil, "no stale routing: the tray opens on its own selection")
     }
 
     // MARK: - The deferred banner
@@ -429,54 +429,57 @@ final class BannerRevealTests: XCTestCase {
     @MainActor
     func testFocusAgentSeedsPendingRevealForWaitingRow() {
         let store = makeStore()
-        let row = try! XCTUnwrap(store.snapshot.rows.first(where: \.isBlocked) ?? store.allRowsForDisplay.first(where: \.isBlocked))
-        store.clearPendingRevealRowKey()
+        let row = try! XCTUnwrap(store.cachedAll.first(where: \.isBlocked))
+        _ = store.takePendingReveal()
         store.focusAgent(idRaw: row.agent.rawValue, session: row.sessionID, rowKey: row.rowKey)
-        XCTAssertEqual(store.pendingRevealRowKey, row.rowKey)
+        XCTAssertEqual(store.pendingReveal?.rowKey, row.rowKey)
     }
 
     @MainActor
     func testFocusAgentPrefersExactRowKey() {
         let store = makeStore()
         store.installPreviewFixture("waiting")
-        let rows = store.allRowsForDisplay.filter(\.isBlocked)
+        let rows = store.cachedAll.filter(\.isBlocked)
         guard rows.count >= 2 else {
             // Fixture may be single-wait; still prove exact key wins.
-            let row = try! XCTUnwrap(rows.first ?? store.allRowsForDisplay.first)
+            let row = try! XCTUnwrap(rows.first ?? store.cachedAll.first)
             store.focusAgent(idRaw: "other", session: "nope", rowKey: row.rowKey)
-            XCTAssertEqual(store.pendingRevealRowKey, row.rowKey)
+            XCTAssertEqual(store.pendingReveal?.rowKey, row.rowKey)
             return
         }
         let target = rows[1]
         store.focusAgent(idRaw: rows[0].agent.rawValue, session: rows[0].sessionID, rowKey: target.rowKey)
-        XCTAssertEqual(store.pendingRevealRowKey, target.rowKey, "exact rowKey must not smear onto another wait")
+        XCTAssertEqual(store.pendingReveal?.rowKey, target.rowKey, "exact rowKey must not smear onto another wait")
     }
 
+    /// A banner whose row is gone opens the tray on the first (the
+    /// oldest) wait.
     @MainActor
-    func testFocusFirstWaitingSeedsReveal() {
+    func testAGoneRowSeedsTheFirstWait() {
         let store = makeStore()
-        store.clearPendingRevealRowKey()
-        store.focusFirstWaiting()
-        let expected = store.allRowsForDisplay.first(where: \.isBlocked)?.rowKey
-        XCTAssertEqual(store.pendingRevealRowKey, expected)
+        _ = store.takePendingReveal()
+        store.focusAgent(idRaw: "")
+        let expected = store.cachedAll.first(where: \.isBlocked)?.rowKey
+        XCTAssertNotNil(expected)
+        XCTAssertEqual(store.pendingReveal?.rowKey, expected)
     }
 
     @MainActor
-    func testClearPendingReveal() {
+    func testARevealIsTakenOnce() {
         let store = makeStore()
         store.requestTrayReveal(rowKey: "demo-key")
-        XCTAssertEqual(store.pendingRevealRowKey, "demo-key")
-        store.clearPendingRevealRowKey()
-        XCTAssertNil(store.pendingRevealRowKey)
+        XCTAssertEqual(store.pendingReveal?.rowKey, "demo-key")
+        XCTAssertEqual(store.takePendingReveal()?.rowKey, "demo-key")
+        XCTAssertNil(store.pendingReveal?.rowKey)
     }
 
     @MainActor
     func testStaleRowKeyStillOpensTrayIdentity() {
         let store = makeStore()
-        store.clearPendingRevealRowKey()
+        _ = store.takePendingReveal()
         store.focusAgent(idRaw: "claude", session: "", rowKey: "missing|session")
-        // May resolve to a waiting claude from fixture, or keep the stale key.
-        XCTAssertNotNil(store.pendingRevealRowKey)
+        // May resolve to a waiting claude from fixture, or the first wait.
+        XCTAssertNotNil(store.pendingReveal?.rowKey)
     }
 }
 
@@ -543,22 +546,29 @@ struct BannerRoutingTests {
     /// The jump takes the first wait in the builder's order, which
     /// lists the oldest first.
     @Test func theJumpGoesToTheFirstListedWait() {
-        let oldest = waitingRow("a", .claude, since: now - 10 * Self.minute)
-        let newer = waitingRow("b", .codex, since: now - Self.minute)
-        #expect(StatusStore.firstWaitingRow(in: [oldest, newer])?.rowKey == "a")
-        #expect(StatusStore.firstWaitingRow(in: []) == nil)
+        let store = StatusStore()
+        store.showTray = {}
+        store.cachedAll = [
+            waitingRow("a", .claude, since: now - 10 * Self.minute),
+            waitingRow("b", .codex, since: now - Self.minute),
+        ]
+        store.focusAgent(idRaw: "")
+        #expect(store.pendingReveal?.rowKey == "a")
+        store.cachedAll = []
+        store.focusAgent(idRaw: "")
+        #expect(store.pendingReveal?.rowKey == nil)
     }
 
     @Test func aBannerClickStaysInsideItsAgentAndNeedsAUniquePrefix() {
         let codex = waitingRow("codex|s1", .codex, session: "s1-abc", since: now)
         let claudeA = waitingRow("claude|a", .claude, session: "sess-1", since: now)
         let claudeB = waitingRow("claude|b", .claude, session: "sess-12", since: now)
-        #expect(StatusStore.focusTarget(in: [codex, claudeA], idRaw: "claude", session: "s1-abc", rowKey: "")?.rowKey == "claude|a",
+        #expect(BannerRoute.target(in: [codex, claudeA], idRaw: "claude", session: "s1-abc", rowKey: "")?.rowKey == "claude|a",
                 "another agent's session is not a match; the agent's own waiting row is")
-        #expect(StatusStore.focusTarget(in: [claudeA, claudeB], idRaw: "claude", session: "sess-1", rowKey: "")?.rowKey == "claude|a",
+        #expect(BannerRoute.target(in: [claudeA, claudeB], idRaw: "claude", session: "sess-1", rowKey: "")?.rowKey == "claude|a",
                 "exact wins")
-        #expect(StatusStore.focusTarget(in: [claudeB], idRaw: "claude", session: "sess-123", rowKey: "")?.rowKey == "claude|b")
-        let ambiguous = StatusStore.focusTarget(in: [claudeA, claudeB], idRaw: "claude", session: "sess-1234", rowKey: "")
+        #expect(BannerRoute.target(in: [claudeB], idRaw: "claude", session: "sess-123", rowKey: "")?.rowKey == "claude|b")
+        let ambiguous = BannerRoute.target(in: [claudeA, claudeB], idRaw: "claude", session: "sess-1234", rowKey: "")
         #expect(ambiguous?.rowKey == "claude|a", "two prefixes: no session match, fall back to the agent's first wait")
     }
 }
@@ -611,7 +621,7 @@ struct BannerIntentTests {
     /// The dismissal is the tray's own: the same `done` record with
     /// Pulse's `:dismiss` marker that ⌘D writes — never a vendor answer.
     @Test func ignoreWritesTheSameDismissalAsTheTray() {
-        let record = StatusStore.dismissalRecord(agent: .claude, session: "s1", cwd: "/w", nowMs: now)
+        let record = AttentionRecord.dismissal(agent: "claude", session: "s1", cwd: "/w", ms: now)
         #expect(record.kind == AttentionKind.done.rawValue)
         #expect(record.tool == AttentionRecord.dismissTool)
     }

@@ -20,11 +20,12 @@ not say.
   (`WaitingDelivery`), posting (`PulseNotify`), rate limiting, withdrawal and
   clicks. Its bookkeeping is the pure `WaitLedger`, in memory only.
 - **`StatusStore`** (`@Observable`): only what views read — the snapshot,
-  rows, settings, a few flags — and the intents views send. `land` assigns
-  an observed property only when its value changed (`ScanQuietTests`).
-  Settings (open at login, "don't suggest hooks") go through
-  `StatusStore.set` / `update`, which write `settings.json` only on a
-  change; a login change asks macOS. The language is the system's
+  rows, settings, a few flags — and the intents views send; every decision
+  is a pure model's (`TrayNoticeModel`, `BannerRoute`, `TrayRowModel`,
+  `PulseSnapshot.needsPublish`). `land` assigns an observed property only
+  when its value changed (`ScanQuietTests`). Settings (open at login,
+  "don't suggest hooks") go through `StatusStore.set`, which writes
+  `settings.json` only on a change; a login change asks macOS. The language is the system's
   (`ResolvedLanguage.system`), read once.
 
 ## Processes (libproc)
@@ -43,11 +44,18 @@ reused pid.
 
 ## Views
 
-`StatusPanelController` owns the status item and the one `NSPanel`, which
-hosts `TrayPanel` (rows, the header, at most one notice; → opens
-`SessionDetailView`) and whose key monitor hands every key to the pure
-`TrayKeys.reduce`. The row's context menu shows each item's key. Settings is
-`SettingsWindowController` rendering `SettingsFace` from `SettingsModel`.
+`StatusItemController` owns the status item — the lamp (`Lamp`, drawn by
+`Lamp.statusBarImage`), the title, the tooltip, the one-shot dip and the
+VoiceOver announcement of a new wait — and the tray: an `NSPopover`
+(`.transient`) anchored to the button whose content is the SwiftUI
+`TrayView` in an `NSHostingController` sized by its ideal size (rows, the
+header, at most one notice; → opens `SessionDetailView`). Opening activates
+the app so the popover's window takes keys; a local key monitor, live while
+the popover is shown, hands every key to the pure `TrayKeys.reduce`
+(`TrayUI.handle`); closing with Esc, ⌘W or the button hands the keyboard
+back to the app that had it. The row's context menu shows each item's key.
+Settings is `SettingsWindowController` rendering `SettingsFace` from
+`SettingsModel`.
 Views do no I/O; every surface is a value with a fixture in
 `PulseQA/SurfaceFixtures.swift` and a capture from `scripts/qa_captures.sh`.
 

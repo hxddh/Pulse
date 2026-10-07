@@ -648,7 +648,7 @@ struct SessionBookTests {
         #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "blocked:permission")
         // The person dismisses it in Pulse: the app's own `done` (marked
         // `:dismiss`) for the session.
-        let dismissal = StatusStore.dismissalRecord(agent: .claude, session: "s1", cwd: "/Users/me/app", nowMs: t0 + 3 * second)
+        let dismissal = AttentionRecord.dismissal(agent: "claude", session: "s1", cwd: "/Users/me/app", ms: t0 + 3 * second)
         #expect(dismissal.tool == AttentionRecord.dismissTool)
         #expect(dismissal.isDismissal)
         feed([dismissal], at: t0 + 3 * second)
@@ -1034,14 +1034,14 @@ final class TrayAssembleTests: XCTestCase {
     func testNothingAtAllIsIdleNotError() {
         let r = build([])
         XCTAssertTrue(r.rows.isEmpty)
-        XCTAssertEqual(r.snapshot.glance, .idle)
+        XCTAssertEqual(r.snapshot.lamp, .idle)
         XCTAssertEqual(r.activity, .empty)
     }
 
     func testWaitingSortsAboveEverythingElse() {
         let r = build([row("a", task: "Titled"), blocked("b")])
         XCTAssertEqual(r.rows.map(\.rowKey), ["b", "a"])
-        XCTAssertEqual(r.snapshot.glance, .waiting)
+        XCTAssertEqual(r.snapshot.lamp, .waiting)
         XCTAssertEqual(r.activity, .waiting)
     }
 
@@ -1053,32 +1053,31 @@ final class TrayAssembleTests: XCTestCase {
     func testMenuBarTitleCarriesCountAndAge() {
         XCTAssertEqual(build([blocked("a")]).snapshot.title, "1 · 10m")
         XCTAssertEqual(build([blocked("a", sinceAgoMs: 1_000)]).snapshot.title, "1", "a fresh wait does not spend space on now")
+        XCTAssertEqual(build([blocked("a", sinceAgoMs: 59_000)]).snapshot.title, "1", "nor does one under a minute")
     }
 
     func testNothingBlockedMeansNoTitle() {
         XCTAssertEqual(build([row("a")]).snapshot.title, "")
-        XCTAssertEqual(build([row("a")]).snapshot.glance, .running)
+        XCTAssertEqual(build([row("a")]).snapshot.lamp, .running)
     }
 
     func testProcessOnlyRunningIsAGreyDottedGlance() {
         let r = build([row("claude|pid:1", state: .processOnly)])
-        XCTAssertEqual(r.snapshot.glance, .idle)
-        XCTAssertEqual(r.snapshot.lamp, LampFace(shape: .dotted, tone: .idle))
+        XCTAssertEqual(r.snapshot.lamp, .processOnly)
         XCTAssertEqual(r.activity, .recent, "a bare process does not hold the running tick")
     }
 
     func testAFinishedTurnIsNotRunning() {
         let r = build([row("a", state: .yourTurn(sinceMs: now - 60_000))])
-        XCTAssertEqual(r.snapshot.glance, .idle)
+        XCTAssertEqual(r.snapshot.lamp, .idle)
         XCTAssertEqual(r.activity, .recent)
     }
 
     /// No fold: the tray lists every session and scrolls inside the
-    /// panel's height — there is no "and N more" to click.
+    /// tray's height — there is no "and N more" to click.
     func testEveryRowIsListedWithoutAFold() {
         let r = build((0..<30).map { row("k\($0)") })
         XCTAssertEqual(r.snapshot.rows.count, 30)
-        XCTAssertEqual(r.snapshot.totalCount, 30)
         XCTAssertEqual(r.snapshot.rows.map(\.rowKey), r.rows.map(\.rowKey))
     }
 
@@ -1086,7 +1085,6 @@ final class TrayAssembleTests: XCTestCase {
         let r = build([blocked("w")] + (0..<4).map { row("k\($0)") })
         XCTAssertEqual(r.snapshot.counts.blocked, 1)
         XCTAssertEqual(r.snapshot.counts.running, 4)
-        XCTAssertEqual(r.snapshot.headerTitle, r.snapshot.counts.summary(.en))
     }
 
     func testFirstSightOfAWaitIsReportedAsNew() {
@@ -1205,14 +1203,14 @@ final class AgentRowTests: XCTestCase {
     }
 
     func testShortProjectDropsOpaqueHashes() {
-        XCTAssertEqual(AgentRow.shortProject("/Users/me/code/Pulse"), "Pulse")
-        XCTAssertEqual(AgentRow.shortProject("a1b2c3d4e5f60718"), "", "hash is not a project name")
-        XCTAssertEqual(AgentRow.shortProject(""), "")
+        XCTAssertEqual(TitleHeuristics.shortProject("/Users/me/code/Pulse"), "Pulse")
+        XCTAssertEqual(TitleHeuristics.shortProject("a1b2c3d4e5f60718"), "", "hash is not a project name")
+        XCTAssertEqual(TitleHeuristics.shortProject(""), "")
     }
 
     func testLongProjectNamesAreTruncated() {
         let long = String(repeating: "x", count: 40)
-        let short = AgentRow.shortProject(long)
+        let short = TitleHeuristics.shortProject(long)
         XCTAssertLessThanOrEqual(short.count, 24)
         XCTAssertTrue(short.hasSuffix("…"))
     }
@@ -1232,7 +1230,7 @@ final class RowRedundancyTests: XCTestCase {
     /// `Cursor · Cursor` — the dedupe compared the project to the hero only.
     func testProjectThatRestatesTheAgentIsDropped() {
         let r = row(agent: .cursor, task: "Pulse installation guide", project: "Cursor")
-        XCTAssertEqual(AgentRow.shortProject(r.project), "Cursor")
+        XCTAssertEqual(TitleHeuristics.shortProject(r.project), "Cursor")
         XCTAssertEqual(r.agent.displayName, "Cursor")
     }
 
@@ -1333,14 +1331,14 @@ final class RowPresentationTests: XCTestCase {
 
     func testEncodedHomeCollapsesToTheSamePlaceAsHome() {
         let user = (home as NSString).lastPathComponent
-        XCTAssertTrue(AgentRow.isHomeLike("users-\(user)", home: home))
-        XCTAssertTrue(AgentRow.isHomeLike(user, home: home))
+        XCTAssertTrue(TitleHeuristics.isHomeLike("users-\(user)", home: home))
+        XCTAssertTrue(TitleHeuristics.isHomeLike(user, home: home))
         XCTAssertEqual(row(project: "users-\(user)").displayPath, "")
     }
 
     func testARealProjectIsStillAProject() {
         XCTAssertEqual(row(cwd: home + "/Documents/Cursor").displayPath, "~/Documents/Cursor")
-        XCTAssertFalse(AgentRow.isHomeLike("/tmp/alpha", home: home))
+        XCTAssertFalse(TitleHeuristics.isHomeLike("/tmp/alpha", home: home))
     }
 
     /// "New Session" was shown as a row title.
@@ -1383,7 +1381,7 @@ final class RowPresentationTests: XCTestCase {
         var r = row(eventMs: now - 25 * 60 * 1000, live: true)
         r.isStalled = true
         let face = TrayRowModel.make(TrayRowModel.Input(row: r, lang: .en, nowMs: now))
-        XCTAssertEqual(face.lamp, LampFace(shape: .ring, tone: .attention))
+        XCTAssertEqual(face.lamp, .stalled)
         XCTAssertEqual(face.secondLine?.kind, .warning)
         XCTAssertEqual(face.secondLine?.text, face.why)
     }
@@ -1435,7 +1433,7 @@ final class ChromeVocabularyTests: XCTestCase {
     func testCollectorAndRowShareOneVocabulary() {
         for title in TitleHeuristics.chromeTitles {
             XCTAssertTrue(
-                AgentRow.isChromeTitle(title.uppercased()),
+                TitleHeuristics.isChromeTitle(title.uppercased()),
                 "\(title) must be chrome in either case"
             )
             var row = AgentRow(rowKey: "k", agent: .claude)
@@ -1445,7 +1443,7 @@ final class ChromeVocabularyTests: XCTestCase {
     }
 
     func testARealGoalIsNotMistakenForChrome() {
-        XCTAssertFalse(AgentRow.isChromeTitle("Auth session"))
-        XCTAssertFalse(AgentRow.isChromeTitle("Fix the tray hero"))
+        XCTAssertFalse(TitleHeuristics.isChromeTitle("Auth session"))
+        XCTAssertFalse(TitleHeuristics.isChromeTitle("Fix the tray hero"))
     }
 }
