@@ -12,8 +12,9 @@ struct WaitingDelivery: Equatable {
         case nothing
         /// Rate-limited: queue these and try again after `retryAfterMs`.
         case hold([AgentRow], retryAfterMs: Int64)
-        /// Post now, one banner each.
-        case post([AgentRow])
+        /// Post `first` now; queue `later` — at most one banner per
+        /// `minimumIntervalMs`, even when one scan finds several waits.
+        case post(AgentRow, later: [AgentRow])
     }
     /// Never re-arm a retry sooner than this.
     static let minimumRetryMs: Int64 = 250
@@ -43,19 +44,17 @@ struct WaitingDelivery: Equatable {
                 && !acknowledged.contains(row.rowKey)
                 && !inFlight.contains(row.rowKey)
         }
-        // One per row key, first wins — `Dictionary(uniqueKeysWithValues:)`
-        // traps on a duplicate and once took the menu bar down with it.
-        let candidates = Array(
-            Dictionary(eligible.map { ($0.rowKey, $0) }, uniquingKeysWith: { first, _ in first }).values
-        )
-        guard !candidates.isEmpty else { return .nothing }
+        // One per row key, first wins, in the rows' order (waits first).
+        var seen = Set<String>()
+        let candidates = eligible.filter { seen.insert($0.rowKey).inserted }
+        guard let first = candidates.first else { return .nothing }
         guard canDeliverNow else {
             return .hold(
                 candidates,
                 retryAfterMs: max(minimumIntervalMs - msSinceLastNotification, Self.minimumRetryMs)
             )
         }
-        return .post(candidates)
+        return .post(first, later: Array(candidates.dropFirst()))
     }
 
     // MARK: - The deferred banner
