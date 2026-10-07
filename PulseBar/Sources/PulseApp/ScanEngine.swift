@@ -5,7 +5,7 @@ import AppKit
 ///
 /// Nothing here polls a vendor. What moves a session:
 ///
-/// - the **event log** (`events.tsv`): a hook appends a v5 line; the
+/// - the **event log** (`events.tsv`): a hook appends a v6 line; the
 ///   watcher wakes the engine, which reads the bytes after its cursor off
 ///   the main thread and applies those lines, in order, to the
 ///   `SessionBook`. At launch the whole log is replayed **before the first
@@ -101,11 +101,14 @@ final class ScanEngine {
     /// `start()` armed the watchers and timers. A store a test or a fixture
     /// builds never starts a scan of its own.
     private var armed = false
-    /// The tray panel is on screen.
+    /// The tray is on screen.
     private(set) var trayOpen = false
     private(set) var activity: ProbeSchedule.Activity = .empty
-    /// A wait younger than a minute is on screen (drawn in seconds).
+    /// A wait younger than `freshWaitMs` is open.
     private var freshWait = false
+    /// A wait younger than this keeps the fast tick: the banner for a wait
+    /// raised in front of the person is decided 30 s later.
+    static let freshWaitMs: Int64 = 60_000
     /// The tick in force; nil while it is stopped.
     private(set) var currentInterval: TimeInterval?
     private var lastApplyLogSignature = ""
@@ -163,7 +166,6 @@ final class ScanEngine {
                     self.quietProcessScans = 0
                     self.read(.processes)
                     self.project()
-                    if let model = self.model { UpdateCheck.shared.startIfEnabled(store: model) }
                 }
             }
         }
@@ -238,11 +240,7 @@ final class ScanEngine {
         else { return }
         let timer = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
             guard let engine = self else { return }
-            Task { @MainActor in
-                engine.read(.processes)
-                // One date comparison unless a day has passed.
-                if let model = engine.model { UpdateCheck.shared.startIfEnabled(store: model) }
-            }
+            Task { @MainActor in engine.read(.processes) }
         }
         timer.tolerance = interval * 0.2
         processTimer = timer
@@ -482,7 +480,6 @@ final class ScanEngine {
             context: TrayState.Context(
                 nowMs: nowMs,
                 lang: model.lang,
-                allowAutomation: model.settings.allowTerminalAutomation,
                 previousWaits: lastWaits
             )
         )
@@ -503,7 +500,7 @@ final class ScanEngine {
         // Re-arm the tick only when its tier moved.
         let nextFreshWait = state.rows.contains { row in
             guard let since = row.wait?.sinceMs, since > 0 else { return false }
-            return nowMs - since < PulseSnapshot.secondsLabelWindowMs
+            return nowMs - since < Self.freshWaitMs
         }
         if state.activity != activity || nextFreshWait != freshWait || (tickTimer == nil && currentInterval == nil) {
             activity = state.activity
@@ -512,7 +509,7 @@ final class ScanEngine {
         }
 
         // One line when the lamp or the counts move — not one per tick.
-        let signature = "rows=\(snap.rows.count)/\(snap.totalCount) glance=\(snap.glance) " +
+        let signature = "rows=\(snap.rows.count) lamp=\(snap.lamp.rawValue) " +
             "activity=\(activity) wait=\(state.waitingSince.count) procs=\(processes.count)"
         if signature != lastApplyLogSignature {
             lastApplyLogSignature = signature

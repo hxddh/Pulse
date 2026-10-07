@@ -7,7 +7,7 @@ import XCTest
 @testable import PulseHarvest
 
 // Diagnostics: Settings → Hooks (one line per agent, "Copy report"), the
-// tray's one notice, the version and the update check.
+// tray's one notice, the version.
 
 /// The report "Copy report" puts on the clipboard: plain text, the facts a
 /// person would be asked for, and nothing that names them, a project or a
@@ -26,8 +26,6 @@ struct ReportTests {
             lastEventMs: [.claude: now - 42_000],
             nowMs: now,
             notifyAuthorized: false,
-            notifyOnWaiting: true,
-            terminalAutomation: true,
             launchAtLogin: true,
             loginItem: .off
         )
@@ -47,37 +45,23 @@ struct ReportTests {
         }
     }
 
-    @Test func theReportSaysNotificationsAutomationAndTheLoginItem() {
+    @Test func theReportSaysNotificationsAndTheLoginItem() {
         let text = SettingsModel.report(input())
-        #expect(text.contains("notifications: denied, needs-you banners on"), "\(text)")
-        #expect(text.contains("terminal automation: allowed"), "\(text)")
+        #expect(text.contains("notifications: denied\n"), "\(text)")
         #expect(text.contains("open at login: on, macOS: not registered"),
                 "a toggle whose result is never checked is how this project keeps shipping bugs")
+        #expect(!text.contains("shortcut"), "\(text)")
+        #expect(!text.contains("automation"), "\(text)")
         var unasked = input()
         unasked.notifyAuthorized = nil
-        unasked.terminalAutomation = false
         unasked.loginItem = nil
         let other = SettingsModel.report(unasked)
         #expect(other.contains("notifications: not asked"))
-        #expect(other.contains("terminal automation: off"))
         #expect(other.contains("macOS: not read"))
         var pending = input()
         pending.loginItem = .requiresApproval
         let waiting = SettingsModel.report(pending)
         #expect(waiting.contains("open at login: on, macOS: requires approval"), "\(waiting)")
-    }
-
-    /// The shortcut and Terminal automation are in the report.
-    @Test func theReportSaysTheShortcutAndTerminalAutomation() {
-        var chosen = input()
-        chosen.hotkey = Hotkey.legacy("ctrl_opt_space")
-        chosen.hotkeyRegistered = false
-        let text = SettingsModel.report(chosen)
-        #expect(text.contains("shortcut: ⌃⌥Space, registered: no — taken"), "\(text)")
-        #expect(text.contains("terminal automation: allowed\n"), "\(text)")
-        let off = SettingsModel.report(input())
-        #expect(off.contains("shortcut: off\n"), "\(off)")
-        #expect(!off.contains("offer"), "the offer is gone: automation is a switch")
     }
 
     /// The input has no field for a path, a prompt, a session or a
@@ -152,7 +136,6 @@ struct HooksSectionTests {
             lastEventMs: [:], nowMs: 0, lang: .en
         )
         for line in lines {
-            #expect(line.needsFix == false, "\(line.agent.rawValue)")
             #expect((line.note != nil) == AgentID.waitingNoneAgents.contains(line.agent), "\(line.agent.rawValue)")
         }
     }
@@ -167,8 +150,7 @@ struct HooksSectionTests {
 
     @MainActor
     @Test func waitingSignalsAreOneDeepLinkAway() {
-        let store = StatusStore()
-        store.settings.language = .en
+        let store = StatusStore(lang: .en)
         store.openSettings(focus: .waitingSignals)
         #expect(store.settingsFocus.target == .waitingSignals)
         #expect(store.settingsModel.focus == .hooks)
@@ -185,7 +167,7 @@ final class TrayNoticeTests: XCTestCase {
         store.installPreviewFixture("waiting")
         store.presentAgents = [.claude, .codex]
 
-        XCTAssertFalse(store.setupAgents.isEmpty)
+        XCTAssertFalse(store.trayNoticeInput.unconnected.isEmpty)
         XCTAssertEqual(store.trayNotice?.kind, .setup)
         XCTAssertEqual(store.trayNotice?.action, .connect)
         XCTAssertFalse(store.tr(.emptyHint).localizedCaseInsensitiveContains("install hooks"))
@@ -199,7 +181,7 @@ final class TrayNoticeTests: XCTestCase {
         let store = StatusStore()
         store.notifyAuthorized = true
         store.presentAgents = [.codex, .claude]
-        XCTAssertEqual(store.setupAgents, [.claude, .codex], "roster order")
+        XCTAssertEqual(store.trayNoticeInput.unconnected, [.claude, .codex], "roster order")
         XCTAssertEqual(store.trayNotice?.text, String(format: store.tr(.setupFound), "Claude, Codex"))
         store.hooksStatus = .installed([.claude, .codex])
         XCTAssertNil(store.trayNotice, "connected: nothing to set up")
@@ -215,9 +197,9 @@ final class TrayNoticeTests: XCTestCase {
         store.notifyAuthorized = true
         store.presentAgents = []
         XCTAssertTrue(store.cachedAll.contains { $0.liveProcess })
-        XCTAssertTrue(store.setupAgents.isEmpty, "running is not being on this Mac")
+        XCTAssertTrue(store.trayNoticeInput.unconnected.isEmpty, "running is not being on this Mac")
         store.presentAgents = [.gemini]
-        XCTAssertEqual(store.setupAgents, [.gemini])
+        XCTAssertEqual(store.trayNoticeInput.unconnected, [.gemini])
     }
 
     /// An agent whose install failed is never offered "Connect" again —
@@ -229,10 +211,10 @@ final class TrayNoticeTests: XCTestCase {
         store.notifyAuthorized = true
         store.presentAgents = [.claude, .codex, .gemini]
         store.hooksStatus = .installed([.claude], failed: [.gemini: .invalidJSON])
-        XCTAssertEqual(store.setupAgents, [.codex], "Gemini failed: not offered again")
+        XCTAssertEqual(store.trayNoticeInput.unconnected, [.codex], "Gemini failed: not offered again")
         XCTAssertEqual(store.trayNotice?.kind, .setup)
         store.hooksStatus = .installed([.claude, .codex], failed: [.gemini: .invalidJSON])
-        XCTAssertTrue(store.setupAgents.isEmpty)
+        XCTAssertTrue(store.trayNoticeInput.unconnected.isEmpty)
         let card = store.trayNotice
         XCTAssertEqual(card?.kind, .setupFailed)
         XCTAssertEqual(card?.action, .openHooksSettings)
@@ -265,33 +247,12 @@ final class TrayNoticeTests: XCTestCase {
         store.hooksStatus = .all
         store.notifyAuthorized = true
 
-        XCTAssertTrue(store.setupAgents.isEmpty)
+        XCTAssertTrue(store.trayNoticeInput.unconnected.isEmpty)
         XCTAssertNil(store.trayNotice)
-    }
-
-    @MainActor
-    func testStatusFixturesInjectConcreteTrayRows() {
-        let store = StatusStore()
-        store.installPreviewFixture("status-waiting")
-        XCTAssertEqual(store.snapshot.glance, .waiting)
-        XCTAssertEqual(store.snapshot.rows.count, 1)
-        XCTAssertEqual(store.snapshot.totalCount, 1)
-        XCTAssertTrue(store.snapshot.rows[0].isBlocked)
-
-        store.installPreviewFixture("status-running")
-        XCTAssertEqual(store.snapshot.glance, .running)
-        XCTAssertEqual(store.snapshot.rows.count, 1)
-        XCTAssertFalse(store.snapshot.rows[0].isBlocked)
-
-        store.installPreviewFixture("status-stalled")
-        XCTAssertEqual(store.snapshot.glance, .stalled)
-        XCTAssertEqual(store.snapshot.rows.count, 1)
-        XCTAssertTrue(store.snapshot.rows[0].isStalled)
     }
 }
 
-/// A version drift once shipped for months, invisible because nothing ever
-/// compared the two.
+/// The version a build reports is the one it is.
 final class PulseVersionTests: XCTestCase {
     func testSemverIsWellFormed() {
         let parts = PulseVersion.semver.split(separator: ".")
@@ -310,82 +271,17 @@ final class PulseVersionTests: XCTestCase {
         XCTAssertEqual(PulseVersion.fingerprint, "Pulse \(PulseVersion.short)")
     }
 
-    func testUpdateComparisonIsNumericNotLexicographic() {
-        // "0.9.0" > "0.21.0" as strings — the exact bug this guards.
-        XCTAssertTrue(UpdateCheck.isNewer("0.21.0", than: "0.9.0"))
-        XCTAssertFalse(UpdateCheck.isNewer("0.9.0", than: "0.21.0"))
-        XCTAssertTrue(UpdateCheck.isNewer("1.0.0", than: "0.99.99"))
-        XCTAssertFalse(UpdateCheck.isNewer("0.21.1", than: "0.21.1"))
-        XCTAssertTrue(UpdateCheck.isNewer("0.21.2", than: "0.21.1"))
-    }
-
-    func testUpdateTagNormalization() {
-        XCTAssertEqual(UpdateCheck.normalize("v0.22.0"), "0.22.0")
-        XCTAssertEqual(UpdateCheck.normalize(" 0.22.0 "), "0.22.0")
-        XCTAssertEqual(UpdateCheck.normalize("V1.0.0"), "1.0.0")
-    }
-
-    func testPreReleaseSuffixDoesNotBeatRelease() {
-        XCTAssertFalse(UpdateCheck.isNewer("0.21.1-beta.1", than: "0.21.1"))
-    }
-
-    func testInterpretRejectsGarbage() {
-        let status = UpdateCheck.interpret(data: Data("not json".utf8), response: nil, error: nil)
-        XCTAssertEqual(status, .failed(.badResponse))
-    }
-
-    func testInterpretFindsNewerRelease() {
-        let json = """
-        {
-          "tag_name":"v99.0.0",
-          "html_url":"https://example.com/r"
-        }
-        """
-        let status = UpdateCheck.interpret(data: Data(json.utf8), response: nil, error: nil)
-        XCTAssertEqual(
-            status,
-            .available(.init(version: "99.0.0", pageURL: "https://example.com/r"))
-        )
-    }
-
-    func testInterpretReadsOneReleaseNotAList() {
-        // One feed, `/releases/latest`: a list is not an answer.
-        let list = UpdateCheck.interpret(data: Data(#"[{"tag_name":"v99.0.0"}]"#.utf8), response: nil, error: nil)
-        XCTAssertEqual(list, .failed(.badResponse))
-        let same = UpdateCheck.interpret(
-            data: Data(#"{"tag_name":"v\#(PulseVersion.semver)"}"#.utf8), response: nil, error: nil
-        )
-        XCTAssertEqual(same, .current)
-    }
-
     func testAnUnpackagedBuildIsNeitherPreviewNorStable() {
         guard PulseVersion.bundleVersion == nil else { return }
         XCTAssertEqual(PulseVersion.distributionChannel, "dev")
         XCTAssertFalse(PulseVersion.isNotarized)
     }
 
-    @MainActor
-    func testUpdateCurrentCopyIsChannelRelative() {
-        let store = StatusStore()
-        store.settings.language = .en
-        store.updateStatus = .current
-        // Copy follows the running build's channel — not a fixed string.
-        // XCTest on CI often sees Bundle.main version keys, so channel may be
-        // preview rather than unpackaged dev; assert the mapping, not the host.
-        let expected: L10n.Key
-        switch PulseVersion.distributionChannel {
-        case "stable": expected = .updateCurrentStable
-        case "preview": expected = .updateCurrentPreview
-        default: expected = .updateCurrent
-        }
-        XCTAssertEqual(store.updateStatusText, store.tr(expected))
-        XCTAssertNotEqual(store.tr(.updateCurrentPreview), store.tr(.updateCurrentStable))
-        XCTAssertNotEqual(store.tr(.updateCurrent), store.tr(.updateCurrentPreview))
-        XCTAssertTrue(store.tr(.updateCurrentStable).localizedCaseInsensitiveContains("stable"))
-        // A preview build is ad-hoc signed, not "unsigned".
-        XCTAssertTrue(store.tr(.updateCurrentPreview).contains("ad-hoc"))
-        XCTAssertFalse(store.tr(.updateCurrentPreview).localizedCaseInsensitiveContains("unsigned"))
-        XCTAssertFalse(L10n.t(.updateCurrentPreview, .zh).contains("未签名"))
+    /// A preview build is said to be ad-hoc signed, never "unsigned".
+    func testThePreviewBuildIsSaidAsAdHocSigned() {
+        XCTAssertTrue(L10n.t(.buildPreview, .en).contains("ad-hoc"))
+        XCTAssertFalse(L10n.t(.buildPreview, .en).localizedCaseInsensitiveContains("unsigned"))
+        XCTAssertFalse(L10n.t(.buildPreview, .zh).contains("未签名"))
     }
 
     func testHookStatusIsPerAgentNotGlobal() {
@@ -398,64 +294,5 @@ final class PulseVersionTests: XCTestCase {
             HooksSupport.Status.installed([.claude, .gemini]).label(lang: .en),
             String(format: L10n.t(.hooksInstalledCount, .en), 2, AgentID.allCases.count)
         )
-    }
-}
-
-/// A background check never replaces a known answer with a failure.
-@Suite("Update status")
-struct UpdateStatusTests {
-
-    // MARK: - Background update checks keep a known answer
-
-    private static let release = UpdateCheck.ReleaseInfo(
-        version: "99.0.0",
-        pageURL: "https://example.invalid/r"
-    )
-
-    @Test func aBackgroundFailureKeepsAnAvailableUpdate() {
-        let previous = UpdateCheck.Status.available(Self.release)
-        let next = UpdateCheck.resolve(previous: previous, result: .failed(.network("offline")), manual: false)
-        #expect(next == previous)
-    }
-
-    @Test func aBackgroundFailureKeepsUpToDate() {
-        let next = UpdateCheck.resolve(previous: .current, result: .failed(.http(503)), manual: false)
-        #expect(next == .current)
-    }
-
-    @Test func aManualFailureIsShown() {
-        let next = UpdateCheck.resolve(previous: .current, result: .failed(.http(503)), manual: true)
-        #expect(next == .failed(.http(503)))
-    }
-
-    @Test func aBackgroundAnswerStillReplacesTheStatus() {
-        let next = UpdateCheck.resolve(previous: .current, result: .available(Self.release), manual: false)
-        #expect(next == .available(Self.release))
-    }
-}
-
-/// When the update check runs, and what its failures say.
-@MainActor
-@Suite("Update check", .serialized)
-struct UpdateCheckTests {
-    let now: Int64 = 1_800_000_000_000
-    // MARK: - 10 / 21 · update checks
-
-    @Test func aFailedUpdateCheckRetriesWithinTheHourAndSuccessWaitsADay() {
-        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
-        #expect(UpdateCheck.isDue(now: t0, lastSuccess: nil, lastAttempt: nil))
-        #expect(!UpdateCheck.isDue(now: t0.addingTimeInterval(30 * 60), lastSuccess: nil, lastAttempt: t0))
-        #expect(UpdateCheck.isDue(now: t0.addingTimeInterval(61 * 60), lastSuccess: nil, lastAttempt: t0),
-                "one offline launch used to silence the check for a day")
-        #expect(!UpdateCheck.isDue(now: t0.addingTimeInterval(23 * 3600), lastSuccess: t0, lastAttempt: t0))
-        #expect(UpdateCheck.isDue(now: t0.addingTimeInterval(25 * 3600), lastSuccess: t0, lastAttempt: t0))
-    }
-
-    @Test func updateFailuresAreTypedForTheSurface() throws {
-        let url = try #require(URL(string: "https://example.com/feed"))
-        let busy = HTTPURLResponse(url: url, statusCode: 503, httpVersion: nil, headerFields: nil)
-        #expect(UpdateCheck.interpret(data: Data(), response: busy, error: nil) == .failed(.http(503)))
-        #expect(UpdateCheck.interpret(data: Data(#"{"tag_name":""}"#.utf8), response: nil, error: nil) == .failed(.noTag))
-        #expect(UpdateCheck.Failure.http(503).detail == "HTTP 503")
     }
 }

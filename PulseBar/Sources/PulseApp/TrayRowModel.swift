@@ -8,7 +8,7 @@ import Foundation
 /// test · 12m ago", a past step, never "running"). No chip, no tint, no "new"
 /// dot, no buttons on the row: the verbs are a click (the body goes, the
 /// trailing "›" or an ⌥-click opens the detail — `clickAction`), keys (↩ →
-/// ⌘D ⌘M), the context menu (which shows each key), VoiceOver actions and
+/// ⌘D), the context menu (which shows each key), VoiceOver actions and
 /// the detail page.
 ///
 /// Pure: the row, the language, the clock and a few facts only the store
@@ -21,10 +21,7 @@ struct TrayRowModel: Equatable {
     enum Action: String, Equatable, Hashable {
         /// Go: focus the terminal when there is a handle, else the detail.
         case primary
-        case details, dismiss, focus, mute
-        /// The landing notice's "Turn on": Terminal automation, the same
-        /// setting as the Settings switch (`RowNotice.offersAutomation`).
-        case turnOnAutomation
+        case details, dismiss, focus
     }
 
     /// Where on the row a click landed: its body (both lines) or the
@@ -53,8 +50,7 @@ struct TrayRowModel: Equatable {
             case .focus: return .enter
             case .details: return .right
             case .dismiss: return .dismiss
-            case .mute: return .mute
-            case .primary, .turnOnAutomation: return nil
+            case .primary: return nil
             }
         }
     }
@@ -76,7 +72,7 @@ struct TrayRowModel: Equatable {
     var lang: ResolvedLanguage
     var rowKey: String
     var agent: AgentID
-    var lamp: LampFace
+    var lamp: Lamp
     /// The short project name — "" when the headline already is the project.
     var project: String
     /// `headline(_:lang:nowMs:)`: the tray hero.
@@ -88,8 +84,6 @@ struct TrayRowModel: Equatable {
     var age: String
     /// "Your turn", quietly, for a session whose turn ended unseen.
     var turnLabel: String?
-    /// The agent is muted (no banners); the row shows a bell.slash.
-    var muted: Bool
     var secondLine: SecondLine?
     /// `why(_:lang:nowMs:)`: which evidence put this row in its state.
     var why: String
@@ -108,7 +102,6 @@ struct TrayRowModel: Equatable {
         var lang: ResolvedLanguage
         var nowMs: Int64
         var notice: RowNotice? = nil
-        var muted: Bool = false
     }
 
     static func make(_ input: Input) -> TrayRowModel {
@@ -117,7 +110,7 @@ struct TrayRowModel: Equatable {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         let headline = Self.headline(row, lang: lang, nowMs: input.nowMs)
         let why = Self.why(row, lang: lang, nowMs: input.nowMs)
-        let lamp = LampFace.row(row)
+        let lamp = Lamp(row)
         let age = Self.rowTime(row, nowMs: input.nowMs, lang: lang)
         let place = row.shortPlace
         let project = place == headline ? "" : place
@@ -129,18 +122,15 @@ struct TrayRowModel: Equatable {
             menu.append(Button(action: .focus, title: Self.focusTitle(row, lang: lang)))
         }
         menu.append(Button(action: .details, title: t(.details)))
-        if row.isBlocked { menu.append(Button(action: .dismiss, title: t(.dismissWait))) }
-        // Muting lives on the row it silences, not in a list of switches.
-        menu.append(Button(action: .mute, title: t(input.muted ? .unmute : .mute)))
+        if row.isBlocked { menu.append(Button(action: .dismiss, title: t(.ignoreWait))) }
 
         // VoiceOver hears whole words: "4 minutes", never the drawn "4m".
         var spoken = [row.agent.displayName, Self.stateText(row, lang: lang), headline]
         if !project.isEmpty { spoken.append(project) }
-        let spokenAge = Self.rowTimeSpoken(row, nowMs: input.nowMs, lang: lang)
+        let spokenAge = Self.rowTime(row, nowMs: input.nowMs, lang: lang, spoken: true)
         if !spokenAge.isEmpty { spoken.append(spokenAge) }
         if let second, second.kind != .step { spoken.append(second.text) } else { spoken.append(why) }
         if let second, second.kind == .step { spoken.append(second.text) }
-        if input.muted { spoken.append(t(.mutedWord)) }
 
         return TrayRowModel(
             lang: lang,
@@ -152,7 +142,6 @@ struct TrayRowModel: Equatable {
             headlineQuiet: row.isProcessOnly,
             age: age,
             turnLabel: turnLabel,
-            muted: input.muted,
             secondLine: second,
             why: why,
             canFocus: row.canFocusTerminal,
@@ -171,7 +160,7 @@ struct TrayRowModel: Equatable {
     static func secondLine(
         _ row: AgentRow,
         why: String,
-        lamp: LampFace,
+        lamp: Lamp,
         lang: ResolvedLanguage,
         nowMs: Int64
     ) -> SecondLine? {
@@ -179,7 +168,7 @@ struct TrayRowModel: Equatable {
             let text = ask(row) ?? L10n.waitKind(wait.kind, lang)
             return SecondLine(kind: .ask, text: truncate(text, 140))
         }
-        if lamp.tone == .attention {
+        if lamp == .stalled {
             return SecondLine(kind: .warning, text: why)
         }
         if row.state == .running, let step = row.lastStep {
@@ -220,7 +209,7 @@ extension TrayRowModel {
 
     private static func rawHeadline(_ row: AgentRow, lang: ResolvedLanguage, nowMs: Int64) -> String {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-        let project = AgentRow.shortProject(row.project)
+        let project = TitleHeuristics.shortProject(row.project)
         switch row.state {
         case .blocked:
             if let task = row.usefulTask { return task }
@@ -241,7 +230,8 @@ extension TrayRowModel {
     static func why(_ row: AgentRow, lang: ResolvedLanguage, nowMs: Int64) -> String {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         let name = row.agent.displayName
-        func since(_ ms: Int64) -> String { ms > 0 ? ago(ms, nowMs: nowMs, lang: lang) : "?" }
+        func since(_ ms: Int64) -> String { ms > 0 ? L10n.ago(ms, nowMs: nowMs, lang) : "?" }
+        let quiet = L10n.duration(row.lastActivitySeconds(at: nowMs), lang)
         switch row.state {
         case .blocked(let wait):
             let kind = kindNoun(wait.kind, lang: lang)
@@ -255,14 +245,13 @@ extension TrayRowModel {
         case .running:
             if row.isStalled {
                 guard row.lastActivityMs > 0 else { return t(.explainStalledUnknown) }
-                let quiet = DurationFormat.label(seconds: row.lastActivitySeconds(at: nowMs), lang: lang, spoken: true)
                 if let step = row.lastStep {
                     return String(format: t(.stepStalled), quiet, stepText(step))
                 }
                 return String(format: t(.explainStalled), quiet)
             }
             guard row.lastActivityMs > 0 else { return t(.explainRunningNoClock) }
-            return String(format: t(.explainRunning), name, ago(row.lastActivityMs, nowMs: nowMs, lang: lang))
+            return String(format: t(.explainRunning), name, since(row.lastActivityMs))
         case .recent:
             // Which rule made it recent — never a guess that it runs.
             switch row.recentReason {
@@ -271,10 +260,8 @@ extension TrayRowModel {
             case .ended:
                 return String(format: t(.explainEnded), since(row.stateSinceMs > 0 ? row.stateSinceMs : row.lastActivityMs))
             case .quiet:
-                let quiet = DurationFormat.label(seconds: row.lastActivitySeconds(at: nowMs), lang: lang, spoken: true)
                 return String(format: t(.explainQuiet), quiet)
             case .silent:
-                let quiet = DurationFormat.label(seconds: row.lastActivitySeconds(at: nowMs), lang: lang, spoken: true)
                 return String(format: t(.explainSilent), quiet)
             }
         }
@@ -319,79 +306,35 @@ extension TrayRowModel {
     }
 
     /// A step with its age: "Bash · swift test · 12m ago" — "now" below a
-    /// minute, like the row's own time, so a standing row is not redrawn
-    /// every tick.
+    /// minute, like the row's own time.
     static func stepLine(_ step: SessionBook.Step, nowMs: Int64, lang: ResolvedLanguage) -> String {
-        "\(stepText(step)) · \(minuteAgo(step.ms, nowMs: nowMs, lang: lang))"
-    }
-
-    /// How long the current turn has run ("14m"); "" when its start is not
-    /// known. Below a minute it says so ("<1m"), so it is not redrawn every
-    /// tick.
-    static func turnDuration(_ row: AgentRow, nowMs: Int64, lang: ResolvedLanguage) -> String {
-        guard row.turnStartMs > 0, row.turnStartMs <= nowMs else { return "" }
-        let seconds = Double(nowMs - row.turnStartMs) / 1000
-        if seconds < 60 { return L10n.t(.durUnderMinute, lang) }
-        return DurationFormat.label(seconds: seconds, lang: lang)
+        "\(stepText(step)) · \(L10n.ago(step.ms, nowMs: nowMs, lang))"
     }
 
     // MARK: - Time
 
-    /// "12m ago", or "now" below a minute.
-    static func minuteAgo(_ ms: Int64, nowMs: Int64, lang: ResolvedLanguage) -> String {
-        let seconds = max(0, Double(nowMs - ms) / 1000)
-        if seconds < 60 { return L10n.t(.durNow, lang) }
-        return String(format: L10n.t(.agoFormat, lang), DurationFormat.label(seconds: seconds, lang: lang, spoken: true))
+    /// How long the current turn has run ("14m", "now" below a minute);
+    /// "" when its start is not known.
+    static func turnDuration(_ row: AgentRow, nowMs: Int64, lang: ResolvedLanguage, spoken: Bool = false) -> String {
+        guard row.turnStartMs > 0, row.turnStartMs <= nowMs else { return "" }
+        return L10n.duration(Double(nowMs - row.turnStartMs) / 1000, lang, spoken: spoken)
     }
 
-    /// "3m ago" / "3 分钟前", or "now" alone — never "now ago".
-    static func ago(_ ms: Int64, nowMs: Int64, lang: ResolvedLanguage) -> String {
-        let seconds = max(0, Double(nowMs - ms) / 1000)
-        if seconds < 5 { return L10n.t(.durNow, lang) }
-        return String(format: L10n.t(.agoFormat, lang), DurationFormat.label(seconds: seconds, lang: lang, spoken: true))
-    }
-
-    /// The row's trailing time: when it last moved. Below a minute it is
-    /// simply "now" — the tray rescans every few seconds and nobody acts on
-    /// the difference between 40 and 54 seconds.
-    static func activityLabel(_ row: AgentRow, nowMs: Int64, lang: ResolvedLanguage) -> String {
-        guard row.lastActivityMs > 0 else { return "" }
-        return minuteAgo(row.lastActivityMs, nowMs: nowMs, lang: lang)
-    }
-
-    /// The row's one time: a wait's duration; for a running row this
-    /// turn's duration, when its start is known; else when it last moved.
-    static func rowTime(_ row: AgentRow, nowMs: Int64, lang: ResolvedLanguage) -> String {
-        if row.isBlocked { return waitDuration(row, nowMs: nowMs, lang: lang) }
+    /// The row's one time: how long a wait has been outstanding ("4m"); for
+    /// a running row this turn's duration, when its start is known; else
+    /// when it last moved ("3m ago"). `spoken`: in full units, as VoiceOver
+    /// says it ("4 minutes"). "" when the row has none.
+    static func rowTime(_ row: AgentRow, nowMs: Int64, lang: ResolvedLanguage, spoken: Bool = false) -> String {
+        if let wait = row.wait {
+            guard wait.sinceMs > 0 else { return "" }
+            return L10n.duration(Double(nowMs - wait.sinceMs) / 1000, lang, spoken: spoken)
+        }
         if row.state == .running {
-            let turn = turnDuration(row, nowMs: nowMs, lang: lang)
+            let turn = turnDuration(row, nowMs: nowMs, lang: lang, spoken: spoken)
             if !turn.isEmpty { return turn }
         }
-        return activityLabel(row, nowMs: nowMs, lang: lang)
-    }
-
-    /// The row's one time as VoiceOver says it, in full units: "4 minutes",
-    /// "less than a minute", "12 minutes ago"; "" when the row has none.
-    static func rowTimeSpoken(_ row: AgentRow, nowMs: Int64, lang: ResolvedLanguage) -> String {
-        func seconds(since ms: Int64) -> Double { max(0, Double(nowMs - ms) / 1000) }
-        if row.isBlocked {
-            guard let since = row.wait?.sinceMs, since > 0 else { return "" }
-            return DurationFormat.full(seconds: seconds(since: since), lang: lang)
-        }
-        if row.state == .running, row.turnStartMs > 0, row.turnStartMs <= nowMs {
-            let turn = seconds(since: row.turnStartMs)
-            return turn < 60 ? L10n.t(.durUnderMinuteFull, lang) : DurationFormat.full(seconds: turn, lang: lang)
-        }
         guard row.lastActivityMs > 0 else { return "" }
-        let quiet = seconds(since: row.lastActivityMs)
-        if quiet < 60 { return L10n.t(.durNowFull, lang) }
-        return String(format: L10n.t(.agoFormat, lang), DurationFormat.full(seconds: quiet, lang: lang))
-    }
-
-    /// How long a wait has been outstanding ("4m"); "" when unknown.
-    static func waitDuration(_ row: AgentRow, nowMs: Int64, lang: ResolvedLanguage) -> String {
-        guard let since = row.wait?.sinceMs, since > 0 else { return "" }
-        return DurationFormat.label(seconds: max(0, Double(nowMs - since) / 1000), lang: lang)
+        return L10n.ago(row.lastActivityMs, nowMs: nowMs, lang, spoken: spoken)
     }
 
     // MARK: - Focus
@@ -418,32 +361,117 @@ extension TrayRowModel {
     }
 }
 
+/// One session, in full, as a value — what `SessionDetailFace` draws.
+///
+/// The row is one line; this is what a person reads after deciding to look,
+/// in the order it is worth reading: the headline as the page's title (in
+/// its header, once), the ask (and what to do about it), the why (when the
+/// row's second line did not already say it), the recent steps, the agent's
+/// last message, the last error and the folder — all from the session's own
+/// events, in the words the row uses (`TrayRowModel`). Each thing is said
+/// once: no headline block under a header that names it, no state-and-age
+/// beside "This turn", no start time. How Pulse reads a session is not on
+/// the page; it is in Settings → Hooks → "Copy report". Nothing is shown as
+/// a placeholder: a fact Pulse does not have is not a row. Tokens, context,
+/// cost, model and plan are never shown — a decision.
+struct DetailModel: Equatable {
+    struct Fact: Equatable {
+        var label: String
+        var value: String
+    }
+
+    /// What the detail page can ask for.
+    enum Action: Equatable { case back, focus, dismiss }
+
+    var lang: ResolvedLanguage
+    var rowKey: String
+    var agent: AgentID
+    var lamp: Lamp
+    /// `TrayRowModel.headline` — the page's title, in its header.
+    var headline: String
+    var headlineQuiet: Bool
+    /// The full question of a blocked row.
+    var ask: String?
+    /// `TrayRowModel.why` — nil when it is the row's own second line (a
+    /// stalled row's why), which would say the same sentence twice.
+    var why: String?
+    /// Up to `SessionBook.maxSteps` recent steps, newest first: how long
+    /// ago, and "tool · target".
+    var steps: [Fact]
+    var lastMessage: String?
+    var error: String?
+    /// This turn's duration (the page's one clock) and the folder.
+    var facts: [Fact]
+    var canFocus: Bool
+    var focusTitle: String
+    var canDismiss: Bool
+    /// What the last Go did when it did not land exactly (`RowNotice`) —
+    /// the same words as the row.
+    var notice: RowNotice? = nil
+
+    static func make(
+        row: AgentRow,
+        lang: ResolvedLanguage,
+        nowMs: Int64,
+        notice: RowNotice? = nil
+    ) -> DetailModel {
+        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
+        typealias Words = TrayRowModel
+        let fresh = row.selfReportFresh(at: nowMs)
+
+        var facts: [Fact] = []
+        if row.state == .running || row.isBlocked {
+            let turn = Words.turnDuration(row, nowMs: nowMs, lang: lang)
+            if !turn.isEmpty { facts.append(Fact(label: t(.stepThisTurn), value: turn)) }
+        }
+        if !row.displayPath.isEmpty { facts.append(Fact(label: t(.detailFolder), value: row.displayPath)) }
+
+        let steps = row.recentSteps.reversed().map { step in
+            Fact(label: L10n.ago(step.ms, nowMs: nowMs, lang), value: Words.stepText(step))
+        }
+        let lamp = Lamp(row)
+        let why = Words.why(row, lang: lang, nowMs: nowMs)
+        let second = Words.secondLine(row, why: why, lamp: lamp, lang: lang, nowMs: nowMs)
+
+        return DetailModel(
+            lang: lang,
+            rowKey: row.rowKey,
+            agent: row.agent,
+            lamp: lamp,
+            headline: Words.headline(row, lang: lang, nowMs: nowMs),
+            headlineQuiet: row.isProcessOnly,
+            ask: Words.ask(row),
+            why: second?.text == why ? nil : why,
+            steps: steps,
+            lastMessage: fresh && !row.lastWord.isEmpty ? row.lastWord : nil,
+            error: row.lastErrorText.isEmpty ? nil : row.lastErrorText,
+            facts: facts,
+            canFocus: row.canFocusTerminal,
+            focusTitle: Words.focusTitle(row, lang: lang),
+            canDismiss: row.isBlocked,
+            notice: notice
+        )
+    }
+}
+
 /// A row's brief notice: what the last click did when it did not do the
 /// thing. Pure.
 struct RowNotice: Equatable {
     var text: String
-    /// The notice carries a "Turn on" button for Terminal automation — the
-    /// one switch that would have made this Go exact. Consent at the moment
-    /// of need; macOS's own Automation prompt still comes on the next Go.
-    var offersAutomation = false
 
-    /// A Go that reached the app, not the exact terminal. When the one
-    /// thing in the way is Terminal automation — off, and with it on the
-    /// same handle would land on the exact iTerm session or Terminal / iTerm
-    /// tab (no tmux pane already exact, no editor, no Ghostty) — the notice
-    /// says so and offers to turn it on; otherwise it says only where it
-    /// landed.
-    static func appOnly(row: AgentRow, automationAllowed: Bool, lang: ResolvedLanguage) -> RowNotice {
-        let editor = row.landingPlan.steps.contains { step in
-            if case .openFolder = step { return true }
-            return false
+    /// A Go that reached the app, not the exact terminal. When the plan
+    /// tried an iTerm session or a Terminal / iTerm tab — AppleScript, which
+    /// macOS lets run only once the person allowed it in its own Automation
+    /// prompt — the notice says where that permission is; otherwise it says
+    /// only where it landed. No button: macOS's prompt is the consent.
+    static func appOnly(row: AgentRow, lang: ResolvedLanguage) -> RowNotice {
+        let scripted = row.landingPlan.steps.contains { step in
+            switch step {
+            case .iTermSession, .ttyTab: return true
+            default: return false
+            }
         }
-        let exactWithAutomation = !automationAllowed && !editor
-            && LandingPlan.make(handle: row.landing, cwd: row.cwd, allowAutomation: true).precision == .exact
-        return RowNotice(
-            text: L10n.t(exactWithAutomation ? .focusAppOnlyAutomation : .focusAppOnly, lang),
-            offersAutomation: exactWithAutomation
-        )
+        return RowNotice(text: L10n.t(scripted ? .focusAppOnlyAutomation : .focusAppOnly, lang))
     }
 }
 

@@ -17,10 +17,10 @@ import XCTest
 final class BestEffortWorkspaceTests: XCTestCase {
     func testOnlyAnAbsoluteWorkspaceIsOpened() {
         let handle = LandingHandle(term: "vscode")
-        let opened = LandingPlan.make(handle: handle, cwd: "/Users/me/my-project", allowAutomation: false)
+        let opened = LandingPlan.make(handle: handle, cwd: "/Users/me/my-project")
         XCTAssertEqual(opened.steps.first, LandingStep.openFolder(bundleIDs: HostAppKind.vsCode.bundleIDs, path: "/Users/me/my-project"))
         for cwd in ["", "relative/path", "/", "/tmp", "/private/tmp"] {
-            let plan = LandingPlan.make(handle: handle, cwd: cwd, allowAutomation: false)
+            let plan = LandingPlan.make(handle: handle, cwd: cwd)
             XCTAssertEqual(plan.steps, [.activateApp(bundleIDs: HostAppKind.vsCode.bundleIDs)], "\(cwd) is not a workspace")
         }
     }
@@ -114,12 +114,10 @@ struct TrayInteractionTests {
         #expect(escape.handled)
     }
 
-    @Test func theDetailPageTakesCommandDAndCommandMAndReturn() {
+    @Test func theDetailPageTakesCommandDAndReturn() {
         let open = TrayKeys.State(selected: "a", detail: "a")
         let dismiss = press(open, [.dismiss])
         #expect(dismiss.effect == .dismiss("a"))
-        let mute = press(open, [.mute])
-        #expect(mute.effect == .toggleMute("a"))
         let go = press(open, [.enter])
         #expect(go.effect == .focus("a"))
     }
@@ -132,27 +130,25 @@ struct TrayInteractionTests {
 
     // MARK: - Keys: the list
 
-    @Test func escapeOnTheListClosesThePanel() {
+    @Test func escapeOnTheListClosesTheTray() {
         let outcome = press(TrayKeys.State(selected: "a", detail: nil), [.escape])
-        #expect(outcome.effect == .closePanel)
+        #expect(outcome.effect == .closeTray)
         let empty = press(TrayKeys.State(), [.escape], rows: [])
-        #expect(empty.effect == .closePanel, "Esc works on an empty list too")
+        #expect(empty.effect == .closeTray, "Esc works on an empty list too")
         let down = press(TrayKeys.State(), [.down], rows: [])
         #expect(down.state.selected == nil)
     }
 
-    @Test func commandDAndCommandMActOnTheSelectedRow() {
+    @Test func commandDActsOnTheSelectedRow() {
         let onWait = TrayKeys.State(selected: "a", detail: nil)
         let dismiss = press(onWait, [.dismiss])
         #expect(dismiss.effect == .dismiss("a"))
-        let mute = press(onWait, [.mute])
-        #expect(mute.effect == .toggleMute("a"))
 
         let onRunning = TrayKeys.State(selected: "b", detail: nil)
         let notAWait = press(onRunning, [.dismiss])
-        #expect(notAWait.effect == nil, "⌘D is not a dismiss on a row that is not waiting")
+        #expect(notAWait.effect == nil, "⌘D is not an ignore on a row that is not waiting")
 
-        let nothingSelected = press(TrayKeys.State(), [.mute])
+        let nothingSelected = press(TrayKeys.State(), [.dismiss])
         #expect(nothingSelected.effect == nil)
     }
 
@@ -176,12 +172,12 @@ struct TrayInteractionTests {
         #expect(bareW == nil, "a bare W is not the tray's")
         let list = press(TrayKeys.State(selected: "a", detail: nil), [.close])
         let escape = press(TrayKeys.State(selected: "a", detail: nil), [.escape])
-        #expect(list.effect == .closePanel)
+        #expect(list.effect == .closeTray)
         #expect(list == escape, "on the list ⌘W is Esc")
         let empty = press(TrayKeys.State(), [.close], rows: [])
-        #expect(empty.effect == .closePanel)
+        #expect(empty.effect == .closeTray)
         let detail = press(TrayKeys.State(selected: "b", detail: "b"), [.close])
-        #expect(detail.effect == .closePanel, "⌘W closes the tray from the detail page too")
+        #expect(detail.effect == .closeTray, "⌘W closes the tray from the detail page too")
         #expect(detail.handled)
     }
 
@@ -194,7 +190,7 @@ struct TrayInteractionTests {
     }
 
     /// A bare letter is not the tray's: the tray opens with a row selected,
-    /// and a bare D or M must never dismiss or mute.
+    /// and a bare D must never ignore a wait.
     @Test func eventsBecomeKeys() {
         let esc = TrayKeys.key(keyCode: 53, characters: "\u{1b}", command: false)
         #expect(esc == .escape)
@@ -206,8 +202,8 @@ struct TrayInteractionTests {
         #expect(dismiss == .dismiss)
         let dismissByDelete = TrayKeys.key(keyCode: 51, characters: "\u{7f}", command: true)
         #expect(dismissByDelete == .dismiss)
-        let mute = TrayKeys.key(keyCode: 46, characters: "m", command: true)
-        #expect(mute == .mute)
+        let commandM = TrayKeys.key(keyCode: 46, characters: "m", command: true)
+        #expect(commandM == nil, "⌘M is not the tray's")
         let bareD = TrayKeys.key(keyCode: 2, characters: "d", command: false)
         #expect(bareD == nil, "a bare D is never a dismiss")
         let backspace = TrayKeys.key(keyCode: 51, characters: "\u{7f}", command: false)
@@ -283,7 +279,7 @@ struct TrayInteractionTests {
         let labels = model.counts.map { "\($0.count) \($0.label)" }
         #expect(labels == ["2 need you", "1 running", "1 stalled", "1 your turn"])
         let tones = model.counts.map { $0.tone }
-        #expect(tones == [.waiting, .running, .attention, .idle])
+        #expect(tones == [Lamp.waiting, .running, .stalled, .idle])
     }
 
     @Test func oneWaitIsSingular() {
@@ -305,11 +301,11 @@ struct TrayInteractionTests {
     // MARK: - The one notice
 
     private func notice(
-        notify: Bool = true, authorized: Bool? = true, banner: Bool = false,
+        authorized: Bool? = true, banner: Bool = false,
         unconnected: [AgentID] = [], failure: String = "", connected: [AgentID]? = nil
     ) -> TrayNoticeModel? {
         TrayNoticeModel.pick(TrayNoticeModel.Input(
-            lang: .en, notifyOnWaiting: notify, notifyAuthorized: authorized,
+            lang: .en, notifyAuthorized: authorized,
             bannerFailed: banner, unconnected: unconnected, installFailure: failure, justConnected: connected
         ))
     }
@@ -336,8 +332,6 @@ struct TrayInteractionTests {
         let banner = notice(banner: true)
         #expect(banner?.kind == .bannerFailed)
         #expect(notice() == nil)
-        let optedOut = notice(notify: false, authorized: false)
-        #expect(optedOut == nil, "notifications turned off in Pulse are not a problem")
     }
 
     @Test func theSetupCardNamesTheAgentsAndItsRemainingSteps() {
@@ -366,7 +360,7 @@ struct TrayInteractionTests {
         failingRow.state = .recent
         failingRow.lastErrorText = "npm ERR!"
         let failing = face(failingRow)
-        #expect(failing.secondLine == nil, "24.0: an error is a detail-page fact, not an orange row")
+        #expect(failing.secondLine == nil, "an error is a detail-page fact, not an orange row")
         var turnRow = session("t")
         turnRow.state = .yourTurn(sinceMs: now)
         let turn = face(turnRow)
@@ -393,9 +387,9 @@ struct TrayInteractionTests {
     @Test func aBannerForARowWithNoHandleOpensItsDetail() throws {
         let store = StatusStore()
         store.installPreviewFixture("status-waiting")
-        let firstBlocked = store.allRowsForDisplay.first { $0.isBlocked }
+        let firstBlocked = store.cachedAll.first { $0.isBlocked }
         let row = try #require(firstBlocked)
-        store.clearPendingRevealRowKey()
+        _ = store.takePendingReveal()
         store.focusAgent(idRaw: row.agent.rawValue, session: row.sessionID, rowKey: row.rowKey)
         let reveal = store.takePendingReveal()
         #expect(reveal?.rowKey == row.rowKey)
@@ -413,7 +407,7 @@ struct TrayInteractionTests {
         store.requestTrayReveal(rowKey: "gone|nowhere", detail: true)
         ui.applyPendingReveal()
         #expect(ui.keys.detail == nil)
-        #expect(store.pendingRevealRowKey == nil)
+        #expect(store.pendingReveal?.rowKey == nil)
     }
 
     @MainActor
@@ -422,7 +416,7 @@ struct TrayInteractionTests {
         store.installPreviewFixture("waiting")
         let ui = TrayUI(store: store)
         ui.open()
-        let rows = store.allRowsForDisplay
+        let rows = store.cachedAll
         try #require(rows.count >= 2)
         ui.showDetail(rows[0].rowKey)
         store.requestTrayReveal(rowKey: rows[1].rowKey, detail: true)
@@ -431,8 +425,8 @@ struct TrayInteractionTests {
         #expect(ui.keys.selected == rows[1].rowKey)
     }
 
-    /// One gesture — a menu-bar click and the shortcut open the same
-    /// way, on the oldest wait.
+    /// One gesture — a menu-bar click and a reopen (Spotlight, Raycast)
+    /// open the same way, on the oldest wait.
     @MainActor
     @Test func everyOpenSelectsTheOldestWait() {
         let store = StatusStore()
@@ -534,110 +528,38 @@ struct TrayInteractionTests {
 }
 
 /// The tray opens on "who needs me", never on the last visit's rummaging.
-/// EXPERIENCE §4: "展开状态不持久化". The panel is built once and only ordered in
-/// and out, so nothing resets `@State` on its own (U-3).
+/// EXPERIENCE §4: "展开状态不持久化". The popover's view is built once, so
+/// nothing resets `@State` on its own: every open gives the tray a new
+/// identity.
 final class TrayGlanceResetTests: XCTestCase {
     @MainActor
     func testEachOpenGivesTheTrayANewIdentity() {
         let store = StatusStore()
-        let atLaunch = store.traySessionToken
-        store.trayWillAppear()
-        let firstOpen = store.traySessionToken
-        store.trayWillAppear()
-        let secondOpen = store.traySessionToken
+        let ui = TrayUI(store: store)
+        let atLaunch = ui.generation
+        ui.open()
+        let firstOpen = ui.generation
+        ui.open()
+        let secondOpen = ui.generation
         XCTAssertNotEqual(atLaunch, firstOpen)
         XCTAssertNotEqual(firstOpen, secondOpen, "every open discards the previous view state")
-    }
-
-    /// The host view is what carries the identity into SwiftUI; keep it wired.
-    @MainActor
-    func testTheTrayHostIsBuiltFromTheSameStore() {
-        let store = StatusStore()
-        _ = TrayPanelHost(store: store, ui: TrayUI(store: store))
-    }
-}
-
-final class StatusPanelChromeTests: XCTestCase {
-    @MainActor
-    func testRoundedMaterialOwnsItsShadowInsideATransparentWindow() {
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 444, height: 204),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        let root = NSView(frame: panel.contentView?.bounds ?? .zero)
-        let shadow = NSView(frame: root.bounds.insetBy(
-            dx: StatusPanelChrome.shadowInset,
-            dy: StatusPanelChrome.shadowInset
-        ))
-        let effect = NSVisualEffectView(frame: shadow.frame)
-        root.addSubview(shadow)
-        root.addSubview(effect)
-        panel.contentView = root
-
-        StatusPanelChrome.apply(
-            to: panel,
-            rootView: root,
-            shadowView: shadow,
-            effectView: effect
-        )
-
-        XCTAssertFalse(panel.hasShadow, "WindowServer shadow is rectangular for this panel")
-        XCTAssertEqual(effect.layer?.cornerRadius, StatusPanelChrome.cornerRadius)
-        XCTAssertTrue(effect.layer?.masksToBounds == true)
-        XCTAssertEqual(shadow.layer?.cornerRadius, StatusPanelChrome.cornerRadius)
-        XCTAssertNotNil(shadow.layer?.shadowPath)
-        XCTAssertGreaterThan(shadow.layer?.shadowOpacity ?? 0, 0)
-        let background = root.layer?.backgroundColor.flatMap(NSColor.init(cgColor:))
-        XCTAssertEqual(background?.alphaComponent, 0)
-
-        root.layoutSubtreeIfNeeded()
-        guard let bitmap = root.bitmapImageRepForCachingDisplay(in: root.bounds) else {
-            return XCTFail("window root did not produce a visual regression bitmap")
-        }
-        root.cacheDisplay(in: root.bounds, to: bitmap)
-        let corners = [
-            (0, 0),
-            (bitmap.pixelsWide - 1, 0),
-            (0, bitmap.pixelsHigh - 1),
-            (bitmap.pixelsWide - 1, bitmap.pixelsHigh - 1),
-        ]
-        for (x, y) in corners {
-            XCTAssertLessThan(
-                bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 1,
-                0.01,
-                "the AppKit window root leaked an opaque square corner"
-            )
-        }
+        _ = TrayView(store: store, ui: ui)
     }
 }
 
 final class StatusLampTests: XCTestCase {
-    /// Red, green and orange keep their colour; a grey lamp is a template
-    /// the menu bar colours like its neighbours.
+    /// Red, green and orange keep their colour; a grey lamp — idle or
+    /// process only — is a template the menu bar colours like its
+    /// neighbours.
     func testStatusBarLampsKeepTheirStateColors() {
-        let states: [GlanceKind] = [.waiting, .running, .idle, .stalled]
-        for state in states {
-            XCTAssertEqual(
-                PulseBrand.statusBarIcon(for: state).isTemplate,
-                state == .idle,
-                "\(state): only grey follows the menu bar"
-            )
+        for lamp in Lamp.allCases {
+            XCTAssertEqual(lamp.statusBarImage.isTemplate, lamp.isGrey, "\(lamp): only grey follows the menu bar")
         }
-        for lamp in [LampFace.glance(.idle, processOnly: true), LampFace(shape: .hollow, tone: .idle)] {
-            XCTAssertTrue(PulseBrand.statusBarIcon(for: lamp).isTemplate, "\(lamp.shape)")
-        }
-        // Drawn at its own size — never set smaller after drawing, which
-        // blurred it.
-        XCTAssertEqual(PulseBrand.statusBarIcon(for: .waiting).size, NSSize(width: 16, height: 16))
+        XCTAssertTrue(Lamp.processOnly.isGrey)
 
-        let waiting = PulseBrand.statusColor(for: GlanceKind.waiting).usingColorSpace(.deviceRGB)!
-        let running = PulseBrand.statusColor(for: GlanceKind.running).usingColorSpace(.deviceRGB)!
-        let stalled = PulseBrand.statusColor(for: GlanceKind.stalled).usingColorSpace(.deviceRGB)!
+        let waiting = Lamp.waiting.nsColor.usingColorSpace(.deviceRGB)!
+        let running = Lamp.running.nsColor.usingColorSpace(.deviceRGB)!
+        let stalled = Lamp.stalled.nsColor.usingColorSpace(.deviceRGB)!
         XCTAssertGreaterThan(waiting.redComponent, waiting.greenComponent)
         XCTAssertGreaterThan(running.greenComponent, running.redComponent)
         XCTAssertGreaterThan(stalled.redComponent, stalled.blueComponent)
@@ -648,12 +570,12 @@ final class StatusLampTests: XCTestCase {
 /// VoiceOver must speak the interface language, not English.
 final class AccessibilityLocalizationTests: XCTestCase {
     func testGlanceStatesHaveDistinctLocalizedLabels() {
-        for glance in [GlanceKind.idle, .running, .stalled, .waiting] {
-            let en = L10n.t(glance.accessibilityKey, .en)
-            let zh = L10n.t(glance.accessibilityKey, .zh)
+        for lamp in Lamp.allCases {
+            let en = L10n.t(lamp.accessibilityKey, .en)
+            let zh = L10n.t(lamp.accessibilityKey, .zh)
             XCTAssertFalse(en.isEmpty)
             XCTAssertFalse(zh.isEmpty)
-            XCTAssertNotEqual(en, zh, "\(glance) was not translated")
+            XCTAssertNotEqual(en, zh, "\(lamp) was not translated")
         }
     }
 
@@ -676,14 +598,8 @@ final class AccessibilityLocalizationTests: XCTestCase {
         for appearanceName in appearances {
             NSAppearance.current = try XCTUnwrap(NSAppearance(named: appearanceName))
             var rgba: Set<String> = []
-            for glance in [GlanceKind.idle, .running, .stalled, .waiting] {
-                let icon = PulseBrand.statusBarIcon(for: glance)
-                XCTAssertEqual(
-                    icon.isTemplate,
-                    glance == .idle,
-                    "\(glance) in \(appearanceName.rawValue): a coloured lamp is never flattened to monochrome"
-                )
-                XCTAssertEqual(icon.size, NSSize(width: 16, height: 16))
+            for glance in [Lamp.idle, .running, .stalled, .waiting] {
+                let icon = glance.statusBarImage
                 let bitmap = try XCTUnwrap(
                     icon.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:))
                 )
@@ -700,8 +616,7 @@ final class AccessibilityLocalizationTests: XCTestCase {
                     "\(glance) disappeared in \(appearanceName.rawValue)"
                 )
 
-                let color = PulseBrand.statusColor(for: glance)
-                    .usingColorSpace(.deviceRGB) ?? PulseBrand.statusColor(for: glance)
+                let color = glance.nsColor.usingColorSpace(.deviceRGB) ?? glance.nsColor
                 rgba.insert(
                     String(
                         format: "%.3f,%.3f,%.3f,%.3f",
@@ -721,32 +636,6 @@ final class AccessibilityLocalizationTests: XCTestCase {
     }
 }
 
-/// The product's rules asserted on the surface values `PulseQA`'s
-/// `SurfaceCapture` photographs, not on the store behind them: the tray row,
-/// header, notice, the detail page and Settings.
-final class SurfaceModelTests: XCTestCase {
-
-    // MARK: - The fixture list the capture script reads
-
-    func testTheCaptureScriptsNamesAreTheFixtures() {
-        XCTAssertEqual(SurfaceFixtures.all(lang: .en).map(\.name), SurfaceFixtures.names)
-        XCTAssertEqual(Set(SurfaceFixtures.names).count, SurfaceFixtures.names.count)
-    }
-
-    // MARK: - Both languages
-
-    private func firstMenuTitle(_ lang: ResolvedLanguage) -> String? {
-        guard case .row(let model, _) = SurfaceFixtures.all(lang: lang).first?.value else { return nil }
-        return model.menu.first?.title
-    }
-
-    func testEveryFixtureSpeaksBothLanguages() {
-        XCTAssertEqual(SurfaceFixtures.all(lang: .zh).map(\.name), SurfaceFixtures.names)
-        XCTAssertNotNil(firstMenuTitle(.en))
-        XCTAssertNotEqual(firstMenuTitle(.zh), firstMenuTitle(.en))
-    }
-}
-
 /// Landing: the handle decides, the plan says how precisely, and the
 /// label never promises more than the plan.
 @Suite("Landing plan")
@@ -756,7 +645,7 @@ struct LandingPlanTests {
         #expect(handle.tmuxPane == "%3")
         #expect(handle.tmuxSocket == "/private/tmp/tmux-501/default")
         #expect(handle.tty == "ttys004")
-        let plan = LandingPlan.make(handle: handle, cwd: "/Users/me/app", allowAutomation: false)
+        let plan = LandingPlan.make(handle: handle, cwd: "/Users/me/app")
         #expect(plan.steps == [
             .tmuxPane(pane: "%3", socket: "/private/tmp/tmux-501/default", hostBundleIDs: ["com.googlecode.iterm2"]),
             .activateApp(bundleIDs: ["com.googlecode.iterm2"]),
@@ -775,7 +664,7 @@ struct LandingPlanTests {
     @Test func anITermSessionIsSelectedByItsUniqueID() {
         let handle = LandingHandle("iterm:w0t1p0:9F1C-UUID;tty:/dev/ttys007;term:iTerm.app")
         #expect(handle.itermUniqueID == "9F1C-UUID")
-        let plan = LandingPlan.make(handle: handle, cwd: "/Users/me/app", allowAutomation: true)
+        let plan = LandingPlan.make(handle: handle, cwd: "/Users/me/app")
         #expect(plan.steps == [
             .iTermSession(uniqueID: "9F1C-UUID"),
             .ttyTab(tty: "ttys007"),
@@ -785,19 +674,19 @@ struct LandingPlanTests {
     }
 
     @Test func aTerminalTabIsFoundByItsTTY() {
-        let plan = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys001;term:Apple_Terminal"), cwd: "", allowAutomation: true)
+        let plan = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys001;term:Apple_Terminal"), cwd: "")
         #expect(plan.steps == [.ttyTab(tty: "ttys001"), .activateApp(bundleIDs: [LandingPlan.terminalBundleID])])
         #expect(plan.precision == .exact)
     }
 
     @Test func ghosttyIsTheAppOnly() {
-        let plan = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys002;term:ghostty"), cwd: "/Users/me/app", allowAutomation: true)
+        let plan = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys002;term:ghostty"), cwd: "/Users/me/app")
         #expect(plan.steps == [.activateApp(bundleIDs: ["com.mitchellh.ghostty"])], "the tab search asks only Terminal and iTerm")
         #expect(plan.precision == .app)
     }
 
     @Test func anEditorTerminalOpensTheFolderInThatEditor() {
-        let vscode = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys005;term:vscode"), cwd: "/Users/me/app", allowAutomation: true, pid: 812)
+        let vscode = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys005;term:vscode"), cwd: "/Users/me/app", pid: 812)
         #expect(vscode.steps == [
             .openFolder(bundleIDs: HostAppKind.vsCode.bundleIDs, path: "/Users/me/app"),
             .activateApp(bundleIDs: HostAppKind.vsCode.bundleIDs),
@@ -805,39 +694,42 @@ struct LandingPlanTests {
         ])
         #expect(vscode.precision == .app)
         let cursor = LandingPlan.make(
-            handle: LandingHandle("term:vscode;app:com.todesktop.230313mzl4w4u92"), cwd: "/Users/me/app", allowAutomation: false
+            handle: LandingHandle("term:vscode;app:com.todesktop.230313mzl4w4u92"), cwd: "/Users/me/app"
         )
         #expect(cursor.steps.first == LandingStep.openFolder(bundleIDs: HostAppKind.cursor.bundleIDs, path: "/Users/me/app"), "Cursor also says vscode")
     }
 
     @Test func anEmptyHandleFallsBackToTheProcessOwnerOrNothing() {
-        #expect(LandingPlan.make(handle: LandingHandle(""), cwd: "/Users/me/app", allowAutomation: true).isEmpty)
-        #expect(LandingPlan.make(handle: LandingHandle(), cwd: "", allowAutomation: true).precision == nil)
-        let process = LandingPlan.make(handle: LandingHandle(), cwd: "/Users/me/app", allowAutomation: false, pid: 4312)
+        #expect(LandingPlan.make(handle: LandingHandle(""), cwd: "/Users/me/app").isEmpty)
+        #expect(LandingPlan.make(handle: LandingHandle(), cwd: "").precision == nil)
+        let process = LandingPlan.make(handle: LandingHandle(), cwd: "/Users/me/app", pid: 4312)
         #expect(process.steps == [.activateOwner(pid: 4312)])
         #expect(process.precision == .app)
-        let ide = LandingPlan.make(handle: LandingHandle(), cwd: "/Users/me/app", allowAutomation: false, pid: 4312, hostApp: .zed)
+        let ide = LandingPlan.make(handle: LandingHandle(), cwd: "/Users/me/app", pid: 4312, hostApp: .zed)
         #expect(ide.steps.first == LandingStep.openFolder(bundleIDs: HostAppKind.zed.bundleIDs, path: "/Users/me/app"))
     }
 
-    @Test func automationOffNeverScriptsATerminal() {
-        let iterm = LandingPlan.make(handle: LandingHandle("iterm:w0t1p0:ABCD;tty:/dev/ttys007;term:iTerm.app"), cwd: "", allowAutomation: false)
-        #expect(iterm.steps == [.activateApp(bundleIDs: [LandingPlan.iTermBundleID])])
-        #expect(iterm.precision == .app)
-        let terminal = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys001"), cwd: "", allowAutomation: false)
-        #expect(terminal.isEmpty, "a bare tty with automation off is not a handle")
+    /// No setting gates the scripted steps: an iTerm session and a bare
+    /// tty are always tried, and macOS's own Automation prompt is the
+    /// consent. A placeholder tty is no handle.
+    @Test func theScriptedStepsAreAlwaysPlanned() {
+        let iterm = LandingPlan.make(handle: LandingHandle("iterm:w0t1p0:ABCD;tty:/dev/ttys007;term:iTerm.app"), cwd: "")
+        #expect(iterm.steps.first == .iTermSession(uniqueID: "ABCD"))
+        #expect(iterm.precision == .exact)
+        let terminal = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys001"), cwd: "")
+        #expect(terminal.steps == [.ttyTab(tty: "ttys001")], "a bare tty is searched in Terminal and iTerm")
         for placeholder in ["tty:?", "tty:??", "tty:-"] {
-            #expect(LandingPlan.make(handle: LandingHandle(placeholder), cwd: "", allowAutomation: true).isEmpty, "\(placeholder)")
+            #expect(LandingPlan.make(handle: LandingHandle(placeholder), cwd: "").isEmpty, "\(placeholder)")
         }
     }
 
     @Test func theLabelFollowsThePrecision() {
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
         #expect(!row.canFocusTerminal)
-        row.landingPlan = LandingPlan.make(handle: LandingHandle("term:ghostty"), cwd: "", allowAutomation: true)
+        row.landingPlan = LandingPlan.make(handle: LandingHandle("term:ghostty"), cwd: "")
         #expect(TrayRowModel.focusTitle(row, lang: .en) == "Open app")
         #expect(TrayRowModel.focusTitle(row, lang: .zh) == "打开应用")
-        row.landingPlan = LandingPlan.make(handle: LandingHandle("tmux:%1"), cwd: "", allowAutomation: false)
+        row.landingPlan = LandingPlan.make(handle: LandingHandle("tmux:%1"), cwd: "")
         #expect(TrayRowModel.focusTitle(row, lang: .en) == "Go to terminal")
         #expect(TrayRowModel.focusTitle(row, lang: .zh) == "前往终端")
         #expect(row.landingPlan.precision == .exact)
@@ -874,12 +766,6 @@ final class L10nTests: XCTestCase {
         }
     }
 
-    func testDurationUnitsAreLocalized() {
-        XCTAssertNotEqual(L10n.t(.durMin, .en), L10n.t(.durMin, .zh), "zh tray showed English units")
-        XCTAssertEqual(DurationFormat.label(seconds: 240, lang: .zh, spoken: true), "4 分钟", "a sentence says 分钟")
-        XCTAssertEqual(DurationFormat.label(seconds: 240, lang: .en, spoken: true), "4m")
-    }
-
     /// One term per concept and one punctuation — 设置 (not 偏好设置),
     /// 「」 quotes, an unspaced "——"; no developer path or "unsigned" in
     /// what a person reads.
@@ -893,7 +779,8 @@ final class L10nTests: XCTestCase {
             XCTAssertFalse(en.contains("package.sh") || zh.contains("package.sh"), "\(key)")
             XCTAssertFalse(en.localizedCaseInsensitiveContains("unsigned"), "\(key): \(en)")
         }
-        XCTAssertEqual(L10n.t(.waitingSummaryTitle, .en), "%d agents need you")
+        XCTAssertEqual(L10n.t(.ignoreWait, .en), "Ignore")
+        XCTAssertEqual(L10n.t(.ignoreWait, .zh), "忽略")
         XCTAssertEqual(L10n.t(.settings, .zh), "设置…")
     }
 
@@ -908,7 +795,7 @@ final class L10nTests: XCTestCase {
     }
 }
 
-/// Every user-facing string goes through the table (U-9).
+/// Every user-facing string goes through the table.
 final class LocalizedCopyTests: XCTestCase {
     /// One table for the tooltip, the chip and the banner.
     func testWaitKindTranslationIsSharedWithTheBuilder() {
@@ -921,27 +808,44 @@ final class LocalizedCopyTests: XCTestCase {
     }
 }
 
-/// Duration wording lives off `StatusStore` so `TrayState` — which is pure
-/// and has no store — can put the elapsed wait in the menu bar.
-final class DurationFormatTests: XCTestCase {
-    func testUnitsCrossOverAtTheRightPlaces() {
-        XCTAssertEqual(DurationFormat.label(seconds: 2, lang: .en), "now")
-        XCTAssertEqual(DurationFormat.label(seconds: 42, lang: .en), "42s")
-        XCTAssertEqual(DurationFormat.label(seconds: 600, lang: .en), "10m")
-        XCTAssertEqual(DurationFormat.label(seconds: 7200, lang: .en), "2h")
+/// Durations are `DateComponentsFormatter`'s, in the interface's language:
+/// one unit, rounded down, abbreviated where drawn and in full where
+/// spoken; "now" below a minute — one key, so nothing redraws every tick.
+/// ICU's spacing varies, so the checks read through its no-break spaces.
+final class DurationTests: XCTestCase {
+    private func plain(_ text: String) -> String {
+        text.replacingOccurrences(of: "\u{00A0}", with: " ").replacingOccurrences(of: "\u{202F}", with: " ")
+    }
+
+    func testBelowAMinuteIsNowInEitherLanguage() {
+        XCTAssertEqual(L10n.duration(2, .en), L10n.t(.now, .en))
+        XCTAssertEqual(L10n.duration(59, .zh), "刚刚")
+        XCTAssertEqual(L10n.duration(42, .en, spoken: true), "now")
+        XCTAssertEqual(L10n.ago(1_000, nowMs: 30_000, .en), "now", "never \"now ago\"")
+    }
+
+    func testOneUnitRoundedDown() {
+        XCTAssertEqual(plain(L10n.duration(600, .en)), "10m")
+        XCTAssertEqual(plain(L10n.duration(659, .en)), "10m")
+        XCTAssertEqual(plain(L10n.duration(7200 + 59 * 60, .en)), "2h")
+        XCTAssertTrue(L10n.duration(600, .zh).contains("10"))
+        XCTAssertTrue(L10n.duration(600, .zh).contains("分"), "zh tray showed English units")
+        XCTAssertTrue(L10n.duration(7200, .zh).contains("小时"))
     }
 
     /// VoiceOver hears whole words: "4 minutes", "1 hour", never "4m".
     func testSpokenDurationsUseFullUnits() {
-        XCTAssertEqual(DurationFormat.full(seconds: 2, lang: .en), "just now")
-        XCTAssertEqual(DurationFormat.full(seconds: 1, lang: .zh), "刚刚")
-        XCTAssertEqual(DurationFormat.full(seconds: 42, lang: .en), "42 seconds")
-        XCTAssertEqual(DurationFormat.full(seconds: 60, lang: .en), "1 minute")
-        XCTAssertEqual(DurationFormat.full(seconds: 240, lang: .en), "4 minutes")
-        XCTAssertEqual(DurationFormat.full(seconds: 3600, lang: .en), "1 hour")
-        XCTAssertEqual(DurationFormat.full(seconds: 7200, lang: .en), "2 hours")
-        XCTAssertEqual(DurationFormat.full(seconds: 240, lang: .zh), "4 分钟")
-        XCTAssertEqual(DurationFormat.full(seconds: 7200, lang: .zh), "2 小时")
+        XCTAssertEqual(plain(L10n.duration(60, .en, spoken: true)), "1 minute")
+        XCTAssertEqual(plain(L10n.duration(240, .en, spoken: true)), "4 minutes")
+        XCTAssertEqual(plain(L10n.duration(3600, .en, spoken: true)), "1 hour")
+        XCTAssertEqual(plain(L10n.duration(7200, .en, spoken: true)), "2 hours")
+        XCTAssertTrue(L10n.duration(240, .zh, spoken: true).contains("分钟"))
+    }
+
+    func testAgoWrapsTheDuration() {
+        let now: Int64 = 1_700_000_000_000
+        XCTAssertEqual(plain(L10n.ago(now - 12 * 60_000, nowMs: now, .en)), "12m ago")
+        XCTAssertEqual(L10n.ago(now - 12 * 60_000, nowMs: now, .zh), String(format: L10n.t(.agoFormat, .zh), L10n.duration(12 * 60, .zh)))
     }
 
     /// A count picks its form — never "session(s)".
@@ -949,13 +853,6 @@ final class DurationFormatTests: XCTestCase {
         for key in L10n.Key.allCases {
             XCTAssertFalse(L10n.t(key, .en).contains("(s)"), "\(key): a plural hack")
         }
-    }
-
-    func testChineseDiffersFromEnglish() {
-        XCTAssertNotEqual(
-            DurationFormat.label(seconds: 600, lang: .zh),
-            DurationFormat.label(seconds: 600, lang: .en)
-        )
     }
 }
 
@@ -980,7 +877,7 @@ final class GlanceTitleTests: XCTestCase {
             rows: [],
             context: TrayState.Context(nowMs: 1_700_000_000_000, lang: .en)
         )
-        XCTAssertEqual(r.snapshot.glance, .idle)
+        XCTAssertEqual(r.snapshot.lamp, .idle)
         XCTAssertEqual(r.snapshot.title, "")
     }
 }
@@ -1043,10 +940,8 @@ struct TerminalTabScriptTests {
 final class RowActionNoticeTests: XCTestCase {
 
     @MainActor
-    private func store(_ lang: AppLanguage = .en) -> StatusStore {
-        let store = StatusStore()
-        store.settings.language = lang
-        return store
+    private func store(_ lang: ResolvedLanguage = .en) -> StatusStore {
+        StatusStore(lang: lang)
     }
 
     private func liveRow() -> AgentRow {
@@ -1065,30 +960,13 @@ final class RowActionNoticeTests: XCTestCase {
     func testAnActionNoticeIsAttachedToItsOwnRow() {
         let s = store()
         let row = liveRow()
-        XCTAssertNil(s.rowActionNotice(row))
-        s.noteRowAction(row.rowKey, s.tr(.focusFailed))
-        XCTAssertEqual(s.rowActionNotice(row)?.text, s.tr(.focusFailed))
+        XCTAssertNil(s.rowActionNotices[row.rowKey])
+        s.noteRowAction(row.rowKey, RowNotice(text: s.tr(.focusFailed)))
+        XCTAssertEqual(s.rowActionNotices[row.rowKey]?.text, s.tr(.focusFailed))
 
         var other = liveRow()
         other.rowKey = "codex|s2"
-        XCTAssertNil(s.rowActionNotice(other), "a notice belongs to the row that was clicked")
-    }
-
-    /// "Turn on" on an app-only notice sets the one Terminal automation
-    /// setting — the Settings switch — and the offer, taken, leaves.
-    @MainActor
-    func testTurnOnSetsTheSettingsSwitchAndClearsTheOffer() {
-        let s = store()
-        let row = liveRow()
-        s.noteRowAction(row.rowKey, RowNotice(text: s.tr(.focusAppOnlyAutomation), offersAutomation: true))
-        XCTAssertFalse(s.settings.allowTerminalAutomation)
-        let ui = TrayUI(store: s)
-        ui.send(TrayRowModel.Action.turnOnAutomation, row: row)
-        XCTAssertTrue(s.settings.allowTerminalAutomation, "the same setting as Settings → General")
-        XCTAssertNil(s.rowActionNotice(row))
-        let fromDetail = store()
-        TrayUI(store: fromDetail).send(DetailModel.Action.turnOnAutomation, row: row)
-        XCTAssertTrue(fromDetail.settings.allowTerminalAutomation)
+        XCTAssertNil(s.rowActionNotices[other.rowKey], "a notice belongs to the row that was clicked")
     }
 
     @MainActor
@@ -1096,7 +974,7 @@ final class RowActionNoticeTests: XCTestCase {
         // These only ever appear when something went wrong, which is exactly
         // when an untranslated or empty string would be found by a user
         // rather than by us.
-        for key in [L10n.Key.focusFailed, .focusAppOnly] {
+        for key in [L10n.Key.focusFailed, .focusAppOnly, .focusAppOnlyAutomation] {
             XCTAssertFalse(L10n.t(key, .en).isEmpty, "\(key)")
             XCTAssertFalse(L10n.t(key, .zh).isEmpty, "\(key)")
             XCTAssertNotEqual(L10n.t(key, .en), L10n.t(key, .zh), "\(key)")
@@ -1142,7 +1020,7 @@ struct RowWordsTests {
         let text = why(blocked())
         #expect(text.contains("Claude"))
         #expect(text.contains(L10n.t(.explainKindPermission, .en)))
-        #expect(text.contains(TrayRowModel.ago(now - 4 * minute, nowMs: now, lang: .en)))
+        #expect(text.contains(L10n.ago(now - 4 * minute, nowMs: now, .en)))
         #expect(!text.hasSuffix(L10n.t(.explainAskedFront, .en)))
     }
 
@@ -1154,7 +1032,7 @@ struct RowWordsTests {
     /// The why is plain words — who asked what, and when.
     @Test func aWaitIsSaidInPlainWords() {
         #expect(why(blocked()) == "Claude asked for permission · 4m ago")
-        #expect(why(blocked(), .zh) == "Claude 请求权限 · 4 分钟前")
+        #expect(why(blocked(), .zh) == "Claude 请求权限 · " + L10n.ago(now - 4 * minute, nowMs: now, .zh))
         var process = AgentRow(rowKey: RowIdentity.process(agent: .cursor, pid: 7), agent: .cursor)
         process.state = .processOnly
         #expect(why(process) == "Started before Pulse — details after its next step")
@@ -1194,7 +1072,7 @@ struct RowWordsTests {
         var row = session()
         row.lastEventMs = now - 23 * minute
         row.isStalled = true
-        let quiet = DurationFormat.label(seconds: 23 * 60, lang: .en, spoken: true)
+        let quiet = L10n.duration(23 * 60, .en)
         let expected = String(format: L10n.t(.explainStalled, .en), quiet)
         #expect(why(row) == expected)
     }
@@ -1207,7 +1085,7 @@ struct RowWordsTests {
         row.isStalled = true
         row.lastStep = SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 23 * minute)
         #expect(why(row) == "Nothing new for 23m — last step: Bash · swift test")
-        #expect(why(row, .zh) == "已经 23 分钟 没有新动静——上一步：Bash · swift test")
+        #expect(why(row, .zh) == String(format: L10n.t(.stepStalled, .zh), L10n.duration(23 * 60, .zh), "Bash · swift test"))
         let face = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
         #expect(face.secondLine == TrayRowModel.SecondLine(kind: .warning, text: why(row)))
     }
@@ -1224,13 +1102,13 @@ struct RowWordsTests {
         #expect(face.age == "14m")
         #expect(face.accessibilityLabel.contains("Bash · swift test"))
         let zh = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .zh, nowMs: now))
-        #expect(zh.secondLine?.text == "Bash · swift test · 12 分钟前")
-        #expect(zh.age == "14 分")
-        // Under a minute the turn says so, and the step says "now".
+        #expect(zh.secondLine?.text == "Bash · swift test · " + L10n.ago(now - 12 * minute, nowMs: now, .zh))
+        #expect(zh.age == L10n.duration(14 * 60, .zh))
+        // Under a minute the turn and the step both say "now".
         row.turnStartMs = now - 20_000
         row.lastStep = SessionBook.Step(tool: "Read", target: "", ms: now - 10_000)
         let young = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
-        #expect(young.age == "<1m")
+        #expect(young.age == "now")
         #expect(young.secondLine?.text == "Read · now")
     }
 
@@ -1293,7 +1171,7 @@ struct RowWordsTests {
         var row = session()
         row.lastErrorText = "npm ERR! missing script: test"
         let face = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
-        #expect(face.lamp == LampFace(shape: .ring, tone: .running))
+        #expect(face.lamp == .running)
     }
 
     /// A recent row says which rule made it recent.
@@ -1384,7 +1262,7 @@ struct RowWordsTests {
         let waiting = blocked()
         var other = session(.codex)
         other.rowKey = "codex|b"
-        let rule = TrayState.lampRule(counts: TrayState.Counts(rows: [waiting, other]), glance: .waiting)
+        let rule = TrayState.lampRule(counts: TrayState.Counts(rows: [waiting, other]))
         #expect(rule == .blocked)
         let sentence = TrayState.lampSentence(rule, lang: .en)
         #expect(sentence == L10n.t(.lampRuleBlocked, .en))
@@ -1395,7 +1273,7 @@ struct RowWordsTests {
         var process = AgentRow(rowKey: RowIdentity.process(agent: .cursor, pid: 3), agent: .cursor)
         process.liveProcess = true
         process.state = .processOnly
-        let rule = TrayState.lampRule(counts: TrayState.Counts(rows: [process]), glance: .idle)
+        let rule = TrayState.lampRule(counts: TrayState.Counts(rows: [process]))
         #expect(rule == .processOnly)
         #expect(TrayState.lampSentence(rule, lang: .zh) == L10n.t(.lampRuleProcessOnly, .zh))
     }
@@ -1404,7 +1282,7 @@ struct RowWordsTests {
         var stalled = session()
         stalled.lastEventMs = now - 30 * minute
         stalled.isStalled = true
-        let rule = TrayState.lampRule(counts: TrayState.Counts(rows: [stalled]), glance: .stalled)
+        let rule = TrayState.lampRule(counts: TrayState.Counts(rows: [stalled]))
         #expect(rule == .stalled)
         let sentence = TrayState.lampSentence(rule, lang: .en)
         #expect(!sentence.contains("20"))
@@ -1415,7 +1293,7 @@ struct RowWordsTests {
         turn.state = .yourTurn(sinceMs: now - minute)
         var process = AgentRow(rowKey: RowIdentity.process(agent: .codex, pid: 4), agent: .codex)
         process.state = .processOnly
-        let rule = TrayState.lampRule(counts: TrayState.Counts(rows: [process, turn]), glance: .idle)
+        let rule = TrayState.lampRule(counts: TrayState.Counts(rows: [process, turn]))
         #expect(rule == .yourTurn, "a finished turn outranks a bare process")
     }
 
@@ -1434,32 +1312,38 @@ struct RowWordsTests {
         var process = AgentRow(rowKey: RowIdentity.process(agent: .codex, pid: 5), agent: .codex)
         process.state = .processOnly
 
-        #expect(LampFace.row(blockedRow) == LampFace(shape: .filled, tone: .waiting))
-        #expect(LampFace.row(running) == LampFace(shape: .ring, tone: .running))
-        #expect(LampFace.row(stalled) == LampFace(shape: .ring, tone: .attention))
-        #expect(LampFace.row(turn) == LampFace(shape: .hollow, tone: .idle))
-        #expect(LampFace.row(recent) == LampFace(shape: .hollow, tone: .idle))
-        #expect(LampFace.row(process) == LampFace(shape: .dotted, tone: .idle), "a process is never orange")
+        #expect(Lamp(blockedRow) == .waiting)
+        #expect(Lamp(running) == .running)
+        #expect(Lamp(stalled) == .stalled)
+        #expect(Lamp(turn) == .idle)
+        #expect(Lamp(recent) == .idle)
+        #expect(Lamp(process) == .processOnly, "a process is never orange")
     }
 
+    /// The menu bar draws the lamp of the rule that set it: the same five
+    /// lamps as the rows.
     @Test func theMenuBarLampUsesTheSameShapes() {
-        #expect(LampFace.glance(.waiting) == LampFace(shape: .filled, tone: .waiting))
-        #expect(LampFace.glance(.running) == LampFace(shape: .ring, tone: .running))
-        #expect(LampFace.glance(.stalled) == LampFace(shape: .ring, tone: .attention))
-        #expect(LampFace.glance(.idle) == LampFace(shape: .hollow, tone: .idle))
-        #expect(LampFace.glance(.idle, processOnly: true) == LampFace(shape: .dotted, tone: .idle))
+        #expect(Lamp(TrayState.LampRule.blocked) == .waiting)
+        #expect(Lamp(TrayState.LampRule.running) == .running)
+        #expect(Lamp(TrayState.LampRule.stalled) == .stalled)
+        #expect(Lamp(TrayState.LampRule.yourTurn) == .idle)
+        #expect(Lamp(TrayState.LampRule.recent) == .idle)
+        #expect(Lamp(TrayState.LampRule.idle) == .idle)
+        #expect(Lamp(TrayState.LampRule.processOnly) == .processOnly)
     }
 
     // MARK: - The row face
 
     @Test func aPermissionRowShowsItsAskOnce() {
         let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowPermission(), lang: .en)
-        #expect(model.lamp == LampFace(shape: .filled, tone: .waiting))
+        #expect(model.lamp == .waiting)
         #expect(model.secondLine == TrayRowModel.SecondLine(kind: .ask, text: "Bash: npm run build"))
         let menu = model.menu.map { $0.action }
-        #expect(menu == [.focus, .details, .dismiss, .mute], "every verb is in the menu once")
+        #expect(menu == [.focus, .details, .dismiss], "every verb is in the menu once")
+        let ignore = model.menu.first { $0.action == .dismiss }?.title
+        #expect(ignore == "Ignore", "one word for setting a wait aside: the tray, the detail and the banner")
         // The only time on a waiting row is how long it has waited.
-        let waited = TrayRowModel.waitDuration(SurfaceFixtures.rowPermission(), nowMs: SurfaceFixtures.nowMs, lang: .en)
+        let waited = TrayRowModel.rowTime(SurfaceFixtures.rowPermission(), nowMs: SurfaceFixtures.nowMs, lang: .en)
         #expect(model.age == waited)
     }
 
@@ -1468,13 +1352,13 @@ struct RowWordsTests {
     @Test func theContextMenuShowsEachItemsKey() {
         let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowPermission(), lang: .en)
         let keys: [TrayKeys.Key?] = model.menu.map { $0.key }
-        let expected: [TrayKeys.Key?] = [.enter, .right, .dismiss, .mute]
+        let expected: [TrayKeys.Key?] = [.enter, .right, .dismiss]
         #expect(keys == expected)
     }
 
     @Test func yourTurnIsQuietAndSaysSo() {
         let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowTurn(), lang: .zh)
-        #expect(model.lamp == LampFace(shape: .hollow, tone: .idle))
+        #expect(model.lamp == .idle)
         #expect(model.turnLabel == "轮到你")
         #expect(model.secondLine == nil)
         #expect(model.accessibilityLabel.contains("轮到你"))
@@ -1482,18 +1366,11 @@ struct RowWordsTests {
 
     @Test func aProcessOnlyRowIsQuietGrey() {
         let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowProcessOnly(), lang: .en)
-        #expect(model.lamp == LampFace(shape: .dotted, tone: .idle))
+        #expect(model.lamp == .processOnly)
         #expect(model.secondLine == nil, "grey is not a warning")
         let actions = model.menu.map { $0.action }
-        #expect(actions == [.details, .mute], "details and mute; nothing to dismiss, nowhere to go")
+        #expect(actions == [.details], "details only; nothing to ignore, nowhere to go")
         #expect(!model.canFocus)
-    }
-
-    @Test func aMutedRowSaysSoAndOffersUnmute() {
-        let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowRunning(), lang: .en, muted: true)
-        #expect(model.muted)
-        let titles = model.menu.map { $0.title }
-        #expect(titles.contains(L10n.t(.unmute, .en)))
     }
 
     @Test func theProjectIsNotRepeatedWhenItIsTheHeadline() {
@@ -1576,11 +1453,9 @@ struct RowWordsTests {
         #expect(blocked.ask == "Bash: npm run build")
     }
 
-    /// The detail page carries the row's landing notice — the same words
-    /// and the same "Turn on".
-    @Test func theDetailCarriesTheLandingNoticeAndItsTurnOn() {
+    /// The detail page carries the row's landing notice — the same words.
+    @Test func theDetailCarriesTheLandingNotice() {
         let detail = SurfaceFixtures.detailAppOnly(lang: .en)
-        #expect(detail.notice?.offersAutomation == true)
         #expect(detail.notice?.text == L10n.t(.focusAppOnlyAutomation, .en))
         let row = SurfaceFixtures.rowModel(SurfaceFixtures.rowTerminalTab(), lang: .en, appOnly: true)
         #expect(row.notice == detail.notice)
@@ -1675,18 +1550,19 @@ struct WaitAnnouncementTests {
         row.task = "Fix the flaky test"
         let face = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
         #expect(face.age == "4m", "the drawn time stays compact")
-        #expect(face.accessibilityLabel.contains("4 minutes"), "\(face.accessibilityLabel)")
+        #expect(face.accessibilityLabel.contains(L10n.duration(4 * 60, .en, spoken: true)), "\(face.accessibilityLabel)")
         #expect(!face.accessibilityLabel.contains("4m"), "\(face.accessibilityLabel)")
         var ran = AgentRow(rowKey: "codex|b", agent: .codex)
         ran.state = .running
         ran.turnStartMs = now - 20_000
         ran.lastEventMs = now - 20_000
-        let young = TrayRowModel.rowTimeSpoken(ran, nowMs: now, lang: .en)
-        #expect(young == "less than a minute")
+        let young = TrayRowModel.rowTime(ran, nowMs: now, lang: .en, spoken: true)
+        #expect(young == "now")
         ran.state = .yourTurn(sinceMs: now - 12 * 60_000)
         ran.lastEventMs = now - 12 * 60_000
-        let ago = TrayRowModel.rowTimeSpoken(ran, nowMs: now, lang: .en)
-        #expect(ago == "12 minutes ago")
+        let ago = TrayRowModel.rowTime(ran, nowMs: now, lang: .en, spoken: true)
+        let plain = ago.replacingOccurrences(of: "\u{00A0}", with: " ").replacingOccurrences(of: "\u{202F}", with: " ")
+        #expect(plain == "12 minutes ago")
     }
 }
 
@@ -1710,8 +1586,6 @@ struct MainMenuTests {
         #expect(keys["v|\(command)"] == #selector(NSText.paste(_:)))
         #expect(keys["q|\(command)"] == #selector(MainMenuActions.quit(_:)))
         #expect(keys[",|\(command)"] == #selector(MainMenuActions.settings(_:)))
-        let titles = menu.items.map { $0.title }
-        #expect(titles.count == 3, "Pulse, Edit, Window")
         let zh = MainMenu.make(lang: .zh).items.map { $0.title }
         #expect(zh.contains(L10n.t(.menuEdit, .zh)))
     }

@@ -43,7 +43,7 @@ struct HookReading: Equatable {
 /// `pulse-hook <agent> <event>` with the vendor's JSON payload on stdin (or,
 /// for the two modules, as the last argument). Each agent's adapter maps its
 /// own event names and payload onto a `HookAction`; nothing else is read —
-/// not the protocol's kind words, not plain text. Writes one v5 line to the
+/// not the protocol's kind words, not plain text. Writes one v6 line to the
 /// event log (`EventLog` — the only file it writes) and exits 0 at once.
 /// Unknown events and payloads that are not a JSON object soft-fail (exit 0,
 /// no write), and a blocked event from an agent whose hooks cannot report
@@ -108,7 +108,7 @@ enum PulseHookReceiver {
         return 0
     }
 
-    /// The v5 line one reading becomes, before the hook's own facts (front,
+    /// The v6 line one reading becomes, before the hook's own facts (front,
     /// pid, landing) are added — nil when it writes nothing. Pure.
     static func record(agent: AgentID, reading: HookReading, payload: [String: Any], nowMs: Int64) -> AttentionRecord? {
         let context = HookContext(payload: payload)
@@ -174,18 +174,11 @@ enum PulseHookReceiver {
 
     // MARK: - Adapters
 
-    /// The event an agent's hook reported: the argument the installed command
-    /// carries, else what the payload names (an entry that names no event).
-    static func eventName(_ event: String, payload: [String: Any]) -> String {
-        let trimmed = event.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty { return trimmed }
-        return string(payload, keys: ["hook_event_name", "hookEventName", "type", "event"])
-    }
-
-    /// One agent's event, read by its own adapter; nil for an event the
-    /// adapter does not know — it writes nothing.
+    /// One agent's event — the argument the installed command carries —
+    /// read by its own adapter; nil for an event the adapter does not know
+    /// (or none at all): it writes nothing.
     static func interpret(agent: AgentID, event: String, payload: [String: Any]) -> HookReading? {
-        let name = eventName(event, payload: payload)
+        let name = event.trimmingCharacters(in: .whitespacesAndNewlines)
         switch agent {
         case .claude: return readClaude(name, payload)
         case .codex: return readCodex(name, payload)
@@ -567,7 +560,7 @@ enum PulseHookReceiver {
         return ""
     }
 
-    /// One field of a v5 line: credentials redacted, every tab and line
+    /// One field of a v6 line: credentials redacted, every tab and line
     /// break — `\n`, `\r`, VT, FF, NEL, U+2028, U+2029 — a space
     /// (`AttentionProtocol.flatten`), bounded.
     static func cleanField(_ value: String, limit: Int) -> String {

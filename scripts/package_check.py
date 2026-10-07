@@ -1,18 +1,11 @@
 #!/usr/bin/env python3
-"""Verify a packaged Pulse.app can actually find its resources.
+"""Verify a packaged Pulse.app can find its resources and carries no QA code.
 
-The other gates read source. This one reads the *build output*, because the
-bug it exists to catch never appears in source: a DMG that crashes on launch
-can ship while every test passes and every gate is green.
-
-What went wrong: SwiftPM builds a *flat* resource bundle — Info.plist and the
-resource directories at the root, no Contents/. package.sh then created
-the resource bundle's `Contents/Resources/` and copied a second set of
-resources in. CFBundle treats any directory containing Contents/ as a modern
-bundle, so it stopped reading the root and looked for Contents/Info.plist,
-which was never written. Bundle(url:) returns nil for a directory it cannot
-read as a bundle, and the compiler-generated `Bundle.module` accessor ends in
-fatalError() — so the app died the moment it drew its menu bar icon.
+The other gates read source; this one reads the build output. A SwiftPM
+resource bundle is flat (Info.plist and resources at its root); a
+`Contents/` directory inside it makes CFBundle look for
+`Contents/Info.plist` instead, `Bundle(url:)` returns nil, and the generated
+`Bundle.module` accessor traps. Only the built .app shows that.
 
 Run against a built app:
 
@@ -28,13 +21,12 @@ BUNDLE_NAME = "PulseBar_PulseApp.bundle"
 
 # The QA driver (`PulseQA`) is a separate executable and never ships. These
 # strings exist only in its code — the flags that swap this Mac's sessions for
-# a fixture, photograph a surface, or force a language or an appearance — so
+# a fixture, photograph a surface, or force an appearance — so
 # finding one in the app's binary means QA code was linked into the product.
 QA_ONLY_MARKERS = [
     b"--capture-surfaces=",
     b"--tray-fixture=",
-    b"--capture-tray-panel=",
-    b"--language=",
+    b"--capture-tray=",
     b"--appearance=",
 ]
 

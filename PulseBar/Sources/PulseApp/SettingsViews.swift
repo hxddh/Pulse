@@ -1,4 +1,4 @@
-// Settings: one page of five short groups and a footer. `SettingsView`
+// Settings: one page of three short groups and a footer. `SettingsView`
 // builds a `SettingsModel` from the store (settings and a few flags, never a
 // scan) and performs its actions; `SettingsFace` renders the value.
 
@@ -24,7 +24,8 @@ struct SettingsView: View {
             store.performSettings(action)
         }
         .onAppear {
-            store.landHooksStatus(HooksSupport.probeStatus())
+            store.land(\.hooksStatus, HooksSupport.probeStatus())
+            store.refreshPresentAgents()
             store.refreshLoginItem()
             PulseNotify.refreshAuthorization()
         }
@@ -35,35 +36,27 @@ struct SettingsView: View {
 extension StatusStore {
     /// The Settings page as a value.
     var settingsModel: SettingsModel {
-        let notifications = SettingsModel.notifications(notifyAuthorized)
         var warning: String?
-        if isVersionMismatch, let bundle = PulseVersion.bundleVersion {
+        // A stale `Pulse.app` beside a fresh build; never for a QA fixture,
+        // whose host bundle's version is unrelated to Pulse.
+        if !previewFixtureActive, case .mismatch(let bundle) = PulseVersion.channel {
             warning = String(format: tr(.versionMismatchHint), PulseVersion.semver, bundle)
         } else if PulseVersion.distributionChannel == "preview" {
-            warning = tr(.updatePreview)
+            warning = tr(.buildPreview)
         }
         let build = PulseVersion.buildLine
-        let present = Set(AgentID.priority.filter(HooksInstaller.vendorPresent))
         let login = SettingsModel.loginLine(asked: settings.launchAtLogin, state: loginItem)
         return SettingsModel(
             lang: lang,
             launchAtLogin: login.isOn,
             loginNote: login.note,
-            language: settings.language,
-            terminalAutomation: settings.allowTerminalAutomation,
-            hotkeyLabel: settings.hotkey?.label,
-            hotkeyRecording: hotkeyRecorder.recording,
-            hotkeyProblem: hotkeyRecorder.problem
-                ?? (settings.hotkey != nil && !hotkeyRegistered && !hotkeyRecorder.recording ? .cantUse : nil),
-            notifications: notifications,
-            notifyOnWaiting: notifications == .allowed && settings.notifyOnWaiting,
-            mutedAgents: SettingsModel.sortedMuted(settings.mutedAgents),
+            notifications: SettingsModel.notifications(notifyAuthorized),
             hooksStatus: hooksStatus.label(lang: lang),
-            hooksInstalled: hooksInstalled,
+            hooksInstalled: !hooksStatus.installedAgents.isEmpty,
             hooksBusy: hooksStatus.isWorking,
             hookAgents: SettingsModel.hookAgents(
                 installed: hooksStatus.installedAgents,
-                present: present,
+                present: presentAgents,
                 lastEventMs: engine.latestHookEventMs,
                 nowMs: Int64(Date().timeIntervalSince1970 * 1000),
                 lang: lang,
@@ -71,12 +64,9 @@ extension StatusStore {
             ),
             absentAgents: SettingsModel.absentAgents(
                 installed: hooksStatus.installedAgents,
-                present: present,
+                present: presentAgents,
                 failed: hooksStatus.failures
             ),
-            updateCheckEnabled: settings.updateCheckEnabled,
-            updateStatus: updateStatusText,
-            updateAvailable: updateAvailableURL != nil,
             version: build.isEmpty ? PulseVersion.about : "\(PulseVersion.about) · \(build)",
             buildWarning: warning,
             focus: settingsFocus.target.map(SettingsModel.section(for:))
@@ -87,29 +77,13 @@ extension StatusStore {
         switch action {
         case .setLaunchAtLogin(let on): setLaunchAtLogin(on)
         case .openLoginItems: LoginItem.openSystemSettings()
-        case .setLanguage(let language): set(\.language, language)
-        case .setTerminalAutomation(let on): set(\.allowTerminalAutomation, on)
-        case .recordHotkey: startRecordingHotkey()
-        case .stopRecordingHotkey: stopRecordingHotkey()
-        case .clearHotkey:
-            stopRecordingHotkey()
-            set(\.hotkey, nil)
-            if hotkeyRecorder.problem != nil { hotkeyRecorder.problem = nil }
-        case .enableNotifications: requestNotificationAuthorization()
-        case .openNotificationSettings: openSystemNotificationSettings()
-        case .setNotifyOnWaiting(let on):
-            guard notifyAuthorized == true else { return }
-            set(\.notifyOnWaiting, on)
-        case .unmute(let agent):
-            if settings.mutedAgents.contains(agent) { toggleMute(agent) }
-        case .installHooks, .uninstallHooks, .installHook, .uninstallHook:
+        case .enableNotifications: PulseNotify.requestAuthorizationAfterUserAction()
+        case .openNotificationSettings: PulseNotify.openSystemSettings()
+        case .installHooks, .uninstallHooks:
             if let job = SettingsModel.hooksJob(action) { runHooks(job) }
         case .copyReport: copyReport()
-        case .setUpdateCheck(let on): set(\.updateCheckEnabled, on)
-        case .checkForUpdates: checkForUpdatesNow()
-        case .openRelease:
-            if let url = updateAvailableURL { NSWorkspace.shared.open(url) }
-        case .uninstallPulse: uninstallPulse()
+        case .openReleases:
+            if let url = URL(string: SettingsModel.releasesURL) { NSWorkspace.shared.open(url) }
         }
     }
 
@@ -121,15 +95,11 @@ extension StatusStore {
             version: "\(PulseVersion.fingerprint) · \(PulseVersion.distributionChannel)",
             macOS: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
             installed: hooksStatus.installedAgents,
-            present: Set(AgentID.priority.filter(HooksInstaller.vendorPresent)),
+            present: presentAgents,
             failed: hooksStatus.failures,
             lastEventMs: engine.latestHookEventMs,
             nowMs: Int64(Date().timeIntervalSince1970 * 1000),
             notifyAuthorized: notifyAuthorized,
-            notifyOnWaiting: settings.notifyOnWaiting,
-            terminalAutomation: settings.allowTerminalAutomation,
-            hotkey: settings.hotkey,
-            hotkeyRegistered: hotkeyRegistered,
             launchAtLogin: settings.launchAtLogin,
             loginItem: loginItem,
             sessions: cachedAll.map(SettingsModel.ReportSession.init)
@@ -188,12 +158,6 @@ struct SettingsFace: View {
         return Binding(get: { value }, set: { send(action($0)) })
     }
 
-    private var languageBinding: Binding<AppLanguage> {
-        let send = self.send
-        let value = model.language
-        return Binding(get: { value }, set: { send(.setLanguage($0)) })
-    }
-
     // MARK: Rows
 
     @ViewBuilder
@@ -207,60 +171,12 @@ struct SettingsFace: View {
                     Button(t(.openLoginItems)) { send(.openLoginItems) }
                 } label: {
                     Text(t(.loginItemNeedsApproval))
-                        .foregroundStyle(PulseTheme.Tone.attention.color)
+                        .foregroundStyle(PulseTheme.warning)
                 }
             case .failed?:
                 Label(t(.loginItemFailed), systemImage: "exclamationmark.triangle")
                     .font(PulseTheme.Font.caption)
-                    .foregroundStyle(PulseTheme.Tone.attention.color)
-            case nil:
-                EmptyView()
-            }
-            Picker(t(.language), selection: languageBinding) {
-                ForEach(AppLanguage.allCases) { lang in
-                    Text(lang.menuLabel(model.lang)).tag(lang)
-                }
-            }
-            Toggle(isOn: binding(model.terminalAutomation) { .setTerminalAutomation($0) }) {
-                Text(t(.terminalAutomation))
-                Text(t(.terminalAutomationHint))
-            }
-        case .shortcut:
-            LabeledContent {
-                HStack(spacing: PulseTheme.Space.xs) {
-                    Button {
-                        send(model.hotkeyRecording ? .stopRecordingHotkey : .recordHotkey)
-                    } label: {
-                        Text(SettingsModel.shortcutTitle(model))
-                            .frame(minWidth: 120)
-                    }
-                    .buttonStyle(.bordered)
-                    if model.hotkeyLabel != nil, !model.hotkeyRecording {
-                        Button { send(.clearHotkey) } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.tertiary)
-                        }
-                        .buttonStyle(.borderless)
-                        .accessibilityLabel(t(.shortcutClear))
-                    }
-                }
-            } label: {
-                Text(t(.revealShortcut))
-            }
-            if model.hotkeyRecording, model.hotkeyProblem == nil {
-                Text(t(.shortcutRecordingHint))
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(.secondary)
-            }
-            switch model.hotkeyProblem {
-            case .needsModifier?:
-                Label(t(.shortcutNeedsModifier), systemImage: "keyboard")
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(.secondary)
-            case .cantUse?:
-                Label(t(.hotkeyTaken), systemImage: "exclamationmark.triangle")
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(PulseTheme.Tone.attention.color)
+                    .foregroundStyle(PulseTheme.warning)
             case nil:
                 EmptyView()
             }
@@ -277,29 +193,13 @@ struct SettingsFace: View {
                     Button(t(.openNotificationSettings)) { send(.openNotificationSettings) }
                 } label: {
                     Text(t(.notifyDenied))
-                        .foregroundStyle(PulseTheme.Tone.attention.color)
+                        .foregroundStyle(PulseTheme.warning)
                 }
             case .allowed:
-                EmptyView()
-            }
-            Toggle(t(.notifyWaiting), isOn: binding(model.notifyOnWaiting) { .setNotifyOnWaiting($0) })
-                .disabled(model.notifications != .allowed)
-            ForEach(model.mutedAgents, id: \.self) { agent in
                 LabeledContent {
-                    Button {
-                        send(.unmute(agent))
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(t(.unmute) + " " + agent.displayName)
+                    Button(t(.openNotificationSettings)) { send(.openNotificationSettings) }
                 } label: {
-                    Label {
-                        Text(agent.displayName)
-                    } icon: {
-                        AgentIconView(id: agent)
-                    }
+                    Text(t(.notifyAllowed))
                 }
             }
         case .hooks:
@@ -315,29 +215,15 @@ struct SettingsFace: View {
             } label: {
                 Text(t(.settingsHooksTitle))
                 Text(model.hooksStatus)
-                    .foregroundStyle(model.hooksInstalled ? AnyShapeStyle(.secondary) : AnyShapeStyle(PulseTheme.Tone.attention.color))
+                    .foregroundStyle(model.hooksInstalled ? AnyShapeStyle(.secondary) : AnyShapeStyle(PulseTheme.warning))
             }
             ForEach(model.hookAgents) { line in
                 LabeledContent {
-                    HStack(spacing: PulseTheme.Space.s) {
-                        Text(line.state)
-                            .foregroundStyle(
-                                line.failed ? AnyShapeStyle(PulseTheme.Tone.attention.color)
-                                    : line.installed ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary)
-                            )
-                        if line.needsFix {
-                            Button(t(.hookInstallOne)) { send(.installHook(line.agent)) }
-                                .controlSize(.small)
-                                .disabled(model.hooksBusy)
-                                .accessibilityLabel(String(format: t(.hookInstallOneA11y), line.agent.displayName))
-                        }
-                        if line.installed {
-                            Button(t(.hookRemoveOne)) { send(.uninstallHook(line.agent)) }
-                                .controlSize(.small)
-                                .disabled(model.hooksBusy)
-                                .accessibilityLabel(String(format: t(.hookRemoveOneA11y), line.agent.displayName))
-                        }
-                    }
+                    Text(line.state)
+                        .foregroundStyle(
+                            line.failed ? AnyShapeStyle(PulseTheme.warning)
+                                : line.installed ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary)
+                        )
                 } label: {
                     Label {
                         Text(line.agent.displayName)
@@ -362,18 +248,6 @@ struct SettingsFace: View {
                 Text(t(.settingsReportHint))
                     .foregroundStyle(.secondary)
             }
-        case .updates:
-            Toggle(t(.checkForUpdates), isOn: binding(model.updateCheckEnabled) { .setUpdateCheck($0) })
-            LabeledContent {
-                if model.updateAvailable {
-                    Button(t(.openRelease)) { send(.openRelease) }
-                } else {
-                    Button(t(.checkNow)) { send(.checkForUpdates) }
-                }
-            } label: {
-                Text(model.updateStatus)
-                    .foregroundStyle(model.updateAvailable ? AnyShapeStyle(PulseTheme.Tone.running.color) : AnyShapeStyle(.secondary))
-            }
         }
     }
 
@@ -384,13 +258,13 @@ struct SettingsFace: View {
             Text(t(.hooksHint))
                 .font(PulseTheme.Font.caption)
                 .foregroundStyle(.secondary)
-        case .general, .shortcut, .notifications, .updates:
+        case .general, .notifications:
             EmptyView()
         }
     }
 
     /// The version and what kind of build it is — one small block — and
-    /// "Uninstall Pulse…".
+    /// "Releases…", the one way to a newer Pulse.
     private var about: some View {
         Section {
             VStack(alignment: .leading, spacing: PulseTheme.Space.xs) {
@@ -401,11 +275,86 @@ struct SettingsFace: View {
                 if let warning = model.buildWarning {
                     Text(warning)
                         .font(PulseTheme.Font.caption)
-                        .foregroundStyle(PulseTheme.Tone.attention.color)
+                        .foregroundStyle(PulseTheme.warning)
                 }
             }
-            Button(t(.uninstallPulse), role: .destructive) { send(.uninstallPulse) }
-                .disabled(model.hooksBusy)
+            Button(t(.releases)) { send(.openReleases) }
         }
+    }
+}
+
+/// AppKit-hosted settings window — reliable for LSUIElement / accessory apps.
+@MainActor
+final class SettingsWindowController: NSObject, NSWindowDelegate {
+    static let shared = SettingsWindowController()
+
+    /// Read by `PulseQA`'s settings capture.
+    private(set) var window: NSWindow?
+    private var hosting: NSHostingController<SettingsView>?
+    private(set) var isOpen = false
+
+    /// Where it scrolls is `store.settingsFocus`, set by
+    /// `StatusStore.openSettings(focus:)`.
+    func show(store: StatusStore) {
+        // Fast path: reuse window + hosting; SettingsView already observes store.
+        if let window, let hosting {
+            hosting.rootView = SettingsView(store: store)
+            window.title = store.tr(.settingsTitle)
+            present(window)
+            return
+        }
+
+        let root = SettingsView(store: store)
+        let host = NSHostingController(rootView: root)
+        let win = NSWindow(contentViewController: host)
+        win.title = store.tr(.settingsTitle)
+        win.identifier = NSUserInterfaceItemIdentifier("pulse-settings")
+        win.styleMask = [.titled, .closable, .miniaturizable]
+        // One page of short groups (EXPERIENCE.md, Settings).
+        win.setContentSize(NSSize(width: 500, height: 620))
+        win.contentMinSize = NSSize(width: 460, height: 420)
+        win.isReleasedWhenClosed = false
+        win.delegate = self
+        win.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        hosting = host
+        window = win
+        present(win)
+    }
+
+    private func present(_ window: NSWindow) {
+        isOpen = true
+        if !window.isVisible {
+            window.center()
+        }
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        NSApp?.activate(ignoringOtherApps: true)
+        // Escalate only if the window did not become key (the slow path):
+        // Pulse is a regular app while Settings is open, an accessory again
+        // once it closes. Flipping the policy is the slow part, so it stays
+        // `.accessory` whenever it can.
+        DispatchQueue.main.async {
+            if !window.isKeyWindow {
+                if NSApp?.activationPolicy() != .regular {
+                    NSApp?.setActivationPolicy(.regular)
+                }
+                window.makeKeyAndOrderFront(nil)
+                NSApp?.activate(ignoringOtherApps: true)
+            }
+        }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        isOpen = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            if SettingsWindowController.shared.isOpen { return }
+            if NSApp?.activationPolicy() != .accessory {
+                NSApp?.setActivationPolicy(.accessory)
+            }
+        }
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        isOpen = true
     }
 }

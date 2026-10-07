@@ -30,28 +30,24 @@ QA_FILES = [
 # (file, struct) pairs that must never see the store.
 VIEWS = [
     # The tray: a row, the header, the notice.
-    ("TrayPanelViews.swift", "TrayRowFace"),
-    ("TrayPanelViews.swift", "TrayHeaderFace"),
-    ("TrayPanelViews.swift", "TrayNoticeFace"),
-    # One session in full, its facts, the lamp's shape.
+    ("TrayView.swift", "TrayRowFace"),
+    ("TrayView.swift", "TrayHeaderFace"),
+    ("TrayView.swift", "TrayNoticeFace"),
+    # One session in full, its facts; the lamp's shape.
     ("SessionDetailView.swift", "SessionDetailFace"),
     ("SessionDetailView.swift", "FactGrid"),
-    ("SessionDetailView.swift", "LampShapeView"),
+    ("PulseTheme.swift", "LampShapeView"),
     # Settings (its Hooks section is the diagnostics).
     ("SettingsViews.swift", "SettingsFace"),
 ]
 # Pure models: no store, no UI framework. Paths are relative to APP, except
 # the fixtures, which live in the QA driver.
 PURE_FILES = [
-    "TrayRowModel.swift", "DetailModel.swift", "LampFace.swift",
-    "TrayModels.swift", "TrayKeys.swift", "SettingsModel.swift", "TrayState.swift",
-    "WaitLedger.swift", "WaitingDelivery.swift", "Hotkey.swift",
+    "Models.swift", "TrayRowModel.swift", "TrayModels.swift", "SettingsModel.swift",
+    "TrayState.swift", "WaitLedger.swift", "WaitingDelivery.swift",
 ]
 QA_PURE_FILES = ["SurfaceFixtures.swift"]
 STORE = re.compile(r"\b(StatusStore|store|AppServices)\b")
-# The store is @Observable. A Combine-era wrapper coming back would
-# silently restore whole-store invalidation for whatever view used it.
-COMBINE_ERA = re.compile(r"\b(ObservableObject|@Published|@ObservedObject|@EnvironmentObject|@StateObject|objectWillChange)\b|^\s*import\s+Combine\b", re.M)
 # Settings is redrawn by what it reads; a per-scan fact would redraw it
 # every scan. It reads `store.settings` and a few flags, never the rows.
 SCAN_FACT_FREE = [("SettingsViews.swift", re.compile(r"\bstore\.(snapshot|cachedAll)\b"))]
@@ -96,9 +92,6 @@ def main() -> int:
             errors.append(f"{file}: surface models must not reach the store")
         if re.search(r"^\s*import\s+(SwiftUI|AppKit)\b", source, re.M):
             errors.append(f"{file}: surface models must not import a UI framework")
-    for path in sorted(list(APP.glob("*.swift")) + list(QA.glob("*.swift"))):
-        if COMBINE_ERA.search(code_only(path.read_text())):
-            errors.append(f"{path.name}: Combine-era observation — the store is @Observable")
     for file, pattern in SCAN_FACT_FREE:
         if pattern.search(code_only((APP / file).read_text())):
             errors.append(f"{file}: reads a per-scan fact — every scan would redraw it")

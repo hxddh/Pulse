@@ -9,7 +9,7 @@ import Foundation
 /// menu bar icon — a bounce and nothing else.
 ///
 /// A missing icon is not worth a crash. This resolves the same candidates and
-/// returns nil, so callers draw without it (`PulseBrand.markImage` draws its
+/// returns nil, so callers draw without it (`PulseMarkView.image` draws its
 /// ring; an agent icon is left blank). `scripts/package_check.py` and
 /// `--selftest` are what actually keep the bundle correct; this only decides
 /// how loudly it fails when something slips past.

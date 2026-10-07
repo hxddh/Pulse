@@ -4,7 +4,8 @@ import SwiftUI
 
 /// Render every surface fixture to a PNG, then quit.
 ///
-/// `PulseQA --capture-surfaces=<dir> [--language=zh|en] [--appearance=light|dark]`
+/// `PulseQA --capture-surfaces=<dir> [--appearance=light|dark]`
+/// (the language is the run's system language: `-AppleLanguages "(zh-Hans)"`)
 ///
 /// Each fixture's real SwiftUI view is hosted in an offscreen borderless
 /// window of this process and drawn with `cacheDisplay`, like the tray

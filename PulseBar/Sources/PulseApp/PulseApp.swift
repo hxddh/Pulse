@@ -1,3 +1,8 @@
+// The app sees the kernel and its libraries everywhere without every file
+// importing them. The dependencies only point one way: no library target can
+// import this one.
+@_exported import PulseCore
+@_exported import PulseHarvest
 import SwiftUI
 import AppKit
 import Darwin
@@ -67,7 +72,7 @@ package enum PulseBarMain {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `PulseQA`'s driver, when it launched the app; nil in the product.
     var launchHook: PulseLaunchHook?
-    private var statusPanel: StatusPanelController?
+    private var statusItem: StatusItemController?
     private var activationObserver: NSObjectProtocol?
     /// A second copy's "open the tray" (`SingleInstanceGuard`).
     private var reopenObserver: NSObjectProtocol?
@@ -89,15 +94,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { _ in
-            MainActor.assumeIsolated { AppServices.store.reopen() }
+            MainActor.assumeIsolated { AppServices.store.requestTrayReveal() }
         }
         // Never shown by an accessory app; it routes the standard key
         // equivalents — ⌘W closes Settings, ⌘C / ⌘A work on selectable text.
         MainMenu.install(lang: AppServices.store.lang)
-        let panel = StatusPanelController(store: AppServices.store)
-        statusPanel = panel
-        StatusPanelController.shared = panel
-        panel.install()
+        let item = StatusItemController(store: AppServices.store)
+        statusItem = item
+        StatusItemController.shared = item
+        item.install()
         if let launchHook, launchHook() {
             // QA took the launch over: a fixture, not this Mac's sessions.
         } else {
@@ -106,13 +111,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Finder / Spotlight opening Pulse again: the person wants to see it,
-    /// so the tray opens (`StatusStore.reopen`). No window is invented —
+    /// so the tray opens (`StatusStore.requestTrayReveal`). No window is invented —
     /// false tells AppKit not to do its own reopen.
     func applicationShouldHandleReopen(
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool
     ) -> Bool {
-        AppServices.store.reopen()
+        AppServices.store.requestTrayReveal()
         return false
     }
 
@@ -129,8 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DistributedNotificationCenter.default().removeObserver(reopenObserver)
             self.reopenObserver = nil
         }
-        GlobalHotKey.uninstall()
-        statusPanel?.uninstall()
+        statusItem?.uninstall()
     }
 }
 

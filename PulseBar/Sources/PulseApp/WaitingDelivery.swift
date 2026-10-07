@@ -2,8 +2,8 @@ import Foundation
 
 /// What a scan's Waiting rows mean for notification delivery — as a value.
 ///
-/// Which rows qualify, whether the rate limit allows a banner now, whether
-/// several sessions collapse into one summary: this planner is fed only
+/// Which rows qualify and whether the rate limit allows a banner now — one
+/// banner per wait, never a summary: this planner is fed only
 /// facts, and `WaitNotifier` carries out the plan it returns, so the rules
 /// are testable without a store.
 struct WaitingDelivery: Equatable {
@@ -12,18 +12,13 @@ struct WaitingDelivery: Equatable {
         case nothing
         /// Rate-limited: queue these and try again after `retryAfterMs`.
         case hold([AgentRow], retryAfterMs: Int64)
-        /// Post now — as one summary when more than `summaryAbove` sessions
-        /// crossed into Waiting together.
-        case post([AgentRow], summary: Bool)
+        /// Post now, one banner each.
+        case post([AgentRow])
     }
-
-    /// More sessions than this at once become one summary banner.
-    static let summaryAbove = 3
     /// Never re-arm a retry sooner than this.
     static let minimumRetryMs: Int64 = 250
 
-    var muted: Set<AgentID>
-    /// Row keys whose active Waiting event the user already acknowledged.
+    /// Row keys whose active Waiting event the user already ignored.
     var acknowledged: Set<String>
     /// Row keys Notification Center has not answered for yet.
     var inFlight: Set<String>
@@ -45,7 +40,6 @@ struct WaitingDelivery: Equatable {
                 // it is still open after `deferAfterMs` and its app has left
                 // the front (`deferred`).
                 && (row.wait?.inFront != true || frontDue.contains(row.rowKey))
-                && !muted.contains(row.agent)
                 && !acknowledged.contains(row.rowKey)
                 && !inFlight.contains(row.rowKey)
         }
@@ -61,7 +55,7 @@ struct WaitingDelivery: Equatable {
                 retryAfterMs: max(minimumIntervalMs - msSinceLastNotification, Self.minimumRetryMs)
             )
         }
-        return .post(candidates, summary: candidates.count > Self.summaryAbove)
+        return .post(candidates)
     }
 
     // MARK: - The deferred banner
@@ -72,13 +66,13 @@ struct WaitingDelivery: Equatable {
 
     /// Waits raised while their prompt was in front that are due a second
     /// look now: still open, announced (not the launch replay's), not
-    /// dismissed, never bannered, unmuted, and at least `deferAfterMs` old
+    /// ignored, never bannered, and at least `deferAfterMs` old
     /// by the hook's clock (the ledger's first sight when the hook's is
     /// unknown). The caller asks whether their app is still in front and
     /// marks the ones that are not `frontDue`; they get one banner. Pure.
-    static func deferred(rows: [AgentRow], ledger: WaitLedger, muted: Set<AgentID>, nowMs: Int64) -> [AgentRow] {
+    static func deferred(rows: [AgentRow], ledger: WaitLedger, nowMs: Int64) -> [AgentRow] {
         rows.filter { row in
-            guard let wait = row.wait, wait.inFront, !muted.contains(row.agent),
+            guard let wait = row.wait, wait.inFront,
                   let open = ledger.waits[row.rowKey],
                   open.announce, !open.frontDue, !open.notified, !open.dismissed
             else { return false }
@@ -101,11 +95,9 @@ struct WaitingBanner: Equatable {
 
     /// Notification Center's group for one session's banners.
     static func thread(rowKey: String) -> String { "pulse.waiting." + rowKey }
-    /// The summary of a burst names several sessions: one shared group.
-    static let summaryThread = "pulse.waiting"
 
     static func make(_ row: AgentRow, lang: ResolvedLanguage) -> WaitingBanner {
-        let project = AgentRow.shortProject(row.project.isEmpty ? row.cwd : row.project)
+        let project = TitleHeuristics.shortProject(row.project.isEmpty ? row.cwd : row.project)
         let title = project.isEmpty ? row.agent.displayName : "\(row.agent.displayName) · \(project)"
         let task = row.usefulTask.map { clip($0) } ?? ""
         return WaitingBanner(title: title, subtitle: task, body: body(row, lang: lang), threadID: thread(rowKey: row.rowKey))

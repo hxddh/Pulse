@@ -8,7 +8,7 @@ import XCTest
 // Sessions: the event reducer (SessionBook), its projection into the tray
 // (TrayState), row identity, and what a row carries.
 
-/// One vendor hook event as `pulse-hook` writes it — one v5 line, or
+/// One vendor hook event as `pulse-hook` writes it — one v6 line, or
 /// nothing — by the receiver's own reading of the vendor's event name and
 /// payload (`PulseHookReceiver.interpret`, then `.record`). The truth tables
 /// below replay recorded sequences through it.
@@ -503,7 +503,7 @@ struct SessionBookTests {
 
     // MARK: - Audit fixes
 
-    /// Fix 3: every line is applied. Parallel tools written around the
+    /// Every line is applied. Parallel tools written around the
     /// answering one — before it and after it — no longer hide it (the spool
     /// kept only the newest event per session).
     @Test func parallelToolsAroundTheAnswerDoNotHideIt() {
@@ -524,7 +524,7 @@ struct SessionBookTests {
         #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "working")
     }
 
-    /// Fix 1: Claude's PostToolUseFailure (a tool that ran and failed) is
+    /// Claude's PostToolUseFailure (a tool that ran and failed) is
     /// activity for that tool, and answers the block raised for it.
     @Test func aFailedToolAnswersItsPermission() {
         let run = playAt(.claude, [
@@ -537,7 +537,7 @@ struct SessionBookTests {
         #expect(!installed.contains("PermissionDenied"), "its output can ask for a retry")
     }
 
-    /// Fix 9: Claude's AskUserQuestion says the question, ExitPlanMode the
+    /// Claude's AskUserQuestion says the question, ExitPlanMode the
     /// plan — not the tool's name.
     @Test func claudeAsksSayWhatIsAsked() {
         let question = HookFeed.write(.claude, "PermissionRequest", [
@@ -555,7 +555,7 @@ struct SessionBookTests {
         #expect(plan?.message == "Move the cache to Redis")
     }
 
-    /// Fix 9: a generic ask first (Claude's Notification can land before
+    /// A generic ask first (Claude's Notification can land before
     /// its PermissionRequest), the specific one after: the specific one
     /// wins, the first clock stays. The other way round keeps the first.
     @Test func aMoreSpecificReRaiseReplacesAGenericAsk() {
@@ -576,7 +576,7 @@ struct SessionBookTests {
         #expect(SessionBook.askSpecificity("Which database?", tool: "AskUserQuestion") == 2)
     }
 
-    /// Fix 5: the first event that names a pid is the clock a reused pid is
+    /// The first event that names a pid is the clock a reused pid is
     /// judged against.
     @Test func theBookRemembersWhenItFirstHeardAPid() {
         var book = SessionBook()
@@ -598,7 +598,7 @@ struct SessionBookTests {
         #expect(book.livePids.isEmpty)
     }
 
-    /// Fix 10: a pid of 1 (the hook's parent had exited) is never a
+    /// A pid of 1 (the hook's parent had exited) is never a
     /// session's process.
     @Test func pidOneIsUnknown() {
         var book = SessionBook()
@@ -648,7 +648,7 @@ struct SessionBookTests {
         #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "blocked:permission")
         // The person dismisses it in Pulse: the app's own `done` (marked
         // `:dismiss`) for the session.
-        let dismissal = StatusStore.dismissalRecord(agent: .claude, session: "s1", cwd: "/Users/me/app", nowMs: t0 + 3 * second)
+        let dismissal = AttentionRecord.dismissal(agent: "claude", session: "s1", cwd: "/Users/me/app", ms: t0 + 3 * second)
         #expect(dismissal.tool == AttentionRecord.dismissTool)
         #expect(dismissal.isDismissal)
         feed([dismissal], at: t0 + 3 * second)
@@ -759,9 +759,8 @@ struct SessionBookTests {
 
     /// The status marker is `:status` — a value no vendor tool name has. A
     /// real tool named `status` is a step and answers its own block; a
-    /// vendor tool spelled like a marker loses its colon. An earlier
-    /// receiver wrote the marker as `status` for Copilot and OpenCode
-    /// only: those lines still replay as the marker.
+    /// vendor tool spelled like a marker loses its colon. Only `:status`
+    /// is the marker, whoever wrote the line.
     @Test func theStatusMarkerCannotBeARealTool() {
         #expect(AttentionRecord.statusTool == ":status")
         let written = HookFeed.write(.opencode, "session.status", ["status": ["type": "busy"]], at: t0).lines.first
@@ -779,18 +778,11 @@ struct SessionBookTests {
         #expect(spoofed?.tool == "status")
         let dismissSpoof = HookFeed.write(.claude, "PostToolUse", ["tool_name": " :dismiss"], at: t0).lines.first
         #expect(dismissSpoof?.tool == "dismiss")
-        // Legacy `status` lines from Copilot and OpenCode replay as the marker.
-        var book = SessionBook()
-        book.apply(AttentionRecord(agent: "copilot", kind: "permission", ms: t0, message: "Allow bash?", session: "s1"), nowMs: t0)
-        book.apply(AttentionRecord(agent: "copilot", kind: "tool", ms: t0 + second, session: "s1", tool: "status"), nowMs: t0 + second)
-        #expect(HookFeed.word(book.sessions["copilot|s1"]?.state) == "blocked:permission", "a legacy status line never answers")
-        let legacySteps = book.sessions["copilot|s1"]?.steps
-        #expect(legacySteps?.isEmpty == true)
-        let legacyCopilot = AttentionRecord.isStatus(tool: "status", agent: "copilot")
-        let legacyOpenCode = AttentionRecord.isStatus(tool: "status", agent: "opencode")
-        let claudeStatus = AttentionRecord.isStatus(tool: "status", agent: "claude")
-        #expect(legacyCopilot && legacyOpenCode)
-        #expect(!claudeStatus, "only the two agents whose lines ever carried it")
+        // Only the marker is the marker: a bare `status` is a tool for every agent.
+        let bare = AttentionRecord(agent: "copilot", kind: "tool", ms: t0, session: "s1", tool: "status")
+        let marker = AttentionRecord(agent: "copilot", kind: "tool", ms: t0, session: "s1", tool: ":status")
+        #expect(!bare.isStatus)
+        #expect(marker.isStatus)
     }
 }
 
@@ -885,7 +877,7 @@ struct TrayStateTests {
         #expect(rows(b, at: t0 + 60 * minute).isEmpty)
     }
 
-    /// Fix 6: one Cursor IDE or OpenCode server process runs many
+    /// One Cursor IDE or OpenCode server process runs many
     /// sessions all day. Its live pid keeps a working or blocked session
     /// listed — never one that is idle, whose turn aged out, or that is
     /// recent: those leave after the recent window like any other.
@@ -905,7 +897,7 @@ struct TrayStateTests {
         #expect(live == 2)
     }
 
-    /// Fix 7: an interrupted turn sends no Stop. From an agent that reports
+    /// An interrupted turn sends no Stop. From an agent that reports
     /// its tools, silence is a stall for a while — then, past
     /// `silentBoundMs`, the session is recent and says why: never an
     /// endless orange.
@@ -1042,14 +1034,14 @@ final class TrayAssembleTests: XCTestCase {
     func testNothingAtAllIsIdleNotError() {
         let r = build([])
         XCTAssertTrue(r.rows.isEmpty)
-        XCTAssertEqual(r.snapshot.glance, .idle)
+        XCTAssertEqual(r.snapshot.lamp, .idle)
         XCTAssertEqual(r.activity, .empty)
     }
 
     func testWaitingSortsAboveEverythingElse() {
         let r = build([row("a", task: "Titled"), blocked("b")])
         XCTAssertEqual(r.rows.map(\.rowKey), ["b", "a"])
-        XCTAssertEqual(r.snapshot.glance, .waiting)
+        XCTAssertEqual(r.snapshot.lamp, .waiting)
         XCTAssertEqual(r.activity, .waiting)
     }
 
@@ -1061,32 +1053,31 @@ final class TrayAssembleTests: XCTestCase {
     func testMenuBarTitleCarriesCountAndAge() {
         XCTAssertEqual(build([blocked("a")]).snapshot.title, "1 · 10m")
         XCTAssertEqual(build([blocked("a", sinceAgoMs: 1_000)]).snapshot.title, "1", "a fresh wait does not spend space on now")
+        XCTAssertEqual(build([blocked("a", sinceAgoMs: 59_000)]).snapshot.title, "1", "nor does one under a minute")
     }
 
     func testNothingBlockedMeansNoTitle() {
         XCTAssertEqual(build([row("a")]).snapshot.title, "")
-        XCTAssertEqual(build([row("a")]).snapshot.glance, .running)
+        XCTAssertEqual(build([row("a")]).snapshot.lamp, .running)
     }
 
     func testProcessOnlyRunningIsAGreyDottedGlance() {
         let r = build([row("claude|pid:1", state: .processOnly)])
-        XCTAssertEqual(r.snapshot.glance, .idle)
-        XCTAssertEqual(r.snapshot.lamp, LampFace(shape: .dotted, tone: .idle))
+        XCTAssertEqual(r.snapshot.lamp, .processOnly)
         XCTAssertEqual(r.activity, .recent, "a bare process does not hold the running tick")
     }
 
     func testAFinishedTurnIsNotRunning() {
         let r = build([row("a", state: .yourTurn(sinceMs: now - 60_000))])
-        XCTAssertEqual(r.snapshot.glance, .idle)
+        XCTAssertEqual(r.snapshot.lamp, .idle)
         XCTAssertEqual(r.activity, .recent)
     }
 
     /// No fold: the tray lists every session and scrolls inside the
-    /// panel's height — there is no "and N more" to click.
+    /// tray's height — there is no "and N more" to click.
     func testEveryRowIsListedWithoutAFold() {
         let r = build((0..<30).map { row("k\($0)") })
         XCTAssertEqual(r.snapshot.rows.count, 30)
-        XCTAssertEqual(r.snapshot.totalCount, 30)
         XCTAssertEqual(r.snapshot.rows.map(\.rowKey), r.rows.map(\.rowKey))
     }
 
@@ -1094,7 +1085,6 @@ final class TrayAssembleTests: XCTestCase {
         let r = build([blocked("w")] + (0..<4).map { row("k\($0)") })
         XCTAssertEqual(r.snapshot.counts.blocked, 1)
         XCTAssertEqual(r.snapshot.counts.running, 4)
-        XCTAssertEqual(r.snapshot.headerTitle, r.snapshot.counts.summary(.en))
     }
 
     func testFirstSightOfAWaitIsReportedAsNew() {
@@ -1167,22 +1157,33 @@ struct RowIdentityTests {
     }
 }
 
-/// Row presentation rules from EXPERIENCE.md.
+/// What a row may show as its title: a person's goal, never chrome.
 final class AgentRowTests: XCTestCase {
-    private func row(_ mutate: (inout AgentRow) -> Void) -> AgentRow {
-        var r = AgentRow(rowKey: "claude|s1", agent: .claude)
+    private func row(_ agent: AgentID = .claude, _ mutate: (inout AgentRow) -> Void) -> AgentRow {
+        var r = AgentRow(rowKey: "claude|s1", agent: agent)
         mutate(&r)
         return r
     }
 
-    func testPlaceholderTitlesAreNotTreatedAsSessions() {
+    /// Placeholders, a vendor's generic "<Agent> session" and its bare name
+    /// are chrome in any case; a real goal that merely contains "session" is not.
+    func testPlaceholderTitlesAreNotTitles() {
         for junk in [
-            "-", "—", "Running", "Active", "none", "Agent session", "Chat",
-            "Cursor session", "OpenCode session", "Gemini session", "Pi session",
+            "-", "—", "Running", "running", "Active", "none", "Agent session", "Chat",
+            "New Session", "Untitled", "  Untitled  ", "New Chat", "new chat",
+            "COPILOT SESSION", "Cursor session", "OpenCode session", "Gemini session", "Pi session",
         ] {
-            let r = row { $0.task = junk }
-            XCTAssertNil(r.usefulTask, "\(junk) is not a real session title")
+            XCTAssertNil(row { $0.task = junk }.usefulTask, "\(junk) is not a real session title")
         }
+        for title in TitleHeuristics.chromeTitles {
+            XCTAssertNil(row { $0.task = title.uppercased() }.usefulTask, "\(title) must be chrome in either case")
+        }
+        for agent in AgentID.allCases {
+            XCTAssertNil(row(agent) { $0.task = "\(agent.displayName) session"; $0.sessionID = "real-id" }.usefulTask)
+            XCTAssertNil(row(agent) { $0.task = agent.displayName; $0.sessionID = "real-id" }.usefulTask)
+        }
+        XCTAssertFalse(TitleHeuristics.isChromeTitle("Auth session"))
+        XCTAssertFalse(TitleHeuristics.isChromeTitle("Fix the tray hero"))
     }
 
     func testBarePathIsNotASessionTitle() {
@@ -1190,18 +1191,12 @@ final class AgentRowTests: XCTestCase {
         XCTAssertNotNil(row { $0.task = "/Users/me fix the parser" }.usefulTask)
     }
 
-    func testMarkdownLinksBecomeReadablePlainTitles() {
+    func testMarkdownBecomesAReadablePlainTitle() {
         let raw = "[hxddh/Pulse](https://github.com/hxddh/Pulse) 本地有安装最新版"
         let r = row { $0.task = raw }
         XCTAssertEqual(r.usefulTask, "hxddh/Pulse 本地有安装最新版")
         XCTAssertEqual(r.task, raw, "presentation cleanup must not rewrite evidence")
-    }
-
-    func testMarkdownImageSyntaxDoesNotLeakIntoTheTray() {
-        XCTAssertEqual(
-            row { $0.task = "Inspect ![failure](file:///tmp/failure.png)" }.usefulTask,
-            "Inspect failure"
-        )
+        XCTAssertEqual(row { $0.task = "Inspect ![failure](file:///tmp/failure.png)" }.usefulTask, "Inspect failure")
     }
 
     func testInternalToolIdentifiersAreNotSessionTitles() {
@@ -1212,67 +1207,29 @@ final class AgentRowTests: XCTestCase {
         XCTAssertNotNil(row { $0.task = "Improve tray density" }.usefulTask)
     }
 
-    func testShortProjectDropsOpaqueHashes() {
-        XCTAssertEqual(AgentRow.shortProject("/Users/me/code/Pulse"), "Pulse")
-        XCTAssertEqual(AgentRow.shortProject("a1b2c3d4e5f60718"), "", "hash is not a project name")
-        XCTAssertEqual(AgentRow.shortProject(""), "")
+    /// A process-only row has no title, and its headline is never the
+    /// agent's product name (the icon already says who).
+    func testProcessOnlyRowHasNoSessionTitleToShow() {
+        let r = row(.codex) { $0.state = .processOnly; $0.liveProcess = true }
+        XCTAssertNil(r.usefulTask)
+        XCTAssertNotEqual(TrayRowModel.headline(r, lang: .en, nowMs: 1_700_000_000_000), r.agent.displayName)
     }
 
-    func testLongProjectNamesAreTruncated() {
-        let long = String(repeating: "x", count: 40)
-        let short = AgentRow.shortProject(long)
+    func testShortProjectDropsHashesAndIsBounded() {
+        XCTAssertEqual(TitleHeuristics.shortProject("/Users/me/code/Pulse"), "Pulse")
+        XCTAssertEqual(TitleHeuristics.shortProject("a1b2c3d4e5f60718"), "", "hash is not a project name")
+        XCTAssertEqual(TitleHeuristics.shortProject(""), "")
+        let short = TitleHeuristics.shortProject(String(repeating: "x", count: 40))
         XCTAssertLessThanOrEqual(short.count, 24)
         XCTAssertTrue(short.hasSuffix("…"))
     }
 }
 
-/// One fact is stated once — screenshots once showed it three and four times over.
-final class RowRedundancyTests: XCTestCase {
-    private func row(agent: AgentID, task: String = "", project: String = "") -> AgentRow {
-        var r = AgentRow(rowKey: "k", agent: agent)
-        r.task = task
-        r.project = project
-        r.liveProcess = true
-        r.state = .running
-        return r
-    }
-
-    /// `Cursor · Cursor` — the dedupe compared the project to the hero only.
-    func testProjectThatRestatesTheAgentIsDropped() {
-        let r = row(agent: .cursor, task: "Pulse installation guide", project: "Cursor")
-        XCTAssertEqual(AgentRow.shortProject(r.project), "Cursor")
-        XCTAssertEqual(r.agent.displayName, "Cursor")
-    }
-
-    /// A bare process row said "Process detected", "process", and the agent's name.
-    func testProcessOnlyRowHasNoSessionTitleToShow() {
-        var r = row(agent: .codex)
-        r.state = .processOnly
-        XCTAssertNil(r.usefulTask)
-        // Hero must not fall back to the agent product name (already on identity).
-        let hero = TrayRowModel.headline(r, lang: .en, nowMs: 1_700_000_000_000)
-        XCTAssertNotEqual(hero, r.agent.displayName)
-    }
-
-    func testEveryAgentDropsItsOwnGenericSessionPlaceholder() {
-        for agent in AgentID.allCases {
-            var r = row(agent: agent, task: "\(agent.displayName) session")
-            r.sessionID = "real-id"
-            XCTAssertNil(r.usefulTask, "\(agent.displayName) placeholder escaped as a task")
-        }
-    }
-
-    func testEveryAgentDropsItsOwnBareDisplayName() {
-        for agent in AgentID.allCases {
-            var r = row(agent: agent, task: agent.displayName)
-            r.sessionID = "real-id"
-            XCTAssertNil(r.usefulTask, "\(agent.displayName) alone is identity, not a goal")
-        }
-    }
-}
-
-/// The two facts a row could never state, both collected from the start.
+/// Where a row is, and how long it has been quiet.
 final class RowContextTests: XCTestCase {
+    private let home = FileManager.default.homeDirectoryForCurrentUser.path
+    private let now: Int64 = 1_700_000_000_000
+
     private func row(cwd: String = "", project: String = "", eventMs: Int64 = 0) -> AgentRow {
         var r = AgentRow(rowKey: "k", agent: .claude)
         r.cwd = cwd
@@ -1281,179 +1238,56 @@ final class RowContextTests: XCTestCase {
         return r
     }
 
-    /// Home itself is not a location worth naming; anything under it is.
-    func testPathsUnderHomeUseTilde() {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        XCTAssertEqual(row(cwd: home).displayPath, "", "home is not a project")
-        XCTAssertEqual(row(cwd: home + "/code").displayPath, "~/code")
+    /// Home — or its encoded form — is not a project; anything under it is,
+    /// written with a tilde.
+    func testHomeIsNotAProject() {
+        let user = (home as NSString).lastPathComponent
+        XCTAssertEqual(row(cwd: home).displayPath, "")
+        XCTAssertEqual(row(project: "~").displayPath, "")
+        XCTAssertTrue(TitleHeuristics.isHomeLike("users-\(user)", home: home))
+        XCTAssertTrue(TitleHeuristics.isHomeLike(user, home: home))
+        XCTAssertEqual(row(project: "users-\(user)").displayPath, "")
+        XCTAssertEqual(row(cwd: home + "/Documents/Cursor").displayPath, "~/Documents/Cursor")
+        XCTAssertFalse(TitleHeuristics.isHomeLike("/tmp/alpha", home: home))
     }
 
-    /// The middle of a deep path carries no identity; the tail does.
-    func testDeepPathsKeepTheirTail() {
-        let p = row(cwd: "/a/b/c/d/e/Pulse").displayPath
-        XCTAssertTrue(p.hasSuffix("e/Pulse"), p)
-        XCTAssertTrue(p.contains("…"), p)
-    }
-
-    func testShallowPathsAreLeftAlone() {
+    /// A deep path keeps its tail; a shallow one is left alone; no location
+    /// is no path, and a project stands in for a missing folder.
+    func testPathsKeepWhatIdentifiesThem() {
+        let deep = row(cwd: "/a/b/c/d/e/Pulse").displayPath
+        XCTAssertTrue(deep.hasSuffix("e/Pulse"), deep)
+        XCTAssertTrue(deep.contains("…"), deep)
         XCTAssertEqual(row(cwd: "/tmp/alpha").displayPath, "/tmp/alpha")
-    }
-
-    func testNoLocationYieldsNoPathRatherThanAPlaceholder() {
         XCTAssertEqual(row().displayPath, "")
-    }
-
-    func testProjectIsUsedWhenThereIsNoCwd() {
         XCTAssertEqual(row(project: "Pulse").displayPath, "Pulse")
     }
 
-    func testUnknownActivityIsZeroNotEpoch() {
-        XCTAssertEqual(row().lastActivitySeconds(at: 1_700_000_000_000), 0)
-    }
-
-    func testActivityAgeCountsFromTheLastEvent() {
-        let now: Int64 = 1_700_000_000_000
+    func testActivityAgeCountsFromTheLastEventAndUnknownIsZero() {
+        XCTAssertEqual(row().lastActivitySeconds(at: now), 0)
         XCTAssertEqual(row(eventMs: now - 600_000).lastActivitySeconds(at: now), 600, accuracy: 0.001)
     }
-}
 
-/// Each of these is a defect once visible in a screenshot.
-final class RowPresentationTests: XCTestCase {
-    private let home = FileManager.default.homeDirectoryForCurrentUser.path
-
-    private func row(cwd: String = "", project: String = "", eventMs: Int64 = 0, live: Bool = false) -> AgentRow {
-        var r = AgentRow(rowKey: "k", agent: .claude)
-        r.cwd = cwd
-        r.project = project
-        r.lastEventMs = eventMs
-        r.liveProcess = live
-        r.state = live ? .running : .recent
-        return r
-    }
-
-    /// The panel grouped two sessions under "~" and a third under
-    /// "users-rustjia" — the same directory, twice, and a header claiming
-    /// three projects where there were two.
-    func testHomeIsNotAProject() {
-        XCTAssertEqual(row(cwd: home).displayPath, "")
-        XCTAssertEqual(row(project: "~").displayPath, "")
-    }
-
-    func testEncodedHomeCollapsesToTheSamePlaceAsHome() {
-        let user = (home as NSString).lastPathComponent
-        XCTAssertTrue(AgentRow.isHomeLike("users-\(user)", home: home))
-        XCTAssertTrue(AgentRow.isHomeLike(user, home: home))
-        XCTAssertEqual(row(project: "users-\(user)").displayPath, "")
-    }
-
-    func testARealProjectIsStillAProject() {
-        XCTAssertEqual(row(cwd: home + "/Documents/Cursor").displayPath, "~/Documents/Cursor")
-        XCTAssertFalse(AgentRow.isHomeLike("/tmp/alpha", home: home))
-    }
-
-    /// "New Session" was shown as a row title.
-    func testPlaceholderTitlesAreNotTitles() {
-        for junk in ["New Session", "Untitled", "New Chat", "Agent session"] {
-            var r = row()
-            r.task = junk
-            XCTAssertNil(r.usefulTask, "\(junk) is a placeholder, not a task")
+    /// Twenty minutes without an event is a stall; an unknown clock is not
+    /// evidence of silence.
+    func testTwentyMinutesOfSilenceIsAStall() {
+        func stalled(_ agoSeconds: Double) -> Bool {
+            AgentRow.stalled(lastActivityMs: now - Int64(agoSeconds * 1000), nowMs: now)
         }
+        XCTAssertEqual(AgentRow.stalledSeconds, 20 * 60)
+        XCTAssertTrue(stalled(21 * 60))
+        XCTAssertFalse(stalled(19 * 60))
+        XCTAssertFalse(AgentRow.stalled(lastActivityMs: 0, nowMs: now))
     }
 
-    /// Live for twenty minutes with nothing happening looked like health.
-    ///
-    /// Evaluated against the scan's clock, so these pass an explicit `nowMs`
-    /// rather than depending on when the suite happens to run.
-    private let now: Int64 = 1_700_000_000_000
-
-    private func stalled(agoSeconds: Double) -> Bool {
-        AgentRow.stalled(lastActivityMs: now - Int64(agoSeconds * 1000), nowMs: now)
-    }
-
-    func testLongSilenceWhileLiveIsStalled() {
-        XCTAssertTrue(stalled(agoSeconds: 25 * 60))
-    }
-
-    func testRecentActivityIsNotStalled() {
-        XCTAssertFalse(stalled(agoSeconds: 60))
-    }
-
-    func testUnknownActivityIsNotStalled() {
-        XCTAssertFalse(
-            AgentRow.stalled(lastActivityMs: 0, nowMs: now),
-            "no timestamp is not evidence of silence"
-        )
-    }
-
-    /// A stalled row is one the user should react to: an orange ring, and
-    /// its why on a second line (no badge).
+    /// A stalled row is an orange ring with its why on the second line.
     func testStalledRowsSayWhy() {
-        var r = row(eventMs: now - 25 * 60 * 1000, live: true)
+        var r = row(eventMs: now - 25 * 60 * 1000)
+        r.liveProcess = true
+        r.state = .running
         r.isStalled = true
         let face = TrayRowModel.make(TrayRowModel.Input(row: r, lang: .en, nowMs: now))
-        XCTAssertEqual(face.lamp, LampFace(shape: .ring, tone: .attention))
+        XCTAssertEqual(face.lamp, .stalled)
         XCTAssertEqual(face.secondLine?.kind, .warning)
         XCTAssertEqual(face.secondLine?.text, face.why)
-    }
-}
-
-/// The stall threshold used to be compiled in at twenty minutes.
-final class StallThresholdTests: XCTestCase {
-    private let now: Int64 = 1_700_000_000_000
-
-    private func stalled(agoSeconds: Double, threshold: Double) -> Bool {
-        AgentRow.stalled(lastActivityMs: now - Int64(agoSeconds * 1000), nowMs: now, threshold: threshold)
-    }
-
-    func testAShorterThresholdCatchesAShorterSilence() {
-        XCTAssertTrue(stalled(agoSeconds: 6 * 60, threshold: 5 * 60))
-        XCTAssertFalse(stalled(agoSeconds: 6 * 60, threshold: 20 * 60))
-    }
-
-    /// "Never" must read as never stalled, not as always stalled.
-    func testZeroDisablesRatherThanTripping() {
-        XCTAssertFalse(stalled(agoSeconds: 10 * 60 * 60, threshold: 0))
-        XCTAssertFalse(stalled(agoSeconds: 10 * 60 * 60, threshold: -1))
-    }
-
-    func testTheDefaultIsUnchanged() {
-        XCTAssertEqual(AgentRow.stalledSeconds, 20 * 60)
-        XCTAssertTrue(stalled(agoSeconds: 21 * 60, threshold: AgentRow.stalledSeconds))
-    }
-}
-
-/// A vendor placeholder title is chrome, whatever its case — one list.
-final class ChromeVocabularyTests: XCTestCase {
-    // MARK: - One chrome vocabulary, not three
-
-    /// `usefulTask` once had its own case-sensitive copy of the list.
-    @MainActor
-    func testChromeTitlesAreRejectedWhateverTheirCase() {
-        for title in ["Copilot session", "COPILOT SESSION", "copilot session",
-                      "New Chat", "new chat", "Running", "running", "  Untitled  "] {
-            var row = AgentRow(rowKey: "k", agent: .copilot)
-            row.task = title
-            XCTAssertNil(row.usefulTask, "\(title) is not a user goal")
-        }
-    }
-
-    /// One list, case-insensitive: every entry is chrome in either case,
-    /// and none reaches a row as a goal.
-    @MainActor
-    func testCollectorAndRowShareOneVocabulary() {
-        for title in TitleHeuristics.chromeTitles {
-            XCTAssertTrue(
-                AgentRow.isChromeTitle(title.uppercased()),
-                "\(title) must be chrome in either case"
-            )
-            var row = AgentRow(rowKey: "k", agent: .claude)
-            row.task = title
-            XCTAssertNil(row.usefulTask, "\(title) reached a row as a goal")
-        }
-    }
-
-    func testARealGoalIsNotMistakenForChrome() {
-        XCTAssertFalse(AgentRow.isChromeTitle("Auth session"))
-        XCTAssertFalse(AgentRow.isChromeTitle("Fix the tray hero"))
     }
 }

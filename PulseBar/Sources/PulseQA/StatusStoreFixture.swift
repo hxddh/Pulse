@@ -8,7 +8,7 @@ extension StatusStore {
     /// Deterministic visual contract for compact/crowded tray QA.
     ///
     /// `PulseQA --tray-fixture=<fixture>` only; the shipping app does not
-    /// contain it. It hosts the real TrayPanel and catches
+    /// contain it. It feeds the real tray and catches
     /// count, state, grouping, alignment and density regressions without
     /// depending on whichever Agents happen to be running on a test machine.
     func installPreviewFixture(_ name: String) {
@@ -28,7 +28,7 @@ extension StatusStore {
             value.sessionID = key
             value.task = task
             value.cwd = cwd
-            value.project = AgentRow.shortProject(cwd)
+            value.project = TitleHeuristics.shortProject(cwd)
             value.source = source
             value.liveProcess = live
             value.state = live ? .running : .recent
@@ -38,10 +38,8 @@ extension StatusStore {
         }
 
         if name.hasPrefix("status-") {
-            // Compact status fixtures used to only stamp glance/header and left
-            // `rows` empty, so `--capture-tray-panel` still showed whatever live
-            // sessions (or nothing) were present. Inject one concrete row so
-            // visual QA exercises the real tray layout for that lamp state.
+            // One concrete row, so visual QA exercises the real tray layout
+            // for that lamp state.
             var fixtureRow = row(
                 "status-fixture",
                 .cursor,
@@ -73,32 +71,7 @@ extension StatusStore {
                 fixtureRow.liveProcess = false
                 fixtureRow.state = .recent
             }
-            setCachedAll([fixtureRow])
-
-            var snap = PulseSnapshot()
-            switch name {
-            case "status-running":
-                snap.glance = .running
-            case "status-stalled":
-                snap.glance = .stalled
-            case "status-waiting":
-                snap.glance = .waiting
-                snap.title = "1 · 8m"
-            case "status-turn":
-                // A finished turn is grey, even while its process lives.
-                snap.glance = .idle
-            default:
-                snap.glance = .idle
-            }
-            snap.headerTitle = name
-            snap.counts = TrayState.Counts(rows: [fixtureRow])
-            snap.lamp = LampFace.glance(snap.glance)
-            snap.tooltip = TrayState.lampSentence(TrayState.lampRule(counts: TrayState.Counts(rows: [fixtureRow]), glance: snap.glance), lang: lang)
-            snap.accessibilityLabel = tr(snap.glance.accessibilityKey)
-            snap.rows = [fixtureRow]
-            snap.totalCount = 1
-            snap.updatedAt = Date()
-            snapshot = snap
+            landFixture([fixtureRow], title: name == "status-waiting" ? "1 · 8m" : "")
             return
         }
 
@@ -128,20 +101,8 @@ extension StatusStore {
                 cwd: "/Users/me/code/Client",
                 live: false
             )
-            setCachedAll([codex, pi, cursor])
             hooksStatus = .all
-            snapshot = PulseSnapshot(
-                glance: .running,
-                title: "",
-                tooltip: TrayState.lampSentence(TrayState.lampRule(counts: TrayState.Counts(rows: cachedAll), glance: .running), lang: lang),
-                accessibilityLabel: tr(.a11yRunning),
-                headerTitle: "2 running",
-                rows: cachedAll,
-                counts: TrayState.Counts(rows: cachedAll),
-                lamp: LampFace.glance(.running),
-                totalCount: cachedAll.count,
-                updatedAt: Date()
-            )
+            landFixture([codex, pi, cursor], title: "")
             return
         }
 
@@ -214,19 +175,22 @@ extension StatusStore {
             rows += [quiet, process, sub]
         }
         rows.sort { $0.section.rawValue < $1.section.rawValue }
-        setCachedAll(rows)
+        landFixture(rows, title: "\(rows.filter(\.isBlocked).count) · 8m")
+    }
 
+    /// The fixture's rows on screen, with the lamp, the tooltip and the
+    /// counts the projection would give them.
+    private func landFixture(_ rows: [AgentRow], title: String) {
+        cachedAll = rows
+        let counts = TrayState.Counts(rows: rows)
+        let rule = TrayState.lampRule(counts: counts)
         var snap = PulseSnapshot()
-        snap.glance = .waiting
-        snap.lamp = LampFace.glance(.waiting)
-        let blockedCount = rows.filter { $0.isBlocked }.count
-        snap.title = "\(blockedCount) · 8m"
-        snap.tooltip = TrayState.lampSentence(TrayState.lampRule(counts: TrayState.Counts(rows: rows), glance: .waiting), lang: lang)
-        snap.accessibilityLabel = tr(.a11yWaiting)
+        snap.lamp = Lamp(rule)
+        snap.title = title
+        snap.tooltip = TrayState.lampSentence(rule, lang: lang)
+        snap.accessibilityLabel = snap.lamp.isGrey ? tr(.a11yIdle) : snap.tooltip
         snap.rows = rows
-        snap.totalCount = rows.count
-        snap.counts = TrayState.Counts(rows: rows)
-        snap.headerTitle = snap.counts.summary(lang)
+        snap.counts = counts
         snap.updatedAt = Date()
         snapshot = snap
     }

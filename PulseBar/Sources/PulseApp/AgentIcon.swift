@@ -8,7 +8,7 @@ enum AgentIcon {
     private static let rasterSize = 64
     private static let opticalSize: CGFloat = 52
 
-    /// Template (monochrome) brand mark for menu / panel rows.
+    /// Template (monochrome) brand mark for menu and tray rows.
     static func image(for id: AgentID) -> NSImage {
         let key = id.rawValue as NSString
         if let cached = cache.object(forKey: key) { return cached }

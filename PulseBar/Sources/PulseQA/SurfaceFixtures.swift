@@ -31,11 +31,11 @@ enum SurfaceFixtures {
 
     static let names = [
         "row-blocked", "row-blocked-front", "row-running", "row-running-selected",
-        "row-stalled", "row-your-turn", "row-process-only", "row-muted",
+        "row-stalled", "row-your-turn", "row-process-only",
         "row-running-step", "row-stalled-step",
         "header", "notice-setup", "notice-setup-done", "notice-setup-failed", "row-app-only",
         "detail-blocked", "detail-your-turn", "detail-steps", "detail-stalled", "detail-app-only",
-        "settings", "settings-login-approval", "settings-shortcut-recording", "settings-shortcut-refused",
+        "settings", "settings-login-approval",
     ]
 
     static func all(lang: ResolvedLanguage) -> [Fixture] {
@@ -50,7 +50,6 @@ enum SurfaceFixtures {
             Fixture(name: "row-stalled", width: 448, value: .row(rowModel(rowStalled(), lang: lang))),
             Fixture(name: "row-your-turn", width: 448, value: .row(rowModel(rowTurn(), lang: lang))),
             Fixture(name: "row-process-only", width: 448, value: .row(rowModel(rowProcessOnly(), lang: lang))),
-            Fixture(name: "row-muted", width: 448, value: .row(rowModel(rowRunning(), lang: lang, muted: true))),
             // A running row's quiet last step, and its turn's duration in
             // the time slot.
             Fixture(name: "row-running-step", width: 448, value: .row(rowModel(rowRunningStep(), lang: lang))),
@@ -60,8 +59,9 @@ enum SurfaceFixtures {
             Fixture(name: "notice-setup", width: 432, value: .notice(noticeSetup(lang: lang))),
             Fixture(name: "notice-setup-done", width: 432, value: .notice(noticeSetupDone(lang: lang))),
             Fixture(name: "notice-setup-failed", width: 432, value: .notice(noticeSetupFailed(lang: lang))),
-            // A Go that reached the app only, for want of the Terminal
-            // automation switch: the notice says so, with "Turn on".
+            // A Go that reached the app only, where a Terminal tab script
+            // was tried: the notice says where macOS's Automation
+            // permission is.
             Fixture(name: "row-app-only", width: 448, value: .row(rowModel(rowTerminalTab(), lang: lang, appOnly: true))),
             Fixture(name: "detail-blocked", width: 448, value: .detail(detailPermission(lang: lang))),
             Fixture(name: "detail-your-turn", width: 448, value: .detail(detailTurn(lang: lang))),
@@ -71,16 +71,12 @@ enum SurfaceFixtures {
             // A stalled row: its why is the row's own second line, so the
             // page does not say it twice.
             Fixture(name: "detail-stalled", width: 448, value: .detail(detailStalled(lang: lang))),
-            // The same landing notice and "Turn on" on the detail page.
+            // The same landing notice on the detail page.
             Fixture(name: "detail-app-only", width: 448, value: .detail(detailAppOnly(lang: lang))),
-            // Per-agent Install / Remove on every Hooks line.
+            // Install all / Remove all, and one status line per agent.
             Fixture(name: "settings", width: 500, value: .settings(settings(lang: lang))),
             // Open at login registered, and macOS waiting for approval.
             Fixture(name: "settings-login-approval", width: 500, value: .settings(settingsLoginApproval(lang: lang))),
-            // The shortcut recorder listening for the next key.
-            Fixture(name: "settings-shortcut-recording", width: 500, value: .settings(settingsShortcutRecording(lang: lang))),
-            // A combination macOS keeps for itself, refused.
-            Fixture(name: "settings-shortcut-refused", width: 500, value: .settings(settingsShortcutRefused(lang: lang))),
         ]
     }
 
@@ -90,9 +86,9 @@ enum SurfaceFixtures {
     static var nowMs: Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
     static let minute: Int64 = 60_000
 
-    static func rowModel(_ row: AgentRow, lang: ResolvedLanguage, muted: Bool = false, appOnly: Bool = false) -> TrayRowModel {
-        let notice = appOnly ? RowNotice.appOnly(row: row, automationAllowed: false, lang: lang) : nil
-        return TrayRowModel.make(TrayRowModel.Input(row: row, lang: lang, nowMs: nowMs, notice: notice, muted: muted))
+    static func rowModel(_ row: AgentRow, lang: ResolvedLanguage, appOnly: Bool = false) -> TrayRowModel {
+        let notice = appOnly ? RowNotice.appOnly(row: row, lang: lang) : nil
+        return TrayRowModel.make(TrayRowModel.Input(row: row, lang: lang, nowMs: nowMs, notice: notice))
     }
 
     static func baseRow(_ agent: AgentID, key: String, task: String = "Fix the flaky login test") -> AgentRow {
@@ -148,12 +144,12 @@ enum SurfaceFixtures {
         baseRow(.codex, key: "fx-running", task: "Add retry with jitter to the upload queue")
     }
 
-    /// A session in a Terminal.app tab, with Terminal automation off: a Go
-    /// brings Terminal forward, not the tab.
+    /// A session in a Terminal.app tab whose tab script did not land (macOS
+    /// Automation denied): a Go brings Terminal forward, not the tab.
     static func rowTerminalTab() -> AgentRow {
         var row = baseRow(.claude, key: "fx-terminal-tab", task: "Rename the settings keys")
         row.landing = LandingHandle("tty:/dev/ttys004;term:Apple_Terminal")
-        row.landingPlan = LandingPlan.make(handle: row.landing, cwd: row.cwd, allowAutomation: false, pid: 4312)
+        row.landingPlan = LandingPlan.make(handle: row.landing, cwd: row.cwd, pid: 4312)
         return row
     }
 
@@ -207,7 +203,7 @@ enum SurfaceFixtures {
     /// The first-run card: agents on this Mac, not connected.
     static func noticeSetup(lang: ResolvedLanguage) -> TrayNoticeModel {
         TrayNoticeModel.pick(TrayNoticeModel.Input(
-            lang: lang, notifyOnWaiting: true, notifyAuthorized: nil,
+            lang: lang, notifyAuthorized: nil,
             bannerFailed: false, unconnected: [.claude, .codex]
         )) ?? TrayNoticeModel(
             kind: .setup, text: "", actionTitle: "", action: .connect, systemImage: "link", tone: .idle
@@ -217,7 +213,7 @@ enum SurfaceFixtures {
     /// The card right after "Connect": what is left to do.
     static func noticeSetupDone(lang: ResolvedLanguage) -> TrayNoticeModel {
         TrayNoticeModel.pick(TrayNoticeModel.Input(
-            lang: lang, notifyOnWaiting: true, notifyAuthorized: true,
+            lang: lang, notifyAuthorized: true,
             bannerFailed: false, justConnected: [.claude, .codex]
         )) ?? TrayNoticeModel(
             kind: .setupDone, text: "", actionTitle: "", action: .dismissSetup, systemImage: "checkmark.circle", tone: .idle
@@ -228,11 +224,11 @@ enum SurfaceFixtures {
     /// to fix it — never "Connect" again.
     static func noticeSetupFailed(lang: ResolvedLanguage) -> TrayNoticeModel {
         TrayNoticeModel.pick(TrayNoticeModel.Input(
-            lang: lang, notifyOnWaiting: true, notifyAuthorized: true, bannerFailed: false,
+            lang: lang, notifyAuthorized: true, bannerFailed: false,
             installFailure: HooksSupport.Status.failureText([.gemini: .invalidJSON], lang: lang)
         )) ?? TrayNoticeModel(
             kind: .setupFailed, text: "", actionTitle: "", action: .openHooksSettings,
-            systemImage: "exclamationmark.triangle", tone: .attention
+            systemImage: "exclamationmark.triangle", tone: .stalled
         )
     }
 
@@ -258,7 +254,7 @@ enum SurfaceFixtures {
         let row = rowTerminalTab()
         return DetailModel.make(
             row: row, lang: lang, nowMs: nowMs,
-            notice: RowNotice.appOnly(row: row, automationAllowed: false, lang: lang)
+            notice: RowNotice.appOnly(row: row, lang: lang)
         )
     }
 
@@ -268,12 +264,7 @@ enum SurfaceFixtures {
         SettingsModel(
             lang: lang,
             launchAtLogin: true,
-            language: .auto,
-            terminalAutomation: false,
-            hotkeyLabel: Hotkey.legacy("ctrl_opt_space")?.label,
             notifications: .allowed,
-            notifyOnWaiting: true,
-            mutedAgents: SettingsModel.sortedMuted([.gemini, .pi]),
             hooksStatus: HooksSupport.Status.installed([.claude, .codex, .gemini]).label(lang: lang),
             hooksInstalled: true,
             hookAgents: SettingsModel.hookAgents(
@@ -287,11 +278,8 @@ enum SurfaceFixtures {
                 installed: [.claude, .codex, .gemini],
                 present: [.claude, .codex, .cursor, .gemini]
             ),
-            updateCheckEnabled: true,
-            updateStatus: String(format: L10n.t(.updateAvailable, lang), "23.1.0"),
-            updateAvailable: true,
             version: "Pulse \(PulseVersion.semver) · a1b2c3d · 2026-09-29",
-            buildWarning: L10n.t(.updatePreview, lang),
+            buildWarning: L10n.t(.buildPreview, lang),
             focus: nil
         )
     }
@@ -303,20 +291,6 @@ enum SurfaceFixtures {
         let login = SettingsModel.loginLine(asked: true, state: .requiresApproval)
         model.launchAtLogin = login.isOn
         model.loginNote = login.note
-        return model
-    }
-
-    /// The shortcut control listening: "Type shortcut…" and how to finish.
-    static func settingsShortcutRecording(lang: ResolvedLanguage) -> SettingsModel {
-        var model = settings(lang: lang)
-        model.hotkeyRecording = true
-        return model
-    }
-
-    /// ⌘Space pressed: Spotlight's. Refused, the old shortcut kept.
-    static func settingsShortcutRefused(lang: ResolvedLanguage) -> SettingsModel {
-        var model = settings(lang: lang)
-        model.hotkeyProblem = .cantUse
         return model
     }
 }

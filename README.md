@@ -2,300 +2,93 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`28.0.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v28.0.0) · macOS 14+
+**版本：`29.0.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v29.0.0) · macOS 14+
 
----
+开着 Claude Code 写代码，切去开会，回来发现它二十分钟前就停在一个授权提示上。Pulse 把这件事变成余光可见：
 
-## 它解决什么
+| 灯 | 含义 |
+| --- | --- |
+| 🔴 实心红 | **需要你** —— 阻塞在授权或提问上。点一下：能落到确切的终端就落过去，否则打开这一行的详情 |
+| 🟢 绿环 | 运行中 |
+| 🟠 橙环 | 停滞 —— 报告过自己在干活的会话久无新事件 |
+| ⚪️ 灰 | 空闲、轮到你、最近，或只看到进程（虚线圈） |
 
-开着 Claude Code 写代码，切去开会 / 写文档，回来发现它二十分钟前就停在一个授权提示上。
-Pulse 把这件事变成余光可见：
+回合做完是「轮到你」：托盘头部安静地计数，不变红、不发通知。每个真正的「需要你」只发一条横幅，直接说出被请求
+的那件事（`Bash: npm run build`）；回答、忽略或会话结束时横幅自动撤回。点菜单栏，或在 Spotlight / Raycast 里
+再打开 Pulse，托盘就打开并选中最久的那个等待，一个 ↩ 就到提示。
 
-| 灯 | 含义 | 你该做什么 |
-| --- | --- | --- |
-| 🔴 红 | **需要你** —— 阻塞在授权或提问上 | 点一下：能落到确切的终端就落过去，否则打开托盘里这一行的详情 |
-| 🟢 绿 | 运行中 | 不用管 |
-| ⚪️ 灰 | 空闲、轮到你、只有最近会话，或只看到进程 | 不用管 |
-| 🟠 橙 | 已停滞 —— 报告过自己在干活的会话久无新事件 | 点开看停在哪里 |
-
-**「做完了」不是红灯**：回合结束、停在提示符上等下一句，是「轮到你」——
-托盘头部安静地数「N 轮到你」，行上一个灰色标记，不发通知、不响；你一聚焦或回复它就消失。
-红灯只留给阻塞。新出现的等待让菜单栏的灯**闪一次**，之后常亮，不呼吸。
-
-点开托盘看到的是**一行一个会话**：灯的形状、Agent、项目、任务、时间。灯不只靠颜色 ——
-实心（需要你）、环（运行中）、空心（轮到你、最近）、虚线（只看到进程），菜单栏用同一套形状，
-色弱和灰度下也分得开；**橙色只给停滞**。等待行多一行问题本身，停滞行多一行橙色原因（点名上一步），
-运行中的行安静地多一行**上一步**「Bash · swift test · 12 分钟前」，时间位写本回合跑了多久；
-点一行就前往它的终端，点行尾常驻的「›」（或 ⌥-点）看详情；指针移到哪行，哪行就是选中的那一行；
-列表列出每一个会话，多了就在面板里滚动。其余动作在键盘、右键菜单与详情页里。**不显示 token、上下文、费用、模型或套餐 —— 这是决定**。
-
-**键盘优先**：↑↓ 选择，↩ 前往（没有终端可落就开详情），→ / 空格 详情，← / Esc 返回，
-在列表上 Esc 关面板；⌘D 忽略所选等待，⌘M 静音所选 Agent，⌘R 刷新，⌘, 设置。
-头部一行彩色计数，「⋯」里是设置与退出；同一时间最多一条提示；面板开着时行的顺序不动。
-
-**每个颜色都说得清来历**：鼠标停在菜单栏图标上，提示用一句话写出决定颜色的规则；
-详情页写出这一行为什么是这个状态、从什么时候起，最近几步，Agent 最后说的话与它自己报的错误。
-
-权限通知直接说出被请求的那件事（`Bash: npm run build`，命令里的凭据仍被抹掉）。
-
-**只做灯**：一个状态灯应该看着编排器，而不是成为编排器 —— 不派活、不管会话、不跑检查、
-不替你在终端里打字，也不在托盘里回答授权。静默与声音交给 macOS 的专注模式和通知设置。
-
-**明确不做**：额度 / 费用 / 重置倒计时、桌面宠物、统计大盘、规则引擎 /
-always-allow / 自动批准、对着截断摘要的盲批，以及替你派活、跑检查、打字的编排。
-详见 [`EXPERIENCE.md`](EXPERIENCE.md)。
-
----
+Pulse **只做灯**：不在托盘里回答授权，不派活、不跑检查、不替你打字，不显示 token、费用或模型。
+完整行为见 [`EXPERIENCE.md`](EXPERIENCE.md)。
 
 ## 安装
 
-从 [Releases](https://github.com/hxddh/Pulse/releases) 下载与徽标同版本的 DMG，
-拖进「应用程序」。
+从 [Releases](https://github.com/hxddh/Pulse/releases) 下载 DMG，把 Pulse 拖进「应用程序」。
 
-> **首次打开**：目前的构建是 ad-hoc 签名、未公证（About 标 `preview`，**不是**
-> Gatekeeper-ready），macOS 第一次会拦下它：
+> **首次打开**：目前的构建是 ad-hoc 签名、未公证的 `preview` 包，macOS 第一次会拦下它：
 >
-> 1. 把 Pulse 拖进「应用程序」，双击打开一次；提示无法验证时点「完成」。
-> 2. 打开「**系统设置 → 隐私与安全性**」，滚到「安全性」，点 Pulse 旁边的「**仍要打开**」，
->    输入密码确认。
+> 1. 双击打开一次；提示无法验证时点「完成」。
+> 2. 打开「**系统设置 → 隐私与安全性**」，在「安全性」里点 Pulse 旁边的「**仍要打开**」并确认。
 >
-> 或者在「终端」里只移除 Pulse 自己的下载隔离标记：
+> 或者在「终端」里移除 Pulse 的下载隔离标记：
 > ```bash
 > xattr -dr com.apple.quarantine /Applications/Pulse.app
 > ```
-> macOS 15 起，按住 Control 点「打开」不再能放行未公证的 App。不要全局关闭 Gatekeeper；
-> 配置 Developer ID + 公证之后这一步才不需要，见[发布](#发布)。DMG 内也附有中英文首次
-> 打开说明；每个 Release 的 DMG 旁有一个 `.sha256` 文件，可用
-> `shasum -a 256 -c pulse-x.y.z-macos-PulseBar.dmg.sha256` 校验。
+> macOS 15 起按住 Control 点「打开」不再能放行未公证的 App。不要全局关闭 Gatekeeper。每个 Release 的 DMG 旁有
+> `.sha256`，可用 `shasum -a 256 -c pulse-x.y.z-macos-PulseBar.dmg.sha256` 校验。
 
-**只支持七个主流 Agent**：Claude Code、Codex、Gemini CLI、Copilot CLI、OpenCode、
-Cursor（编辑器与 `cursor-agent` 命令行算同一个）和 Pi。每个都走厂商自己文档里的
-hook / 插件 / 扩展：设置 → Hooks 一键安装，**只装不能改变 Agent 决定的观察型事件**
-（从不装 PreToolUse / beforeShellExecution 这类能拦截的 hook，也从不返回任何决定），
-移除时每个文件**逐字节**还原。原生通路，无需 Python。Codex 与 Cursor 的 hook 只报
-「运行中」与「轮到你」，不会报告它在等你——Pulse 如实这样写，不伪造 Waiting。
-
-状态只来自事件：hook 每报一件事，Pulse 的会话簿（`SessionBook`）就推进一步——
-工作中、需要你、轮到你、已结束。不扫描各 Agent 的会话目录，也不读取受 macOS 保护的
-应用数据，因此不会触发跨应用权限弹窗。进程用 libproc 查看：启动、唤醒、hook 报出一个
-没见过的进程时各看一次，此外从 30 秒起、进程没变化就逐次加倍、最长 5 分钟看一次，
-只为找出 Pulse 启动前就在跑、还没报过事件的会话（显示为「仅进程」，下一步之后显示详情），以及知道会话的
-进程何时退出（退出本身由系统即时通知）。一行说的一切都来自事件：标题是会话第一句说了事的提示，
-上一步是工具事件自带的工具与目标，最后的消息与错误是回合结束事件带的原话。Pulse 不读任何厂商文件
-（没有会话文件、没有 transcript）。查不到进程不会让已有的会话消失。
-
-Pulse 自己不存会话记录：跨重启留下的只有 hook 写的文件与你的 `settings.json`。
-通知记账只在内存里；启动时已经在等的会话不补发通知。
-
-按 → 或行菜单「详情」进入详情页，可查看任务、为什么是这个状态、最近几步、本回合时长、最后的消息与
-最后的错误。Pulse 怎么读每个会话写在设置 → Hooks 的「复制报告」里。
-
-**第一次打开**，托盘顶上是一张设置卡：「在这台 Mac 上找到 Claude、Codex——连接」。一次点击为这台
-Mac 上的 Agent 装上各自的官方 hook，再请 macOS 允许通知，然后列出还剩的事（Codex 要在它自己里运行
-`/hooks` 信任 Pulse；已在运行的会话在它们的下一步之后出现）。
-
-每一个真正的「需要你」只到达一次：新的 Waiting 会话逐一发出系统通知（仅在你允许通知后），多个同时
-到达合成一条；提示窗口当时就在你眼前的先不发，30 秒后还开着、而那个 App 已不在最前才补发一次。
-横幅上有「前往」与「忽略」：「忽略」和托盘里的 ⌘D 一样只是让 Pulse 不再提醒这个等待，从不替你回答 Agent。
-等待被回答、忽略或会话结束时，它的通知从通知中心撤走；点一条已经过时的通知只打开托盘。点菜单栏或按
-全局快捷键都打开托盘并选中最久的那个等待，一个 ↩ 就到提示。通知未启用或被系统关闭时，托盘会显示
-可点击的提示，不会在后台反复索要权限。
-
----
-
-## 它怎么知道
-
-两个来源，**每个只承诺自己能兑现的**：
-
-| 来源 | 手段 | 能回答 |
-| --- | --- | --- |
-| **事件** | 厂商自己的 hook / 插件 / 扩展 | 在干活、在等你、轮到你、结束了；标题、上一步、最后的消息与错误 |
-| **进程** | libproc（启动 / 唤醒 / 未知进程时，及 30 秒起退避到 5 分钟）+ 每个会话进程的退出通知 | 有没有人在跑，会话进程还在不在 |
-
-**诚实规则**（写死的产品约束，见 [`AGENTS.md`](AGENTS.md)）：
-
-- 进程在 ≠ 会话在干活。没有任务标题的 live 行只显示「仅进程」，排在有标题的会话之后。
-- Waiting 只来自厂商 hook 报告的阻塞事件，**绝不推断**。Codex 与 Cursor 的 hook 不报等待，
-  它们明说「不会报告它在等你」，不假装。
-- 会话只在它的进程还活着时算「运行中」；不知道进程的会话安静 30 分钟后转为「最近」，
-  并在「为什么」里说明。
-- Focus 不吹牛：tmux 窗格不需要任何权限就能确切落地；iTerm2 会话与 Terminal.app 标签按
-  会话 id / tty 选中，但要用 AppleScript，默认关闭：是设置 → 通用里的一个开关，打开后第一次前往时
-  macOS 询问一次自动化权限；开关关着而因此只落到 App 时，行上照实说一句并点名那个开关；
-  Ghostty、WezTerm、kitty、Warp 只把 App 带到前台，编辑器
-  打开会话目录。按钮只在能确切落地时写「前往终端」，否则写「打开应用」；没落到就明说。
-  深链边界见 [`docs/landing-hosts.md`](docs/landing-hosts.md)。
+第一次打开时，托盘顶上的设置卡会找到这台 Mac 上的 Agent：点「连接」装上它们各自的官方 hook，再允许通知即可。
 
 ## 支持的 Agent
 
-| Agent | 进程 | 上一步 | Waiting |
-| --- | --- | --- | --- |
-| Claude | libproc | `PostToolUse` | hooks（PermissionRequest、Notification 权限 / 提问；全部 `async`） |
-| Gemini | libproc | `AfterTool` | hooks（Notification `ToolPermission`） |
-| Copilot | libproc | `postToolUse`（`toolArgs`） | hooks（notification `permission_prompt` / `elicitation_dialog`） |
-| OpenCode | libproc | 无（没有工具事件） | plugin（`permission.asked` / `question.asked`） |
-| Pi | libproc | `tool_execution_end`（扩展转发） | extension（`ui_prompt_start` / `ui_prompt_end`） |
-| Codex | libproc | `PostToolUse`（只用 hooks.json） | **none**（hooks 只报运行中与轮到你；它的 PermissionRequest 在自己的自动审查之前触发） |
-| Cursor | libproc* | 无（没有工具事件） | **none**（hooks 只报运行中与轮到你；没有不拦截的等待事件） |
+只支持七个。每个都走厂商自己文档里的 hook / 插件 / 扩展，**只装不能改变 Agent 决定的观察型事件**
+（从不装 PreToolUse 这类能拦截的 hook，也从不返回任何决定），移除时每个文件逐字节还原。
 
-\* Cursor 编辑器与 `cursor-agent` 命令行按进程认，同属 Cursor；编辑器里的会话以 hook 事件为准。
-每个 Agent 装哪些 hook 事件、对应 Pulse 的哪种状态、读的是厂商哪份文档或哪个提交，记在
-[`docs/vendor-formats.json`](docs/vendor-formats.json) 与
-[`docs/attention-protocol.md`](docs/attention-protocol.md)。
+| Agent | 上一步 | 会不会报告「需要你」 |
+| --- | --- | --- |
+| Claude Code | `PostToolUse` | 会（PermissionRequest、权限 / 提问通知） |
+| Gemini CLI | `AfterTool` | 会（`ToolPermission` 通知） |
+| Copilot CLI | `postToolUse` | 会（`permission_prompt` / `elicitation_dialog`） |
+| OpenCode | — | 会（插件：`permission.asked` / `question.asked`） |
+| Pi | `tool_execution_end` | 会（扩展：`ui_prompt_start`） |
+| Codex | `PostToolUse` | **不会** —— 它的 PermissionRequest 在自己的自动审查之前触发，装了就是假等待 |
+| Cursor（编辑器与 `cursor-agent`） | — | **不会** —— 没有不拦截的等待事件 |
 
-这张表的 Waiting 一列由 `scripts/catalog_check.py` 对着 `AgentCatalog.swift` 校验，
-不一致 CI 就红——它是承诺，不是宣传。
+不会报告的两个只显示「运行中」与「轮到你」，Pulse 如实这样写，不伪造红灯。每个事件装在哪、变成什么、出处在哪，
+见 [`docs/vendor-formats.md`](docs/vendor-formats.md)。
 
-设置 → Hooks 就是诊断：这台 Mac 上的每个 Agent 一行，写出 hook 装没装（装失败就写原因）、
-最近一次事件是多久前，缺的给一个安装按钮；不在这台 Mac 上的 Agent 合成一行。
-进程命中不会把完整命令行、参数或私有路径带进 UI。
+## 隐私
 
-名单就是这七个；Pulse 只读它们自己的 hook 事件（[`docs/attention-bridge.md`](docs/attention-bridge.md)、
-[`docs/vendor-formats.md`](docs/vendor-formats.md)），不接受别的上报方式。
-
-**图标**：七个 Agent 都有现成的品牌图标（[Simple Icons](https://simpleicons.org) 等，
-CC0，商标归各自所有者）；没有现成图标的 Agent 由
-[`scripts/make_agent_icons.py`](scripts/make_agent_icons.py) 画成几何标记——**那是 Pulse
-自己的图形，不是厂商的商标**。
-`--check` 是门禁：新增 Agent 若没有图标，CI 就红，不会悄悄画出一个空白图标。
-
+- **不连网络。** Pulse 不检查更新、不上报任何东西；设置里的「版本发布…」只是在浏览器里打开 Releases 页。
+- **只读事件。** 状态与一行说的一切都来自 hook 写进本地事件日志
+  `~/Library/Application Support/Pulse/events.tsv` 的行（0600，超过 1 MiB 自动压缩）。它装着你敲过的提示，
+  所以只有你能读。Pulse 不读各 Agent 的会话文件或 transcript，不读受保护的应用数据。
+- 进程用 libproc 查看，只为找出还没报过事件的会话和知道会话何时退出；完整命令行不会进入界面。
+- 「复制报告」只在你点击时写进剪贴板，不含路径、提示或项目。
 
 ## 卸载
 
-设置底部的「**卸载 Pulse…**」会先列出要移除的东西，确认后依次：经安装器移除每个 Agent 的
-Pulse hook（每个文件逐字节还原；之后改过的只删 Pulse 的条目），注销登录项，删除
-`~/Library/Application Support/Pulse`（事件日志、设置、hook 启动器与安装记录），然后退出并
-在访达里显示 Pulse.app —— 把它拖进废纸篓即可。有 hook 没能移除时它会停下、什么都不删，
-设置 → Hooks 写着原因。
-
-手动卸载：先在设置 → Hooks 点「全部移除」，再退出 Pulse，然后
+1. 设置 → Hooks →「**全部移除**」：逐字节还原每个 Agent 的配置。
+2. 右键菜单栏图标 →「退出 Pulse」，把 Pulse.app 拖进废纸篓。
+3. 删除 Pulse 的文件夹（事件日志、设置、hook 启动器与安装记录）：
 
 ```bash
 rm -rf ~/Library/Application\ Support/Pulse
-rm -rf /Applications/Pulse.app
 ```
 
-并在「系统设置 → 通用 → 登录项」里移除 Pulse（若开过「登录时打开」）。通知权限条目留在
-「系统设置 → 通知」里，由 macOS 管理。
-
----
-
-## 配置
-
-设置是一页，全部即时生效，从别处跳进来会滚到对应的那一节：
-
-- **通用** —— 登录时打开（macOS 自己的登录项，待批准时给出「打开登录项」）、语言（跟随系统 /
-  English / 简体中文）、前往确切的 Terminal 或 iTerm 标签页（终端自动化，默认关；前往只落到 App 时，
-  那句提示旁的「开启」改的就是这个开关）
-- **快捷键** —— 唤出面板，和点菜单栏是同一个手势：点「录制快捷键」再按下一个带 ⌘、⌃ 或 ⌥ 的组合
-  （Esc 取消，Delete 清除；默认关闭）；macOS 自己占着或注册不上的组合会直说不能用，不需要任何隐私权限
-- **通知** —— 授权状态、「Agent 需要我时通知」、静音的 Agent（每个带 ✕）；声音与安静时段交给
-  macOS 的通知设置与专注模式，静音某个 Agent 在行菜单里（或按 ⌘M）
-- **Hooks** —— 七个 Agent 各自的官方 hook / 插件 / 扩展（全部安装 / 全部移除）；这台 Mac 上的每个
-  Agent 一行：已安装、未安装或安装失败，以及「最近事件 12 秒前」，各带自己的「安装」或「移除」；Codex 与 Cursor 注明
-  「不会报告它在等你」；不在这台 Mac 上的合成一行；「复制报告」给出一份纯文本（版本、每个
-  Agent 的 hook 与最近事件、通知授权、终端自动化、快捷键、登录项），不含路径、提示词或会话
-- **更新** —— 检查更新（只问 GitHub 的 Latest；有新版本时打开发布页，在浏览器里下载）
-- 页脚：版本与构建 · 「卸载 Pulse…」
-
-省电是硬约束：没有固定的探测间隔。事件文件一变就处理；此外只有一个便宜的时钟
-（托盘打开或刚出现等待时 5s，否则 60s，没有会话时停表）和按需退避的进程查看（30 秒起，
-最长 5 分钟），低电量模式加倍，**息屏或锁屏直接停表**。
-
----
+开过「登录时打开」的话，在「系统设置 → 通用 → 登录项」里也移除 Pulse。
 
 ## 开发
 
 ```bash
-cd PulseBar && swift run PulseBar   # 开发壳，关于区显示 x.y.z-dev
-cd PulseBar && swift test           # 测试数量以 SwiftPM / CI 当次输出为准
-./scripts/qa_captures.sh            # 构建并运行 PulseQA，把表面与状态夹具渲染成 PNG
+cd PulseBar && swift test
+bash scripts/gates.sh            # 源码门禁
+./PulseBar/Scripts/package.sh    # 打包，并检查 .app 与 --selftest
 ```
 
-截图、夹具与预览窗口都在单独的 `PulseQA` 可执行文件里，出厂的 Pulse.app 只含 `PulseBar`。
-
-源码门禁只有一个入口，从仓库根目录跑（`package.sh`、`release.sh` 和 CI 都调用它）：
-
-```bash
-bash scripts/gates.sh                       # 版本、Agent 目录、图标、外观、表面、场景
-python3 scripts/package_check.py            # 打出来的 .app 能找到自己的资源
-```
-
-`gates.sh` 只读源码，`package_check.py` 读**构建产物**（资源包、以及二进制里没有 QA 代码）——
-打包这一步出的错，源码与测试都看不见，只有对着 `.app` 才看得见。
-
-但门禁校验的是「我们以为运行时去哪找资源」，而那个假设本身就是当初错的地方。
-所以还要让 app 自己回答：
-
-```bash
-zig-out/package/Pulse.app/Contents/MacOS/PulseBar --selftest
-```
-
-用真实二进制、在真实 `.app` 里跑一遍资源解析，逐项报告。在 AppKit 初始化之前返回，
-无头环境也能跑。`package.sh` 打完包会自动执行。
-
-打包：
-
-```bash
-./PulseBar/Scripts/package.sh        # 结尾自动跑 package_check + --selftest
-open zig-out/package/Pulse.app
-```
-
-架构见 [`AGENTS.md`](AGENTS.md) 的 Architecture 与 [`docs/architecture.md`](docs/architecture.md)。
-
-## 发布
-
-先在 `CHANGELOG.md` 写好 `## x.y.z` 段落 —— 没有它所有路径都会拒绝。
-
-```bash
-./scripts/release.sh X.Y.Z            # 预演：改版本、跑门禁、给出 diff
-./scripts/release.sh X.Y.Z --commit   # 提交（标题带 [release] 标记）
-./scripts/release.sh X.Y.Z --commit --prerelease   # 标题带 [release] [prerelease]：发成预发布
-git push                               # CI 构建、打 tag、发布
-```
-
-**预发布**（`[prerelease]`）与正式发布是同一个 DMG、同一份说明，但在 GitHub 上标为 pre-release、
-不设为 Latest：应用内的「检查更新」与 GitHub Latest 都看不见它。在真机上跑通之后，由维护者在
-GitHub 上编辑这个 Release：取消「Set as a pre-release」、勾上「Set as the latest release」。
-
-**tag 由 CI 用自己的 `contents: write` token 创建**，发布不依赖任何人的本地推送权限。
-已发布过的版本会被拒绝重复发布，重推是安全的。
-
-发布通道两态：`preview`（没有公证的一切构建）→ `stable`（公证并 staple 成功）。
-仓库配置齐 `PULSE_CERTIFICATE_P12`（base64）、`PULSE_CERTIFICATE_PASSWORD`、
-`PULSE_SIGN_IDENTITY`、`PULSE_NOTARY_KEY_P8`（base64）、
-`PULSE_NOTARY_KEY_ID` 和 `PULSE_NOTARY_ISSUER_ID` 时，CI 导入临时 keychain，
-公证并 staple App 与 DMG，再以 `spctl` 验收，并在 Info.plist 写入 `stable`。
-**任一凭据缺失时仍发布**（正式发布设为 GitHub Latest，跟当前 semver），产物为 ad-hoc /
-未公证，About 保持 `preview` —— **绝不能自称 stable / Gatekeeper-ready**。每个 Release 都附
-DMG 的 `.sha256`。
-
-> 应用内的「检查更新」只读 `/releases/latest`，走匿名请求 —— 仓库是 public，所以直接可用。
-> 若 fork 成私有仓库，需用 `Info.plist` 的 `PulseUpdateFeed` 指向一个可匿名访问的 feed，
-> 否则 GitHub 会返回 404。
-
----
-
-## 贡献
-
-欢迎 issue 和 PR。动手前请先读 [`AGENTS.md`](AGENTS.md) 里的**不变量**——
-那几条是产品决策（不假装 Waiting、不做配额 HUD、不在托盘里批准），
-不是可以顺手改掉的偏好。
-
-改动请保证 `swift test` 与 `bash scripts/gates.sh` 通过；CI 会替你再跑一遍。
+接手与发布流程见 [`AGENTS.md`](AGENTS.md)，改动历史见 [`CHANGELOG.md`](CHANGELOG.md)。动手前请先读 AGENTS.md
+里的不变量 —— 那是产品决策，不是偏好。
 
 ## 许可
 
-[MIT](LICENSE)。
-
-## 文档
-
-| 文件 | 内容 |
-| --- | --- |
-| [`AGENTS.md`](AGENTS.md) | 接手须知：不变量、门禁、发布流程 |
-| [`EXPERIENCE.md`](EXPERIENCE.md) | 体验规格 —— UI 改动的验收依据 |
-| [`docs/architecture.md`](docs/architecture.md) | 谁持有什么状态、进程怎么读、版本身份（数据流在 `AGENTS.md`） |
-| [`docs/attention-bridge.md`](docs/attention-bridge.md) | hook 安装政策：只装观察型事件、逐字节可逆、卸载 |
-| [`docs/attention-protocol.md`](docs/attention-protocol.md) | Attention Protocol v5（事件日志 `events.tsv`）契约 |
-| [`docs/vendor-formats.md`](docs/vendor-formats.md) | 每个 Agent 的事实：装在哪、每个事件变成什么、出处 |
-| [`CHANGELOG.md`](CHANGELOG.md) | 每个版本改了什么 |
+[MIT](LICENSE)。Agent 图标来自 [Simple Icons](https://simpleicons.org) 等（CC0，商标归各自所有者）；没有现成
+图标的由 `scripts/make_agent_icons.py` 画成几何标记，那是 Pulse 自己的图形。

@@ -40,8 +40,6 @@ struct TrayState: Equatable {
     struct Context {
         var nowMs: Int64
         var lang: ResolvedLanguage = .en
-        /// The terminal-automation setting: AppleScript landing steps allowed.
-        var allowAutomation = false
         /// Seconds of silence that make a working session stalled; 0 off.
         var stalledSeconds: Double = AgentRow.stalledSeconds
         /// The previous projection's open waits (`waitingSince`): a row not
@@ -52,7 +50,7 @@ struct TrayState: Equatable {
     /// Every row, in the tray's order (`snapshot.rows` carries the same
     /// list: the tray lists every session and scrolls).
     var rows: [AgentRow] = []
-    /// The glance, the menu-bar title and tooltip, the counts, the window.
+    /// The lamp, the menu-bar title and tooltip, the counts.
     var snapshot = PulseSnapshot()
     /// The tick's tier.
     var activity: ProbeSchedule.Activity = .empty
@@ -115,7 +113,7 @@ struct TrayState: Equatable {
             row.sessionID = session.session
             row.attentionSession = session.session
             row.cwd = session.cwd
-            row.project = AgentRow.shortProject(session.cwd)
+            row.project = TitleHeuristics.shortProject(session.cwd)
             row.pid = Int(session.pid)
             row.liveProcess = live
             row.startedMs = session.startedMs
@@ -152,7 +150,7 @@ struct TrayState: Equatable {
             }
             row.landing = landing
             row.landingPlan = LandingPlan.make(
-                handle: landing, cwd: row.cwd, allowAutomation: context.allowAutomation,
+                handle: landing, cwd: row.cwd,
                 pid: live ? session.pid : 0, hostApp: hit?.hostApp
             )
 
@@ -174,7 +172,7 @@ struct TrayState: Equatable {
             guard !owned else { continue }
             var row = AgentRow(rowKey: RowIdentity.process(agent: hit.agent, pid: Int(hit.pid)), agent: hit.agent)
             row.cwd = hit.cwd
-            row.project = AgentRow.shortProject(hit.cwd)
+            row.project = TitleHeuristics.shortProject(hit.cwd)
             row.pid = Int(hit.pid)
             row.liveProcess = true
             row.landing = LandingHandle(
@@ -182,7 +180,7 @@ struct TrayState: Equatable {
                 term: hit.viaWarp ? "WarpTerminal" : ""
             )
             row.landingPlan = LandingPlan.make(
-                handle: row.landing, cwd: row.cwd, allowAutomation: context.allowAutomation,
+                handle: row.landing, cwd: row.cwd,
                 pid: hit.pid, hostApp: hit.hostApp
             )
             row.startedMs = hit.startedMs
@@ -316,57 +314,37 @@ struct TrayState: Equatable {
         return rows.isEmpty ? .empty : .recent
     }
 
-    /// The glance, the counts, the tooltip and the lamp for a row list.
+    /// The lamp, the menu-bar title, the tooltip and the counts for a row
+    /// list.
     private static func snapshot(
         rows all: [AgentRow],
         context: Context
     ) -> PulseSnapshot {
         let lang = context.lang
         let counts = Counts(rows: all)
-        let waitingCount = counts.blocked
 
         var snap = PulseSnapshot()
         snap.counts = counts
         snap.rows = all
-        snap.totalCount = all.count
-
-        // The lamp. Red when anything is blocked; orange only for a stalled
-        // session; green for a running session; grey otherwise — a finished
-        // turn is grey even while its process lives, and a process with no
-        // session is grey, never orange and never green.
-        if waitingCount > 0 {
-            snap.glance = .waiting
-        } else if counts.stalled > 0 {
-            snap.glance = .stalled
-        } else if counts.running > 0 {
-            snap.glance = .running
-        } else {
-            snap.glance = .idle
-        }
 
         // The menu bar carries a title only when something is blocked: how
-        // many, and how long the oldest has waited. A wait younger than five
-        // seconds says nothing the lamp has not.
-        if waitingCount > 0 {
-            let oldestStamp = all.compactMap { $0.wait?.sinceMs }.filter { $0 > 0 }.min()
-            let oldest = oldestStamp.map { max(0, Double(context.nowMs - $0) / 1000.0) } ?? 0
-            let raw = oldest > 0 ? DurationFormat.label(seconds: oldest, lang: lang) : ""
-            let dur = raw == L10n.t(.durNow, lang) ? "" : raw
-            snap.title = dur.isEmpty
-                ? "\(waitingCount)"
-                : GlanceTitle.fit("\(waitingCount) · \(dur)", "\(waitingCount)")
+        // many, and how long the oldest has waited ("2 · 4m"; "2·4分钟" when
+        // the spaced form does not fit). A wait younger than a minute says
+        // nothing the lamp has not.
+        if counts.blocked > 0 {
+            let count = "\(counts.blocked)"
+            let oldest = all.compactMap { $0.wait?.sinceMs }.filter { $0 > 0 }.min()
+            let seconds = oldest.map { Double(context.nowMs - $0) / 1000 } ?? 0
+            let age = L10n.duration(seconds, lang)
+            snap.title = seconds < 60 ? count : GlanceTitle.fit("\(count) · \(age)", "\(count)·\(age)", count)
         }
 
-        snap.headerTitle = counts.summary(lang)
-
-        // One sentence for the tooltip and VoiceOver: the rule that set the
-        // lamp. The tray names the sessions.
-        let rule = lampRule(counts: counts, glance: snap.glance)
+        // The lamp, and one sentence for the tooltip and VoiceOver: the rule
+        // that set it. The tray names the sessions.
+        let rule = lampRule(counts: counts)
+        snap.lamp = Lamp(rule)
         snap.tooltip = lampSentence(rule, lang: lang)
-        snap.lamp = LampFace.glance(snap.glance, processOnly: rule == .processOnly)
-        snap.accessibilityLabel = snap.glance == .idle
-            ? L10n.t(snap.glance.accessibilityKey, lang)
-            : snap.tooltip
+        snap.accessibilityLabel = snap.lamp.isGrey ? L10n.t(.a11yIdle, lang) : snap.tooltip
         return snap
     }
 
@@ -378,20 +356,19 @@ struct TrayState: Equatable {
         case blocked, stalled, running, processOnly, yourTurn, recent, idle
     }
 
-    /// A grey lamp says the most useful thing that is true: a finished turn,
-    /// then a live process Pulse can only see from outside, then recent
-    /// sessions.
-    static func lampRule(counts: Counts, glance: GlanceKind) -> LampRule {
-        switch glance {
-        case .waiting: return .blocked
-        case .stalled: return .stalled
-        case .running: return .running
-        case .idle:
-            if counts.yourTurn > 0 { return .yourTurn }
-            if counts.processOnly > 0 { return .processOnly }
-            if counts.recent > 0 { return .recent }
-            return .idle
-        }
+    /// Red when anything is blocked; orange only for a stalled session;
+    /// green for a running one; grey otherwise — and a grey lamp says the
+    /// most useful thing that is true: a finished turn (grey even while its
+    /// process lives), then a live process Pulse can only see from outside
+    /// (never orange, never green), then recent sessions.
+    static func lampRule(counts: Counts) -> LampRule {
+        if counts.blocked > 0 { return .blocked }
+        if counts.stalled > 0 { return .stalled }
+        if counts.running > 0 { return .running }
+        if counts.yourTurn > 0 { return .yourTurn }
+        if counts.processOnly > 0 { return .processOnly }
+        if counts.recent > 0 { return .recent }
+        return .idle
     }
 
     /// The one line the tooltip and VoiceOver say — the status item's whole
@@ -430,19 +407,6 @@ struct TrayState: Equatable {
                 case .recent: recent += 1
                 }
             }
-        }
-
-        /// "1 needs you · 2 running · 1 recent", or "No coding agents".
-        func summary(_ lang: ResolvedLanguage) -> String {
-            func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-            var bits: [String] = []
-            if blocked > 0 { bits.append("\(blocked) \(t(blocked == 1 ? .waiting1 : .waitingN))") }
-            if running > 0 { bits.append("\(running) \(t(.runningN))") }
-            if stalled > 0 { bits.append("\(stalled) \(t(.stalledN))") }
-            if yourTurn > 0 { bits.append("\(yourTurn) \(t(.yourTurnN))") }
-            if processOnly > 0 { bits.append("\(processOnly) \(t(.processOnlyN))") }
-            if recent > 0 { bits.append(recent == 1 ? t(.recent1) : "\(recent) \(t(.recentN))") }
-            return bits.isEmpty ? t(.noAgents) : bits.joined(separator: " · ")
         }
     }
 }

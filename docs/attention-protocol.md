@@ -1,4 +1,4 @@
-# Attention Protocol v5
+# Attention Protocol v6
 
 The contract between each supported agent's hook and Pulse's lamp: one
 append-only event log.
@@ -7,7 +7,7 @@ append-only event log.
 installer.
 **Runtime path:** `~/Library/Application Support/Pulse/events.tsv`
 (`PULSE_HOME` moves it). One file; nothing else is read.
-**Writers:** `pulse-hook <agent> <event>` → `PulseBar --hook` (native), and
+**Writers:** `pulse-hook <agent> <event>` (the app's native `--hook`), and
 the app's own `done` for a dismissal (`tool` = `:dismiss`). Nothing else
 writes it.
 **Swift source of truth:** `AttentionProtocol` / `AttentionRecord` (PulseCore),
@@ -15,12 +15,8 @@ writes it.
 `PulseHookReceiver` (the per-agent adapters), `HookContract` in
 `AgentCatalog.swift` (what is installed).
 
-Companion:
-
-- Product policy (what is installed, how it is removed) → [`attention-bridge.md`](attention-bridge.md)
-- Per agent — what each vendor event becomes, and where each contract was
-  read → [`vendor-formats.md`](vendor-formats.md) and
-  [`vendor-formats.json`](vendor-formats.json)
+What is installed, how it is removed, and what each vendor event becomes:
+[`vendor-formats.md`](vendor-formats.md).
 
 ## The file
 
@@ -28,10 +24,15 @@ UTF-8 TSV, one event per line, in the order the hooks wrote them. The first
 line is a header naming the protocol and the file's **generation**:
 
 ```text
-# pulse-events v5 <generation> (agent\tkind\tms\tmessage\tsession\tcwd\tfront\tpid\t-\tlanding\ttool)
-<agent>\t<kind>\t<unix_ms>\t<message>\t<session>\t<cwd>\t<front>\t<pid>\t\t<landing>\t<tool>
+# pulse-events v6 <generation> (agent\tkind\tms\tmessage\tsession\tcwd\tfront\tpid\tlanding\ttool)
+<agent>\t<kind>\t<unix_ms>\t<message>\t<session>\t<cwd>\t<front>\t<pid>\t<landing>\t<tool>
 ```
 
+- **Only a v6 log is read.** A file whose first line is not a
+  `# pulse-events v6 ` header (an older protocol, or no header) is treated
+  as absent: a read finds it empty, and the next writer — the app's
+  `ensureExists` at launch, or a hook's append — empties it under its lock
+  and starts a fresh v6 log. It is never read and never migrated.
 - **Append only.** A writer opens the file `O_APPEND`, takes an exclusive
   `flock`, and writes one whole line. A file that does not exist (or is
   empty) gets a header with a new generation first. A file whose last byte
@@ -80,11 +81,8 @@ line is a header naming the protocol and the file's **generation**:
   every projection after it can notify. Everything the app shows about a
   session — its steps, its title, its turn's clock — is rebuilt by this
   replay and kept nowhere else.
-- A v4 `attention.tsv` and the `activity.d/` spool are deleted at launch,
-  never read.
-
-**Every line has all eleven columns.** A v4 (ten-column) or older line is not
-read — no compatibility. Leave a column empty when you have nothing for it;
+**Every line has exactly ten columns.** A line with any other count is not
+read. Leave a column empty when you have nothing for it;
 the trailing tabs are part of the record.
 
 | Column | Rules |
@@ -97,8 +95,7 @@ the trailing tabs are part of the record.
 | `cwd` | Absolute project path; empty allowed |
 | `front` | `1` when the prompt's own window was frontmost as the event was raised, `0` when not, empty when unknown. Only written for blocked kinds, `turn` and `idle` |
 | `pid` | The agent process the hook ran under: the first ancestor of the hook whose argv matches the agent's catalog process rule. Never the hook's direct parent (usually a `sh -c` that exits with the hook) and never `1` — empty when unknown |
-| (reserved) | Written empty, never read. It once named a transcript file; Pulse reads no vendor file |
-| `landing` | Where the session can be reached, most specific first, `;`-separated: `tmux:%3`, `tmuxsock:<TMUX socket path>`, `iterm:<ITERM_SESSION_ID>`, `tty:/dev/ttys004`, `term:<TERM_PROGRAM>`, `app:<__CFBundleIdentifier>`; unknown keys are ignored (`docs/landing-hosts.md`) |
+| `landing` | Where the session can be reached, most specific first, `;`-separated: `tmux:%3`, `tmuxsock:<TMUX socket path>`, `iterm:<ITERM_SESSION_ID>`, `tty:/dev/ttys004`, `term:<TERM_PROGRAM>`, `app:<__CFBundleIdentifier>`; unknown keys are ignored (`architecture.md`, "Landing") |
 | `tool` | The tool a `tool` line ran, or the tool a block is about (`Bash`, `AskUserQuestion`); on a `turn` line, `error` when the turn ended on an error; on a `tool` line, `:status` when the event says only that work goes on (a status, a retry, a recoverable error) — never a step, never an answer; on a `done` line, `:dismiss` when the app wrote it (a dismissal in Pulse); empty when the event names none. Pulse's own markers begin with `:`, which no vendor tool name does: the receiver drops a leading `:` from a vendor's tool name, so a tool never spells a marker |
 
 Readers skip blank lines, `#` comments, and any other kind.
@@ -158,11 +155,8 @@ guess from free text.
   `Tool: target` ask) and the tool line names one, only the same tool
   answers it — a parallel tool finishing does not. A `:status` line never
   answers it.
-- A `tool` line whose `tool` is the bare word `status` from Copilot or
-  OpenCode is read as `:status`: an earlier receiver wrote the marker that
-  way for those two agents only, and a replayed log must not turn it into a
-  step or an answer. It is never written; from any other agent `status` is
-  a tool.
+- Only `:status` is the status marker: a `tool` line whose `tool` is the
+  bare word `status` is a tool, from any agent.
 - A re-raise of the same kind within **20 s** is the same block (Claude's
   `PermissionRequest`, then its `Notification`): it keeps the first clock and
   the more specific ask — a command, a path or a question beats a bare tool
@@ -192,17 +186,7 @@ guess from free text.
 
 ## Versioning
 
-- v1–v4: see git history. v3 split blocked / your turn / resolved; v4 added
-  `pid`, a transcript column, `landing` and the lifecycle kinds.
-- **v5**: one append-only event log (`events.tsv`) replaces `attention.tsv`
-  and the per-session activity spool; a generation in the header; an
-  eleventh column, `tool`; a `tool` kind for activity. v4 lines are not read
-  and the v4 files are deleted at launch. The ninth column is reserved —
-  written empty, never read — so a live log keeps its format (no new
-  protocol version, no log deleted); `tool` = `error` on a `turn` line marks
-  a failed turn, `tool` = `:status` on a `tool` line marks work that is
-  not a tool, and `tool` = `:dismiss` on a `done` line marks the app's own
-  dismissal (a reader that does not know them reads a tool named so, and a
-  `done` like any other).
-  Only the receiver and the app write the log; a kind is read only as
-  spelled in the table above.
+The protocol is v6: ten columns, and a log whose header is not v6 is treated
+as absent (emptied, started over, never read). A change to the columns, the
+kinds or the reserved `tool` markers is a new protocol version and a major
+release.

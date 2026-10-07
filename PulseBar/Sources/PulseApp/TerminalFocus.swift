@@ -114,7 +114,8 @@ enum TerminalFocus {
         return false
     }
 
-    /// Terminal / iTerm tab select — only called after Automation opt-in + click.
+    /// Terminal / iTerm tab select — only on a click; macOS asks its own
+    /// Automation question the first time, and a denial reads as no match.
     ///
     /// Only a terminal that is already running is asked: `tell application`
     /// launches an app that is not, so a click meant for iTerm used to open
@@ -196,7 +197,7 @@ enum TerminalFocus {
     }
 
     /// iTerm2's session by `unique id` (the part of `ITERM_SESSION_ID` after
-    /// the colon) — only called after Automation opt-in + click, only when
+    /// the colon) — only on a click, only when
     /// iTerm is running; activates only on a match.
     static func iTermSessionScript(uniqueID: String) -> String {
         let escaped = uniqueID.replacingOccurrences(of: "\\", with: "\\\\")
@@ -243,10 +244,10 @@ enum TerminalFocus {
     }
 }
 
-/// Reveal the app-owned panel directly.
+/// Reveal the tray directly.
 ///
-/// This intentionally has no Accessibility or Apple Events fallback. The
-/// shortcut and notification actions call the panel controller owned by this
+/// This intentionally has no Accessibility or Apple Events fallback. A
+/// reopen and a notification action call the status item owned by this
 /// process, so they cannot trigger an Automation permission prompt.
 ///
 /// Prefer `StatusStore.requestTrayReveal(rowKey:)` when a concrete Waiting row
@@ -254,14 +255,7 @@ enum TerminalFocus {
 enum TrayReveal {
     static func show() {
         Task { @MainActor in
-            StatusPanelController.shared?.show()
-        }
-    }
-
-    /// The global shortcut — the same gesture as a menu-bar click.
-    static func toggle() {
-        Task { @MainActor in
-            StatusPanelController.shared?.toggleFromHotkey()
+            StatusItemController.shared?.show()
         }
     }
 }

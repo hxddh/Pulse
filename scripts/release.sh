@@ -16,7 +16,7 @@
 # token, so publishing does not need tag-write rights on your account.
 #
 # --prerelease (with --commit) publishes the version as a GitHub prerelease:
-# the in-app update check and GitHub Latest do not see it until the owner
+# GitHub Latest does not show it until the owner
 # promotes it on GitHub after a real-Mac smoke run. A tag push is always a
 # full release.
 set -euo pipefail

@@ -9,8 +9,8 @@ name: Release
 # (3) exists because tag pushes need tag-write credentials that a CI/agent
 # session may not have. `[release] [prerelease]` (scripts/release.sh
 # --prerelease) publishes the same DMG and notes as a GitHub *prerelease*,
-# never marked Latest: `/releases/latest` — what the in-app update check
-# reads — does not see it until the owner promotes it on GitHub after a
+# never marked Latest: GitHub's Latest does not show it until the owner
+# promotes it on GitHub after a
 # real-Mac smoke run (untick "pre-release", set as latest), or a push to main
 # with [promote] in the message promotes the current version's prerelease
 # (the `promote` job below) without rebuilding anything. The marker keeps it explicit — no push ever releases by
@@ -205,8 +205,8 @@ jobs:
               echo
               echo "### Prerelease"
               echo
-              echo "Not yet verified on a real Mac. Pulse's update check and GitHub **Latest**"
-              echo "do not offer this version until it is promoted."
+              echo "Not yet verified on a real Mac. GitHub **Latest** does not offer this"
+              echo "version until it is promoted."
             } >> /tmp/notes.md
           fi
           if [[ "${{ steps.signing.outputs.sign_identity }}" == "-" || -z "${{ steps.signing.outputs.notary_profile }}" ]]; then

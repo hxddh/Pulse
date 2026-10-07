@@ -8,13 +8,13 @@ import XCTest
 // Attention: the protocol read into the session book, the hook receiver,
 // the event log, the hooks installer.
 
-/// The event log as the book reads it: every complete v5 line, in file
+/// The event log as the book reads it: every complete v6 line, in file
 /// order.
 final class AttentionBookTests: XCTestCase {
     private let now: Int64 = 1_700_000_000_000
 
-    /// Rows are padded to the eleven v5 columns (front, pid, the reserved
-    /// column, landing and tool empty).
+    /// Rows are padded to the ten v6 columns (front, pid, landing and tool
+    /// empty).
     private func tsv(_ rows: [[String]]) -> String {
         rows.map { row in
             (row + Array(repeating: "", count: max(0, AttentionProtocol.columnCount - row.count)))
@@ -56,9 +56,8 @@ final class AttentionBookTests: XCTestCase {
         XCTAssertEqual(state(b, "claude|s1"), "working")
     }
 
-    /// Dismissing a session-less hook wait once wrote a session-less
-    /// `done`, which cleared every session of that agent. A `done` clears
-    /// exactly what it names: an empty session, only session-less entries.
+    /// A `done` clears exactly what it names: an empty session, only the
+    /// session-less entries — never every session of that agent.
     func testASessionlessDoneClearsOnlyTheSessionlessEntry() {
         let b = book(tsv([
             ["claude", "permission", "\(now - 5000)", "a", "s1", "/p"],
@@ -90,7 +89,7 @@ final class AttentionBookTests: XCTestCase {
     func testTheLastFiveToolStepsAreKept() throws {
         var rows = [["claude", "working", "\(now - 60_000)", "Fix the login test", "s1", "/p"]]
         for index in 0..<7 {
-            rows.append(["claude", "tool", "\(now - 50_000 + Int64(index) * 1000)", "target \(index)", "s1", "/p", "", "", "", "", "Tool\(index)"])
+            rows.append(["claude", "tool", "\(now - 50_000 + Int64(index) * 1000)", "target \(index)", "s1", "/p", "", "", "", "Tool\(index)"])
         }
         rows.append(["claude", "tool", "\(now - 1000)", "", "s1", "/p"])
         let session = try XCTUnwrap(book(tsv(rows)).sessions["claude|s1"])
@@ -124,7 +123,7 @@ final class AttentionBookTests: XCTestCase {
         let failed = tsv([
             ["claude", "turn", "\(now - 9000)", "All green.", "s1", "/p"],
             ["claude", "working", "\(now - 8000)", "Ship it", "s1", "/p"],
-            ["claude", "turn", "\(now - 5000)", "API Error: Rate limit reached", "s1", "/p", "", "", "", "", AttentionRecord.errorTool],
+            ["claude", "turn", "\(now - 5000)", "API Error: Rate limit reached", "s1", "/p", "", "", "", AttentionRecord.errorTool],
         ])
         let session = try XCTUnwrap(book(failed).sessions["claude|s1"])
         XCTAssertEqual(session.lastError, "API Error: Rate limit reached")
@@ -165,11 +164,8 @@ final class AttentionBookTests: XCTestCase {
         XCTAssertEqual(TrayState.state(of: session, nowMs: now + TrayState.idleBoundMs + 1), .recent)
     }
 
-    func testSubagentEventsNeverRaiseWaiting() {
-        XCTAssertTrue(book(tsv([["claude", "subagent_start", "\(now)", "", "s1", "/p"]])).sessions.isEmpty)
-    }
-
     func testUnknownKindNeverRaisesWaiting() {
+        XCTAssertTrue(book(tsv([["claude", "subagent_start", "\(now)", "", "s1", "/p"]])).sessions.isEmpty)
         let b = book(tsv([["gemini", "totally_fake_kind", "\(now)", "nope", "s1", "/p"]]))
         XCTAssertTrue(b.sessions.isEmpty, "free-text kinds must never light Waiting")
     }
@@ -186,22 +182,18 @@ final class AttentionBookTests: XCTestCase {
         XCTAssertTrue(book("# header\nclaude\tpermission\n\n").sessions.isEmpty)
     }
 
-    /// v5 needs all eleven columns. A v4 (ten-column) or v3 line is
-    /// not read.
-    func testAnOlderShorterLineIsNotRead() throws {
-        let v1 = "claude\tpermission\t\(now - 1000)\tapprove\ts1\t/p\n"
-        let v3 = "claude\tpermission\t\(now - 1000)\tapprove\ts1\t/p\t\t\n"
-        let v4 = "claude\tpermission\t\(now - 1000)\tapprove\ts1\t/p\t\t4242\t/t.jsonl\ttmux:%3\n"
-        XCTAssertTrue(book(v1).sessions.isEmpty)
-        XCTAssertTrue(book(v3).sessions.isEmpty)
-        XCTAssertTrue(book(v4).sessions.isEmpty)
-        // The ninth column is reserved: whatever an older writer put there
-        // is not read.
-        let v5 = "claude\tpermission\t\(now - 1000)\tBash: ls\ts1\t/p\t\t4242\t/t.jsonl\ttmux:%3\tBash\n"
-        let session = try XCTUnwrap(book(v5).sessions["claude|s1"])
+    /// v6 is exactly ten columns. A shorter line, or an eleven-column one,
+    /// is not read.
+    func testALineWithAnotherColumnCountIsNotRead() throws {
+        let short = "claude\tpermission\t\(now - 1000)\tapprove\ts1\t/p\t\t\n"
+        let eleven = "claude\tpermission\t\(now - 1000)\tBash: ls\ts1\t/p\t\t4242\t/t.jsonl\ttmux:%3\tBash\n"
+        XCTAssertTrue(book(short).sessions.isEmpty)
+        XCTAssertTrue(book(eleven).sessions.isEmpty)
+        let v6 = "claude\tpermission\t\(now - 1000)\tBash: ls\ts1\t/p\t\t4242\ttmux:%3\tBash\n"
+        let session = try XCTUnwrap(book(v6).sessions["claude|s1"])
         XCTAssertEqual(session.pid, 4242)
         XCTAssertEqual(session.landing, "tmux:%3")
-        XCTAssertEqual(block(book(v5), "claude|s1")?.tool, "Bash")
+        XCTAssertEqual(block(book(v6), "claude|s1")?.tool, "Bash")
     }
 
     /// A hand-written blocked line for an agent whose hooks cannot
@@ -237,18 +229,7 @@ final class AttentionBookTests: XCTestCase {
         ]))
         let wait = try XCTUnwrap(block(b, "claude|c1"))
         XCTAssertEqual(wait.ask, "Bash: npm run build")
-        XCTAssertEqual(wait.sinceMs, now - 2000, "24.0: a same-kind re-raise inside the grace is the same block — the first raise owns the clock")
-    }
-
-    /// The grace is measured between the two lines, not against the clock
-    /// the file is read at.
-    func testAStopStillClearsAPermissionPastTheGraceWindow() {
-        let old = now - 60_000
-        let b = book([
-            "claude\tpermission\t\(old)\tBash: npm run build\tsession-10\t/Users/me/Pulse\t\t\t\t\t",
-            "claude\tturn\t\(old + SessionBook.stopGraceMs + 1)\t\tsession-10\t\t\t\t\t\t",
-        ].joined(separator: "\n") + "\n")
-        XCTAssertEqual(state(b, "claude|session-10"), "turn")
+        XCTAssertEqual(wait.sinceMs, now - 2000, "a same-kind re-raise inside the grace is the same block — the first raise owns the clock")
     }
 }
 
@@ -290,7 +271,7 @@ final class PulseHookReceiverTests: XCTestCase {
         return text.split(separator: "\n").compactMap { AttentionRecord(line: $0) }
     }
 
-    /// Everything but the `tool` lines — what the older tests were about.
+    /// Everything but the `tool` lines.
     private func blocksAndTurns() -> [AttentionRecord] {
         records().filter { $0.kind != "tool" }
     }
@@ -301,9 +282,9 @@ final class PulseHookReceiverTests: XCTestCase {
 
     // MARK: - The protocol's own words
 
-    /// A line's kind is one of the v5 kinds, spelled as written — no alias,
+    /// A line's kind is one of the v6 kinds, spelled as written — no alias,
     /// no vendor word, no guess.
-    func testTheLogReadsOnlyTheV5Kinds() {
+    func testTheLogReadsOnlyTheV6Kinds() {
         for kind in AttentionKind.allCases {
             XCTAssertEqual(AttentionProtocol.kind(kind.rawValue), kind)
         }
@@ -315,23 +296,26 @@ final class PulseHookReceiverTests: XCTestCase {
                           "Claude's idle_prompt is a 60 s timer after every finished turn — not a block")
     }
 
-    /// v5: eleven columns, and a record survives its own line.
-    func testAV5RecordRoundTrips() throws {
+    /// v6: ten columns, and a record survives its own line.
+    func testAV6RecordRoundTrips() throws {
         let record = AttentionRecord(
             agent: "claude", kind: "permission", ms: 1_800_000_000_000,
             message: "Bash: npm test", session: "s1", cwd: "/w", front: false,
             pid: 4242, landing: "tmux:%3;tty:/dev/ttys004", tool: "Bash"
         )
         let columns = record.line.split(separator: "\t", omittingEmptySubsequences: false)
-        XCTAssertEqual(columns.count, 11)
-        XCTAssertEqual(columns[8], "", "the reserved column is written empty")
+        XCTAssertEqual(columns.count, 10)
+        XCTAssertEqual(columns[8], "tmux:%3;tty:/dev/ttys004", "landing, then tool")
+        XCTAssertEqual(columns[9], "Bash")
         XCTAssertEqual(AttentionRecord(line: record.line), record)
         let unknown = AttentionRecord(agent: "codex", kind: "turn", ms: 1)
         XCTAssertEqual(AttentionRecord(line: unknown.line), unknown, "empty columns stay empty")
-        XCTAssertNil(AttentionRecord(line: "claude\tpermission\t1\tx\ts\t/p\t\t"), "a v3 line is not read")
-        XCTAssertNil(AttentionRecord(line: "claude\tpermission\t1\tx\ts\t/p\t\t\t\t"), "a v4 line is not read")
+        XCTAssertNil(AttentionRecord(line: "claude\tpermission\t1\tx\ts\t/p\t\t"), "a short line is not read")
+        XCTAssertNil(AttentionRecord(line: "claude\tpermission\t1\tx\ts\t/p\t\t\t\t\t"), "an eleven-column line is not read")
         let header = AttentionProtocol.header(generation: "g42")
-        XCTAssertTrue(header.hasPrefix("# pulse-events v5 g42 "))
+        XCTAssertTrue(header.hasPrefix("# pulse-events v6 g42 "))
+        XCTAssertTrue(AttentionProtocol.isHeader(header))
+        XCTAssertFalse(AttentionProtocol.isHeader("# pulse-events v5 g42 (agent)"))
         XCTAssertNotEqual(header, AttentionProtocol.header(generation: "g43"), "each generation has its own header")
         XCTAssertEqual(AttentionProtocol.kind("tool"), .tool)
         XCTAssertFalse(AttentionKind.tool.isOpen)
@@ -400,7 +384,7 @@ final class PulseHookReceiverTests: XCTestCase {
         deliver("claude", "PostToolUse", #"{"session_id":"s1","cwd":"/w","hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"/w/a.swift"}}"#)
         deliver("claude", "Stop", #"{"session_id":"s1","cwd":"/w","hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"All tests pass."}"#)
         deliver("claude", "SessionEnd", #"{"session_id":"s1","cwd":"/w","hook_event_name":"SessionEnd","reason":"exit"}"#)
-        XCTAssertEqual(records().map(\.kind), ["start", "working", "tool", "turn", "end"], "25.0: one log, every event in order")
+        XCTAssertEqual(records().map(\.kind), ["start", "working", "tool", "turn", "end"], "one log, every event in order")
         XCTAssertEqual(records().first { $0.kind == "turn" }?.message, "All tests pass.")
         XCTAssertEqual(records().first { $0.kind == "working" }?.message, "Fix the login", "the prompt is the title's source")
         let tool = try? XCTUnwrap(records().first { $0.kind == "tool" })
@@ -447,10 +431,11 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(PulseHookReceiver.errorMessage(from: ["error": ["message": "boom"]]), "boom")
     }
 
-    /// An entry that names no event is read from its payload.
-    func testALegacyClaudeEntryIsReadFromItsPayload() {
+    /// The event is the installed command's argument; an entry that names
+    /// none writes nothing — the payload's own name is not read.
+    func testAnEntryThatNamesNoEventWritesNothing() {
         deliver("claude", "", #"{"hook_event_name":"PermissionRequest","tool_name":"Edit","tool_input":{"file_path":"/w/a"},"session_id":"c1"}"#)
-        XCTAssertEqual(kinds(), ["permission"])
+        XCTAssertEqual(kinds(), [])
     }
 
     // MARK: - Codex (openai/codex codex-rs/hooks)
@@ -660,18 +645,6 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: log.path))
     }
 
-    func testGrokRunningClaudesHooksIsRefused() {
-        let code = PulseHookReceiver.run(
-            arguments: ["PulseBar", "--hook", "claude", "PermissionRequest"],
-            stdin: #"{"session_id":"g","tool_name":"Bash"}"#,
-            environment: ["GROK_HOOK_EVENT": "PermissionRequest"],
-            logURL: log,
-            locate: located
-        )
-        XCTAssertEqual(code, 0)
-        XCTAssertTrue(records().isEmpty)
-    }
-
     /// A payload handed as the last argument means stdin is not read at
     /// all, so a pipe nobody closes cannot hold the hook.
     func testAPayloadInArgvSkipsStdin() {
@@ -713,7 +686,7 @@ final class PulseHookReceiverTests: XCTestCase {
     func testOneBadByteDoesNotHideEveryWait() throws {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         var bytes = Data(AttentionProtocol.header(generation: "g1").utf8)
-        bytes.append(Data("claude\tpermission\t\(now - 1_000)\tBash: make\ts1\t/p\t\t\t\t\t\n".utf8))
+        bytes.append(Data("claude\tpermission\t\(now - 1_000)\tBash: make\ts1\t/p\t\t\t\t\n".utf8))
         bytes.append(contentsOf: [0x63, 0x6C, 0xE2, 0x82, 0x0A]) // "cl" + a truncated "€"
         try bytes.write(to: log)
         let chunk = try XCTUnwrap(EventLog.read(at: log, after: nil))
@@ -1066,7 +1039,7 @@ final class HooksInstallerTests: XCTestCase {
     }
 
     /// Codex is hooks.json only: an install and an uninstall never touch
-    /// `config.toml` — not even a `notify` line an older Pulse wrote there.
+    /// `config.toml`, and a `notify` line there is not a Pulse hook.
     func testCodexIsHooksJSONOnly() throws {
         let config = "model = \"gpt-5\"\nnotify = [\"/x/pulse-hook\", \"codex\"]\n"
         try write(".codex/config.toml", config)
@@ -1200,7 +1173,8 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertTrue(HooksInstaller.containsPulseMarker(#""/Users/me/Library/Application Support/Pulse/pulse-hook" claude Stop"#))
         XCTAssertTrue(HooksInstaller.containsPulseMarker(#"{"command": "\"/a b/pulse-hook\" claude Stop"}"#))
         XCTAssertTrue(HooksInstaller.containsPulseMarker(#"{"command":"\/x\/pulse-hook claude"}"#), "JSONSerialization escapes slashes")
-        XCTAssertTrue(HooksInstaller.containsPulseMarker("/Applications/Pulse.app/Contents/MacOS/PulseBar --hook claude"))
+        XCTAssertFalse(HooksInstaller.containsPulseMarker("/Applications/Pulse.app/Contents/MacOS/PulseBar --hook claude"),
+                       "only the launcher marks an entry as Pulse's")
         XCTAssertFalse(HooksInstaller.containsPulseMarker("mytool --hook-dir /tmp"))
         XCTAssertFalse(HooksInstaller.containsPulseMarker("~/bin/impulse-hook.sh"), "impulse-hook is not pulse-hook")
         XCTAssertFalse(HooksInstaller.containsPulseMarker("/x/pulse-hook.sh"))
@@ -1293,13 +1267,12 @@ final class HooksInstallerTests: XCTestCase {
         let now: Int64 = 1_800_000_000_000
         let lines = SettingsModel.hookAgents(
             installed: [.claude, .codex], present: [.claude, .codex, .cursor, .gemini],
-            lastEventMs: [.claude: now - 12_000], nowMs: now, lang: .en
+            lastEventMs: [.claude: now - 12 * 60_000], nowMs: now, lang: .en
         )
         XCTAssertEqual(lines.map(\.agent), [.claude, .codex, .cursor, .gemini])
         let claude = lines[0]
         XCTAssertTrue(claude.installed)
-        XCTAssertFalse(claude.needsFix)
-        XCTAssertEqual(claude.lastEvent, String(format: L10n.t(.settingsHookLastEvent, .en), DurationFormat.label(seconds: 12, lang: .en)))
+        XCTAssertEqual(claude.lastEvent, String(format: L10n.t(.settingsHookLastEvent, .en), L10n.duration(12 * 60, .en)))
         XCTAssertNil(claude.note)
         let codex = lines.first { $0.agent == .codex }
         XCTAssertEqual(codex?.lastEvent, L10n.t(.settingsHookNoEvent, .en))
@@ -1308,7 +1281,7 @@ final class HooksInstallerTests: XCTestCase {
         let gemini = lines.first { $0.agent == .gemini }
         XCTAssertEqual(gemini?.state, L10n.t(.hooksMissing, .en))
         XCTAssertEqual(gemini?.lastEvent, "")
-        XCTAssertEqual(gemini?.needsFix, true, "an agent here without its hook is offered the install")
+        XCTAssertEqual(gemini?.installed, false, "an agent here without its hook says so; Install all fixes it")
         let absent = SettingsModel.absentAgents(installed: [.claude, .codex], present: [.claude, .codex, .cursor, .gemini])
         XCTAssertEqual(absent, [.copilot, .opencode, .pi], "in roster order")
         let line = SettingsModel.absentLine(absent, lang: .en)
@@ -1317,7 +1290,7 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertNil(SettingsModel.absentLine([], lang: .en), "nothing to say when every agent is here")
     }
 
-    /// A failed install names the agent and why, and offers the fix again.
+    /// A failed install names the agent and why.
     func testAFailedInstallIsItsOwnLine() {
         let lines = SettingsModel.hookAgents(
             installed: [], present: [], lastEventMs: [:], nowMs: 0, lang: .en,
@@ -1325,7 +1298,6 @@ final class HooksInstallerTests: XCTestCase {
         )
         XCTAssertEqual(lines.map(\.agent), [.gemini])
         XCTAssertTrue(lines[0].failed)
-        XCTAssertTrue(lines[0].needsFix)
         XCTAssertTrue(lines[0].state.contains(L10n.t(.hooksFailureInvalidJSON, .en)), lines[0].state)
     }
 }
@@ -1356,7 +1328,7 @@ final class AttentionWatcherReArmTests: XCTestCase {
         watcher.arm()
         XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
         let text = try String(contentsOf: file, encoding: .utf8)
-        XCTAssertTrue(text.hasPrefix("# pulse-events v5 "), text)
+        XCTAssertTrue(text.hasPrefix("# pulse-events v6 "), text)
     }
 }
 
@@ -1377,9 +1349,9 @@ struct TurnTruthTests {
         _ agent: String, _ kind: String, ago: Int64, message: String = "",
         session: String = "s1", cwd: String = "/p", front: String? = nil, tool: String = ""
     ) -> String {
-        // v5: all eleven columns; front as given (empty = unknown), pid, the
-        // reserved column and landing empty.
-        let cols = [agent, kind, "\(now - ago)", message, session, cwd, front ?? "", "", "", "", tool]
+        // v6: all ten columns; front as given (empty = unknown), pid and
+        // landing empty.
+        let cols = [agent, kind, "\(now - ago)", message, session, cwd, front ?? "", "", "", tool]
         return cols.joined(separator: "\t")
     }
 
@@ -1397,7 +1369,7 @@ struct TurnTruthTests {
 
     static func delivery(_ rows: [AgentRow]) -> WaitingDelivery.Plan {
         WaitingDelivery(
-            muted: [], acknowledged: [], inFlight: [], canDeliverNow: true,
+            acknowledged: [], inFlight: [], canDeliverNow: true,
             msSinceLastNotification: 60_000, minimumIntervalMs: 0
         ).plan(rows)
     }
@@ -1470,7 +1442,7 @@ struct TurnTruthTests {
             expect: turn
         ),
         Case(
-            name: "codex · a word that is not a v5 kind (an approval, a vendor's turn event) → nothing",
+            name: "codex · a word that is not a v6 kind (an approval, a vendor's turn event) → nothing",
             lines: [
                 line("codex", "exec_approval_request", ago: 3 * second, message: "git push"),
                 line("codex", "agent-turn-complete", ago: 2 * second),
@@ -1528,8 +1500,7 @@ struct TurnTruthTests {
         let row = try #require(r.rows.first)
         #expect(row.isYourTurn)
         #expect(row.liveProcess)
-        #expect(r.snapshot.glance == .idle)
-        #expect(r.snapshot.lamp == LampFace(shape: .hollow, tone: .idle))
+        #expect(r.snapshot.lamp == .idle)
         #expect(r.snapshot.title == "")
         #expect(r.snapshot.tooltip == L10n.t(.lampRuleTurn, .en))
     }
@@ -1544,13 +1515,13 @@ struct TurnTruthTests {
         }
         #expect(row.isBlocked == c.expect.waiting)
         #expect(row.isYourTurn == c.expect.yourTurn)
-        #expect((r.snapshot.glance == .waiting) == c.expect.red)
+        #expect((r.snapshot.lamp == .waiting) == c.expect.red)
         let turns = r.rows.filter { $0.isYourTurn }.count
         #expect(turns == (c.expect.yourTurn ? 1 : 0))
         #expect((row.wait?.inFront ?? false) == c.expect.inFront)
         if let kind = c.expect.waitKind { #expect(row.wait?.kind == kind) }
         let bannered: Bool
-        if case .post(let rows, _) = Self.delivery(r.rows) {
+        if case .post(let rows) = Self.delivery(r.rows) {
             bannered = rows.contains { $0.rowKey == row.rowKey }
         } else {
             bannered = false
@@ -1574,7 +1545,7 @@ struct TurnTruthTests {
         #expect(r.rows.isEmpty, "with no session there is no row it could belong to")
     }
 
-    @Test func theReceiverWritesTheV5Kinds() throws {
+    @Test func theReceiverWritesTheProtocolKinds() throws {
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("pulse-turn-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
@@ -1662,7 +1633,7 @@ struct EventLogTests {
                                   logURL: home.log, nowMs: t0 + Int64(offset), locate: here)
         }
         let chunk = try #require(EventLog.read(at: home.log, after: nil))
-        #expect(chunk.header.hasPrefix("# pulse-events v5 "))
+        #expect(chunk.header.hasPrefix("# pulse-events v6 "))
         let records = chunk.lines.compactMap { AttentionRecord(line: $0) }
         let kinds = records.map { $0.kind }
         let tools = records.map { $0.tool }
@@ -1724,7 +1695,7 @@ struct EventLogTests {
     /// field (a writer that did not clean it) never splits a record. And the
     /// receiver cleans every kind of line break out of a field.
     @Test func aLineBreakInsideAFieldNeverSplitsARecord() throws {
-        let odd = "claude\tpermission\t\(t0)\tBash: a\u{2028}b\u{85}c\rd\ts1\t/w\t\t\t\t\tBash\n"
+        let odd = "claude\tpermission\t\(t0)\tBash: a\u{2028}b\u{85}c\rd\ts1\t/w\t\t\t\tBash\n"
         let data = Data((AttentionProtocol.header(generation: "g1") + odd).utf8)
         let chunk = EventLog.parse(data, from: 0, header: "# g1", fresh: true)
         #expect(chunk.lines.count == 1)
@@ -1829,13 +1800,37 @@ struct EventLogTests {
         let home = Home()
         EventLog.append(line("working", t0), at: home.log, nowMs: t0)
         let first = try #require(EventLog.read(at: home.log, after: nil))
-        let stale = EventLog.Cursor(header: "# pulse-events v5 gOLD", offset: first.end)
+        let stale = EventLog.Cursor(header: "# pulse-events v6 gOLD", offset: first.end)
         let again = try #require(EventLog.read(at: home.log, after: stale))
         #expect(again.fresh)
         #expect(again.lines == first.lines)
         let past = EventLog.Cursor(header: first.header, offset: first.end + 10_000)
         let shorter = try #require(EventLog.read(at: home.log, after: past))
         #expect(shorter.fresh, "a file shorter than the cursor was rewritten")
+    }
+
+    /// A log that is not v6 — an older header, or none — is never read and
+    /// never migrated: a read finds it empty, and the next writer (the
+    /// launch's `ensureExists`, or an append) starts a fresh v6 log.
+    @Test func aLogThatIsNotV6IsTreatedAsAbsentAndStartedOver() throws {
+        let home = Home()
+        let old = "# pulse-events v5 g1 (agent)\nclaude\tpermission\t\(t0)\tBash: make\ts1\t/w\t\t\t\t\tBash\n"
+        try Data(old.utf8).write(to: home.log)
+        let unread = try #require(EventLog.read(at: home.log, after: nil))
+        #expect(unread.lines.isEmpty)
+        #expect(unread.fresh)
+        EventLog.ensureExists(at: home.log, nowMs: t0)
+        let fresh = String(decoding: try Data(contentsOf: home.log), as: UTF8.self)
+        #expect(fresh.hasPrefix(AttentionProtocol.headerPrefix), "\(fresh)")
+        #expect(!fresh.contains("Bash: make"), "the old lines are gone, unread")
+
+        let headerless = Home()
+        try Data("claude\tturn\t\(t0)\t\ts1\t/w\t\t\t\t\n".utf8).write(to: headerless.log)
+        #expect(EventLog.append(line("working", t0 + 1), at: headerless.log, nowMs: t0 + 1))
+        let chunk = try #require(EventLog.read(at: headerless.log, after: nil))
+        #expect(chunk.header.hasPrefix(AttentionProtocol.headerPrefix))
+        let kinds = chunk.lines.compactMap { AttentionRecord(line: $0)?.kind }
+        #expect(kinds == ["working"], "only the line appended after the start over")
     }
 
     /// One invalid byte (a hook cut off mid-character) never erases what
@@ -1881,7 +1876,7 @@ struct EventLogTests {
     }
 
     /// Compaction keeps a block together with what answers it, groups a
-    /// session-less line by agent and folder (fix 15), and forgets a
+    /// session-less line by agent and folder, and forgets a
     /// day-old session.
     @Test func compactionKeepsPerSessionHistory() {
         let now = t0
@@ -1930,43 +1925,17 @@ struct EventLogTests {
     }
 }
 
-/// Clarity fixes — each test pins one defect found by reading the code: the
-/// value the user would have seen, before and after.
-@MainActor
-@Suite("Attention fixes", .serialized)
-struct AttentionFixTests {
+/// The stop grace is a function of the two lines, not of when the file is read.
+@Suite("Stop grace")
+struct StopGraceTests {
     let now: Int64 = 1_800_000_000_000
     static let minute: Int64 = 60_000
-
-    // MARK: - Harness
-
-    final class Home {
-        let url: URL
-        init() {
-            url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("pulse-clarity-\(UUID().uuidString)", isDirectory: true)
-        }
-        deinit { try? FileManager.default.removeItem(at: url) }
-
-        @discardableResult
-        func write(_ relative: String, _ text: String, modified: Date? = nil) throws -> URL {
-            let file = url.appendingPathComponent(relative)
-            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try text.write(to: file, atomically: true, encoding: .utf8)
-            if let modified {
-                try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: file.path)
-            }
-            return file
-        }
-    }
-
-    // MARK: - 2 · the stop grace is a function of the two lines
 
     @Test func theStopGraceDoesNotDependOnWhenTheFileIsRead() {
         let raise = now - 10 * Self.minute
         let text = [
-            ["claude", "permission", "\(raise)", "Bash: npm test", "s1", "/p", "", "", "", "", ""],
-            ["claude", "turn", "\(raise + 1_000)", "", "s1", "", "", "", "", "", ""],
+            ["claude", "permission", "\(raise)", "Bash: npm test", "s1", "/p", "", "", "", ""],
+            ["claude", "turn", "\(raise + 1_000)", "", "s1", "", "", "", "", ""],
         ].map { $0.joined(separator: "\t") }.joined(separator: "\n") + "\n"
         func read(at nowMs: Int64) -> String {
             var book = SessionBook()

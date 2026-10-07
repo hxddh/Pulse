@@ -23,7 +23,7 @@ struct SessionDetailView: View {
 
 /// Renders a `DetailModel` and nothing else: the header (back, lamp, the
 /// agent's icon and the headline — the page's title), then the ask with Go
-/// and Dismiss, the landing notice (with its "Turn on"), the why, the recent
+/// and Ignore, the landing notice, the why, the recent
 /// steps, the last message, the error and the facts (this turn, the
 /// folder) — each block only when it has something to say.
 struct SessionDetailFace: View {
@@ -74,12 +74,6 @@ struct SessionDetailFace: View {
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if model.muted {
-                Image(systemName: "bell.slash")
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(.tertiary)
-                    .accessibilityLabel(t(.mutedWord))
-            }
         }
         .padding(.horizontal, PulseTheme.Space.s)
         .padding(.vertical, PulseTheme.Space.s)
@@ -100,23 +94,16 @@ struct SessionDetailFace: View {
                 actions
             }
             if let notice = model.notice {
-                HStack(alignment: .firstTextBaseline, spacing: PulseTheme.Space.s) {
-                    Text(notice.text)
-                        .font(PulseTheme.Font.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if notice.offersAutomation {
-                        Button(t(.turnOnAutomation)) { send(.turnOnAutomation) }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                    }
-                }
+                Text(notice.text)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             if let why = model.why {
                 Text(why)
                     .font(PulseTheme.Font.body)
-                    .foregroundStyle(model.lamp.tone == .attention ? AnyShapeStyle(PulseTheme.Tone.attention.color) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(model.lamp == .stalled ? AnyShapeStyle(PulseTheme.warning) : AnyShapeStyle(.secondary))
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !model.steps.isEmpty {
@@ -136,7 +123,7 @@ struct SessionDetailFace: View {
                 section(t(.detailErrorHeading)) {
                     Text(error)
                         .font(PulseTheme.Font.code)
-                        .foregroundStyle(PulseTheme.Tone.attention.color)
+                        .foregroundStyle(PulseTheme.warning)
                         .lineLimit(4)
                         .textSelection(.enabled)
                 }
@@ -161,7 +148,7 @@ struct SessionDetailFace: View {
                 Button {
                     send(.dismiss)
                 } label: {
-                    Text(t(.dismissWait)) + Text("  ⌘D").foregroundStyle(.secondary)
+                    Text(t(.ignoreWait)) + Text("  ⌘D").foregroundStyle(.secondary)
                 }
             }
             Spacer(minLength: 0)
@@ -199,34 +186,5 @@ struct FactGrid: View {
             }
         }
         .font(PulseTheme.Font.caption)
-    }
-}
-
-/// The lamp's shape in its tone — filled, ring, hollow or dotted
-/// (`LampFace`). The same vocabulary as the menu-bar glyph.
-struct LampShapeView: View {
-    let lamp: LampFace
-    var size: CGFloat = 9
-
-    private var color: Color { lamp.tone == .idle ? Color.secondary : lamp.tone.color }
-
-    var body: some View {
-        Group {
-            switch lamp.shape {
-            case .filled:
-                Circle().fill(color)
-            case .ring:
-                ZStack {
-                    Circle().strokeBorder(color, lineWidth: 1.4)
-                    Circle().fill(color).frame(width: size * 0.36, height: size * 0.36)
-                }
-            case .hollow:
-                Circle().strokeBorder(color, lineWidth: 1.4)
-            case .dotted:
-                Circle().strokeBorder(color, style: StrokeStyle(lineWidth: 1.4, dash: [1.4, 1.6]))
-            }
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
     }
 }

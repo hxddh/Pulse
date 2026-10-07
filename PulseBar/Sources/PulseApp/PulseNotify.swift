@@ -20,7 +20,6 @@ final class PulseNotifyDelegate: NSObject, UNUserNotificationCenterDelegate {
         let agent = info["agent"] as? String ?? ""
         let session = info["session"] as? String ?? ""
         let rowKey = info["rowKey"] as? String ?? ""
-        let summaryRowKeys = info["rowKeys"] as? [String] ?? []
         let intent = BannerIntent.decide(
             actionID: response.actionIdentifier,
             dismissActionID: UNNotificationDismissActionIdentifier
@@ -29,14 +28,9 @@ final class PulseNotifyDelegate: NSObject, UNUserNotificationCenterDelegate {
             let notifier = AppServices.store.notifier
             switch intent {
             case .go:
-                notifier.handleBannerClick(
-                    agent: agent,
-                    session: session,
-                    rowKey: rowKey,
-                    summaryRowKeys: summaryRowKeys
-                )
+                notifier.handleBannerClick(agent: agent, session: session, rowKey: rowKey)
             case .ignore:
-                notifier.handleBannerIgnore(rowKey: rowKey, summaryRowKeys: summaryRowKeys)
+                notifier.handleBannerIgnore(rowKey: rowKey)
             case .nothing:
                 break
             }
@@ -63,8 +57,7 @@ enum PulseNotify {
     /// it does not bring Pulse forward). There is no "Later": a wait is a
     /// wait.
     ///
-    /// Registered in the resolved language and re-registered when it changes —
-    /// a category is keyed by id, so re-adding replaces the old titles.
+    /// Registered once, in the system's language.
     static func registerCategories(lang: ResolvedLanguage) {
         guard let center else { return }
         let focus = UNNotificationAction(
@@ -74,7 +67,7 @@ enum PulseNotify {
         )
         let ignore = UNNotificationAction(
             identifier: BannerIntent.ignoreActionID,
-            title: L10n.t(.notifIgnore, lang),
+            title: L10n.t(.ignoreWait, lang),
             options: []
         )
         let category = UNNotificationCategory(
@@ -118,6 +111,13 @@ enum PulseNotify {
         }
     }
 
+    /// Notification permission lives in System Settings, not in Pulse.
+    static func openSystemSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     /// macOS lets Pulse send Time Sensitive banners: its notification
     /// settings say `timeSensitiveSetting == .enabled`, which happens only
     /// with the entitlement. Read with the authorization.
@@ -142,54 +142,7 @@ enum PulseNotify {
         }
     }
 
-    /// One banner per row (`WaitLedger.bannerID`): a later ask on the same
-    /// row replaces it. Its words and its thread are `WaitingBanner`'s.
-    static func postWaiting(
-        id: String,
-        banner: WaitingBanner,
-        agent: String,
-        session: String = "",
-        rowKey: String = "",
-        completion: @escaping (Bool) -> Void = { _ in }
-    ) {
-        post(
-            id: id,
-            title: banner.title,
-            subtitle: banner.subtitle,
-            body: banner.body,
-            threadID: banner.threadID,
-            agent: agent,
-            session: session,
-            rowKey: rowKey,
-            completion: completion
-        )
-    }
-
-    /// A single, actionable summary for a burst of approvals
-    /// (`WaitLedger.summaryID`); it only reduces the interruption count.
-    static func postWaitingSummary(
-        id: String,
-        title: String,
-        body: String,
-        agent: String,
-        session: String,
-        rowKeys: [String],
-        completion: @escaping (Bool) -> Void = { _ in }
-    ) {
-        post(
-            id: id,
-            title: title,
-            body: body,
-            threadID: WaitingBanner.summaryThread,
-            agent: agent,
-            session: session,
-            rowKey: rowKeys.first ?? "",
-            rowKeys: rowKeys,
-            completion: completion
-        )
-    }
-
-    /// A banner whose wait was answered, dismissed or ended leaves
+    /// A banner whose wait was answered, ignored or ended leaves
     /// Notification Center — delivered or still pending.
     static func withdraw(ids: [String]) {
         guard let center, !ids.isEmpty else { return }
@@ -197,16 +150,14 @@ enum PulseNotify {
         center.removePendingNotificationRequests(withIdentifiers: ids)
     }
 
-    private static func post(
+    /// One banner per wait (`WaitLedger.bannerID`): a later ask on the same
+    /// row replaces it. Its words and its thread are `WaitingBanner`'s.
+    static func postWaiting(
         id: String,
-        title: String,
-        subtitle: String = "",
-        body: String,
-        threadID: String,
+        banner: WaitingBanner,
         agent: String,
-        session: String,
-        rowKey: String,
-        rowKeys: [String] = [],
+        session: String = "",
+        rowKey: String = "",
         completion: @escaping (Bool) -> Void = { _ in }
     ) {
         // Delivery is asynchronous. The caller must not mark a wait as
@@ -220,14 +171,14 @@ enum PulseNotify {
         center.removeDeliveredNotifications(withIdentifiers: [id])
         center.removePendingNotificationRequests(withIdentifiers: [id])
         let content = UNMutableNotificationContent()
-        content.title = ContentSanitizer.redact(title)
-        if !subtitle.isEmpty { content.subtitle = ContentSanitizer.redact(subtitle) }
-        content.body = ContentSanitizer.redact(body)
+        content.title = ContentSanitizer.redact(banner.title)
+        if !banner.subtitle.isEmpty { content.subtitle = ContentSanitizer.redact(banner.subtitle) }
+        content.body = ContentSanitizer.redact(banner.body)
         content.sound = .default
         // One thread per session: a second ask from the same session stacks
         // with its first, never with another agent's — a burst of
         // approvals still shows who needs an answer.
-        content.threadIdentifier = threadID
+        content.threadIdentifier = banner.threadID
         // A wait that blocks an agent may break through a Focus — but only
         // where macOS says Pulse may (the Time Sensitive entitlement, which
         // only a Developer ID build can carry). Elsewhere the setting reads
@@ -243,7 +194,6 @@ enum PulseNotify {
         if !agent.isEmpty { info["agent"] = agent }
         if !session.isEmpty { info["session"] = session }
         if !rowKey.isEmpty { info["rowKey"] = rowKey }
-        if !rowKeys.isEmpty { info["rowKeys"] = rowKeys }
         content.userInfo = info
         let req = UNNotificationRequest(identifier: id, content: content, trigger: nil)
         // Called only after the hop to the main queue below.
@@ -258,37 +208,6 @@ enum PulseNotify {
             }
             DispatchQueue.main.async {
                 deliver.value(error == nil)
-            }
-        }
-    }
-}
-
-enum SettingsPresenter {
-    /// Prefer staying `.accessory` — flipping activation policy is the slow part.
-    /// Called from UI actions only, i.e. on the main thread.
-    static func prepareToOpen() {
-        MainActor.assumeIsolated {
-            NSApp?.activate(ignoringOtherApps: true)
-        }
-    }
-
-    static func ensureKeyableIfNeeded() {
-        MainActor.assumeIsolated {
-            if NSApp?.activationPolicy() != .regular {
-                NSApp?.setActivationPolicy(.regular)
-                NSApp?.activate(ignoringOtherApps: true)
-            }
-        }
-    }
-
-    static func restoreAccessoryIfNeeded() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            if SettingsWindowController.shared.isOpen { return }
-            let settingsOpen = (NSApp?.windows ?? []).contains { win in
-                win.isVisible && win.identifier?.rawValue == "pulse-settings"
-            }
-            if !settingsOpen, NSApp?.activationPolicy() != .accessory {
-                NSApp?.setActivationPolicy(.accessory)
             }
         }
     }
