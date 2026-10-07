@@ -103,8 +103,11 @@ extension Lamp {
     /// The image is a drawing handler at `statusIconSize` points: AppKit
     /// draws it at the screen's scale and calls it again when the menu
     /// bar's appearance changes, so the system colours resolve at draw time.
-    var statusBarImage: NSImage {
-        let side = Self.statusIconSize
+    var statusBarImage: NSImage { image(side: Self.statusIconSize) }
+
+    /// The lamp at any size — the menu bar, a row and the detail page draw
+    /// the one shape, so a stalled lamp carries its notch everywhere.
+    func image(side: CGFloat) -> NSImage {
         let lamp = self
         let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { _ in
             lamp.draw(side: side)
@@ -163,24 +166,12 @@ struct LampShapeView: View {
     var size: CGFloat = 9
 
     var body: some View {
-        let color = lamp.color
-        Group {
-            switch lamp {
-            case .waiting:
-                Circle().fill(color)
-            case .running, .stalled:
-                ZStack {
-                    Circle().strokeBorder(color, lineWidth: 1.4)
-                    Circle().fill(color).frame(width: size * 0.36, height: size * 0.36)
-                }
-            case .idle:
-                Circle().strokeBorder(color, lineWidth: 1.4)
-            case .processOnly:
-                Circle().strokeBorder(color, style: StrokeStyle(lineWidth: 1.4, dash: [1.4, 1.6]))
-            }
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
+        // A grey lamp is a template, tinted like secondary text.
+        Image(nsImage: lamp.image(side: size))
+            .renderingMode(lamp.isGrey ? .template : .original)
+            .foregroundStyle(.secondary)
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
     }
 }
 

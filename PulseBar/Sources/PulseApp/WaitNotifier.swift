@@ -107,9 +107,13 @@ final class WaitNotifier {
 
     // MARK: - Posting
 
-    /// Deliver one actionable notification per Waiting session. A previous
-    /// implementation used `first(where:)`, so a scan that found Codex and
-    /// Cursor approvals notified only whichever row happened to sort first.
+    /// Deliver one actionable notification per Waiting session, one at a
+    /// time: a scan that finds several waits posts the first and queues the
+    /// rest behind the interval.
+    /// When the last banner was handed to Notification Center — the rate
+    /// limit counts from here, before the request is answered.
+    private var lastPostMs: Int64 = 0
+
     func post(_ rows: [AgentRow]) {
         guard let model, model.notifyAuthorized == true else { return }
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
@@ -117,8 +121,9 @@ final class WaitNotifier {
         let delivery = WaitingDelivery(
             acknowledged: ledger.dismissedKeys,
             inFlight: inFlight,
-            canDeliverNow: ledger.canDeliver(nowMs: nowMs, minimumIntervalMs: Self.minimumIntervalMs),
-            msSinceLastNotification: nowMs - ledger.lastNotificationMs,
+            canDeliverNow: ledger.canDeliver(nowMs: nowMs, minimumIntervalMs: Self.minimumIntervalMs)
+                && (lastPostMs == 0 || nowMs - lastPostMs >= Self.minimumIntervalMs),
+            msSinceLastNotification: nowMs - max(ledger.lastNotificationMs, lastPostMs),
             minimumIntervalMs: Self.minimumIntervalMs,
             frontDue: ledger.frontDueKeys
         )
@@ -130,9 +135,13 @@ final class WaitNotifier {
             for waiting in held { ledger.markQueued(waiting.rowKey) }
             scheduleDelivery(afterMs: retryAfterMs)
             return
-        case .post(let ready):
-            candidates = ready
+        case .post(let first, let later):
+            // The rest wait their turn: one banner per interval.
+            for waiting in later { ledger.markQueued(waiting.rowKey) }
+            if !later.isEmpty { scheduleDelivery(afterMs: Self.minimumIntervalMs) }
+            candidates = [first]
         }
+        lastPostMs = nowMs
 
         for waiting in candidates {
             inFlight.insert(waiting.rowKey)

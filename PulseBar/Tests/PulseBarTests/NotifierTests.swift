@@ -39,8 +39,8 @@ final class WaitingDeliveryTests: XCTestCase {
         idle.state = .running
         let rows = [waiting("a"), waiting("ack"), waiting("flying"), idle]
         let plan = planner(acknowledged: ["ack"], inFlight: ["flying"]).plan(rows)
-        guard case .post(let ready) = plan else { return XCTFail("\(plan)") }
-        XCTAssertEqual(ready.map(\.rowKey), ["a"])
+        guard case .post(let first, let later) = plan else { return XCTFail("\(plan)") }
+        XCTAssertEqual(([first] + later).map(\.rowKey), ["a"])
     }
 
     func testNothingQualifiesMeansNothing() {
@@ -59,18 +59,19 @@ final class WaitingDeliveryTests: XCTestCase {
         XCTAssertEqual(floor, WaitingDelivery.minimumRetryMs)
     }
 
-    /// A burst is one banner per wait — never a summary: each says who
-    /// needs an answer.
-    func testABurstIsOneBannerPerWait() {
+    /// A burst is one banner per wait — never a summary — and never two at
+    /// once: the first goes now, the rest queue behind the interval.
+    func testABurstIsOneBannerPerWaitOneAtATime() {
         let five = (1...5).map { waiting("k\($0)") }
-        guard case .post(let ready) = planner().plan(five) else { return XCTFail() }
-        XCTAssertEqual(ready.count, 5)
+        guard case .post(let first, let later) = planner().plan(five) else { return XCTFail() }
+        XCTAssertEqual(first.rowKey, "k1")
+        XCTAssertEqual(later.map(\.rowKey), ["k2", "k3", "k4", "k5"])
     }
 
     func testADuplicateRowKeyNeverTraps() {
         let plan = planner().plan([waiting("same"), waiting("same")])
-        guard case .post(let ready) = plan else { return XCTFail("\(plan)") }
-        XCTAssertEqual(ready.count, 1)
+        guard case .post(_, let later) = plan else { return XCTFail("\(plan)") }
+        XCTAssertTrue(later.isEmpty)
     }
 }
 
@@ -310,11 +311,12 @@ struct BannerWithdrawalTests {
             acknowledged: [], inFlight: [], canDeliverNow: true,
             msSinceLastNotification: 60_000, minimumIntervalMs: 0, frontDue: ledger.frontDueKeys
         ).plan([row, waiting("claude|b", since: now, inFront: true)])
-        guard case .post(let ready) = plan else {
+        guard case .post(let first, let later) = plan else {
             Issue.record("\(plan)")
             return
         }
-        #expect(ready.map(\.rowKey) == ["claude|a"])
+        #expect(first.rowKey == "claude|a")
+        #expect(later.isEmpty)
         ledger.markNotified("claude|a", nowMs: now + 40_000, bannerID: WaitLedger.bannerID(rowKey: "claude|a"))
         var answeredLedger = ledger
         answeredLedger.reconcile(rows: [running("claude|a")], edges: [], nowMs: now + 50_000)

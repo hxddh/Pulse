@@ -1521,8 +1521,8 @@ struct TurnTruthTests {
         #expect((row.wait?.inFront ?? false) == c.expect.inFront)
         if let kind = c.expect.waitKind { #expect(row.wait?.kind == kind) }
         let bannered: Bool
-        if case .post(let rows) = Self.delivery(r.rows) {
-            bannered = rows.contains { $0.rowKey == row.rowKey }
+        if case .post(let first, let later) = Self.delivery(r.rows) {
+            bannered = ([first] + later).contains { $0.rowKey == row.rowKey }
         } else {
             bannered = false
         }
