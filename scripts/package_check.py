@@ -28,13 +28,12 @@ BUNDLE_NAME = "PulseBar_PulseApp.bundle"
 
 # The QA driver (`PulseQA`) is a separate executable and never ships. These
 # strings exist only in its code — the flags that swap this Mac's sessions for
-# a fixture, photograph a surface, or force a language or an appearance — so
+# a fixture, photograph a surface, or force an appearance — so
 # finding one in the app's binary means QA code was linked into the product.
 QA_ONLY_MARKERS = [
     b"--capture-surfaces=",
     b"--tray-fixture=",
     b"--capture-tray-panel=",
-    b"--language=",
     b"--appearance=",
 ]
 

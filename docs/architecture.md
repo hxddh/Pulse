@@ -22,9 +22,10 @@ not say.
 - **`StatusStore`** (`@Observable`): only what views read — the snapshot,
   rows, settings, a few flags — and the intents views send. `land` assigns
   an observed property only when its value changed (`ScanQuietTests`).
-  Settings go through `StatusStore.set` / `update`, which write
-  `settings.json` only on a change and apply only that setting's effects
-  (`StatusStore.effects(from:to:)`).
+  Settings (open at login, "don't suggest hooks") go through
+  `StatusStore.set` / `update`, which write `settings.json` only on a
+  change; a login change asks macOS. The language is the system's
+  (`ResolvedLanguage.system`), read once.
 
 ## Processes (libproc)
 
@@ -63,6 +64,6 @@ build date and the distribution channel into `Info.plist`.
 
 `PulseDistributionChannel` is `preview` for every packaged build until a
 notarization that stapler validates makes it `stable`; an unnotarized build
-is never stable. The update check reads GitHub's `/releases/latest` only,
-so a version published as a GitHub prerelease reaches nobody until it is
-promoted. Pulse never downloads or replaces itself.
+is never stable. Pulse makes no network connection: Settings' "Releases…"
+opens the releases page in the browser. It never downloads or replaces
+itself.

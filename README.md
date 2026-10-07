@@ -30,7 +30,7 @@ Pulse 把这件事变成余光可见：
 列表列出每一个会话，多了就在面板里滚动。其余动作在键盘、右键菜单与详情页里。**不显示 token、上下文、费用、模型或套餐 —— 这是决定**。
 
 **键盘优先**：↑↓ 选择，↩ 前往（没有终端可落就开详情），→ / 空格 详情，← / Esc 返回，
-在列表上 Esc 关面板；⌘D 忽略所选等待，⌘M 静音所选 Agent，⌘R 刷新，⌘, 设置。
+在列表上 Esc 关面板；⌘D 忽略所选等待，⌘R 刷新，⌘, 设置。
 头部一行彩色计数，「⋯」里是设置与退出；同一时间最多一条提示；面板开着时行的顺序不动。
 
 **每个颜色都说得清来历**：鼠标停在菜单栏图标上，提示用一句话写出决定颜色的规则；
@@ -95,10 +95,10 @@ Mac 上的 Agent 装上各自的官方 hook，再请 macOS 允许通知，然后
 `/hooks` 信任 Pulse；已在运行的会话在它们的下一步之后出现）。
 
 每一个真正的「需要你」只到达一次：新的 Waiting 会话逐一发出系统通知（仅在你允许通知后），多个同时
-到达合成一条；提示窗口当时就在你眼前的先不发，30 秒后还开着、而那个 App 已不在最前才补发一次。
+到达也是一个等待一条；提示窗口当时就在你眼前的先不发，30 秒后还开着、而那个 App 已不在最前才补发一次。
 横幅上有「前往」与「忽略」：「忽略」和托盘里的 ⌘D 一样只是让 Pulse 不再提醒这个等待，从不替你回答 Agent。
-等待被回答、忽略或会话结束时，它的通知从通知中心撤走；点一条已经过时的通知只打开托盘。点菜单栏或按
-全局快捷键都打开托盘并选中最久的那个等待，一个 ↩ 就到提示。通知未启用或被系统关闭时，托盘会显示
+等待被回答、忽略或会话结束时，它的通知从通知中心撤走；点一条已经过时的通知只打开托盘。点菜单栏，
+或在 Spotlight / Raycast 里再打开 Pulse，都打开托盘并选中最久的那个等待，一个 ↩ 就到提示。通知未启用或被系统关闭时，托盘会显示
 可点击的提示，不会在后台反复索要权限。
 
 ---
@@ -120,8 +120,8 @@ Mac 上的 Agent 装上各自的官方 hook，再请 macOS 允许通知，然后
 - 会话只在它的进程还活着时算「运行中」；不知道进程的会话安静 30 分钟后转为「最近」，
   并在「为什么」里说明。
 - Focus 不吹牛：tmux 窗格不需要任何权限就能确切落地；iTerm2 会话与 Terminal.app 标签按
-  会话 id / tty 选中，但要用 AppleScript，默认关闭：是设置 → 通用里的一个开关，打开后第一次前往时
-  macOS 询问一次自动化权限；开关关着而因此只落到 App 时，行上照实说一句并点名那个开关；
+  会话 id / tty 选中（AppleScript，总是先试）：第一次前往时 macOS 询问一次自动化权限，那就是同意；
+  被拒绝而只落到 App 时，行上照实说一句，并说去 系统设置 → 隐私与安全性 → 自动化 允许 Pulse；
   Ghostty、WezTerm、kitty、Warp 只把 App 带到前台，编辑器
   打开会话目录。按钮只在能确切落地时写「前往终端」，否则写「打开应用」；没落到就明说。
   深链边界见 [`docs/landing-hosts.md`](docs/landing-hosts.md)。
@@ -147,7 +147,7 @@ Mac 上的 Agent 装上各自的官方 hook，再请 macOS 允许通知，然后
 不一致 CI 就红——它是承诺，不是宣传。
 
 设置 → Hooks 就是诊断：这台 Mac 上的每个 Agent 一行，写出 hook 装没装（装失败就写原因）、
-最近一次事件是多久前，缺的给一个安装按钮；不在这台 Mac 上的 Agent 合成一行。
+最近一次事件是多久前；「全部安装」「全部移除」两个按钮；不在这台 Mac 上的 Agent 合成一行。
 进程命中不会把完整命令行、参数或私有路径带进 UI。
 
 名单就是这七个；Pulse 只读它们自己的 hook 事件（[`docs/attention-bridge.md`](docs/attention-bridge.md)、
@@ -162,20 +162,17 @@ CC0，商标归各自所有者）；没有现成图标的 Agent 由
 
 ## 卸载
 
-设置底部的「**卸载 Pulse…**」会先列出要移除的东西，确认后依次：经安装器移除每个 Agent 的
-Pulse hook（每个文件逐字节还原；之后改过的只删 Pulse 的条目），注销登录项，删除
-`~/Library/Application Support/Pulse`（事件日志、设置、hook 启动器与安装记录），然后退出并
-在访达里显示 Pulse.app —— 把它拖进废纸篓即可。有 hook 没能移除时它会停下、什么都不删，
-设置 → Hooks 写着原因。
-
-手动卸载：先在设置 → Hooks 点「全部移除」，再退出 Pulse，然后
+1. 设置 → Hooks →「**全部移除**」：经安装器移除每个 Agent 的 Pulse hook（每个文件逐字节还原；
+   之后改过的只删 Pulse 的条目）。
+2. 退出 Pulse（菜单栏图标右键 →「退出 Pulse」）。
+3. 把 Pulse.app 拖进废纸篓。
+4. 删除 Pulse 的文件夹（事件日志、设置、hook 启动器与安装记录）：
 
 ```bash
 rm -rf ~/Library/Application\ Support/Pulse
-rm -rf /Applications/Pulse.app
 ```
 
-并在「系统设置 → 通用 → 登录项」里移除 Pulse（若开过「登录时打开」）。通知权限条目留在
+开过「登录时打开」的话，在「系统设置 → 通用 → 登录项」里也移除 Pulse。通知权限条目留在
 「系统设置 → 通知」里，由 macOS 管理。
 
 ---
@@ -184,19 +181,17 @@ rm -rf /Applications/Pulse.app
 
 设置是一页，全部即时生效，从别处跳进来会滚到对应的那一节：
 
-- **通用** —— 登录时打开（macOS 自己的登录项，待批准时给出「打开登录项」）、语言（跟随系统 /
-  English / 简体中文）、前往确切的 Terminal 或 iTerm 标签页（终端自动化，默认关；前往只落到 App 时，
-  那句提示旁的「开启」改的就是这个开关）
-- **快捷键** —— 唤出面板，和点菜单栏是同一个手势：点「录制快捷键」再按下一个带 ⌘、⌃ 或 ⌥ 的组合
-  （Esc 取消，Delete 清除；默认关闭）；macOS 自己占着或注册不上的组合会直说不能用，不需要任何隐私权限
-- **通知** —— 授权状态、「Agent 需要我时通知」、静音的 Agent（每个带 ✕）；声音与安静时段交给
-  macOS 的通知设置与专注模式，静音某个 Agent 在行菜单里（或按 ⌘M）
+- **通用** —— 登录时打开（macOS 自己的登录项，待批准时给出「打开登录项」）
+- **通知** —— macOS 是否允许横幅，以及「启用通知」或「打开系统设置」；要不要横幅、声音与安静时段
+  都交给 macOS 的通知设置与专注模式
 - **Hooks** —— 七个 Agent 各自的官方 hook / 插件 / 扩展（全部安装 / 全部移除）；这台 Mac 上的每个
-  Agent 一行：已安装、未安装或安装失败，以及「最近事件 12 秒前」，各带自己的「安装」或「移除」；Codex 与 Cursor 注明
+  Agent 一行：已安装、未安装或安装失败，以及「最近事件 12 秒前」；Codex 与 Cursor 注明
   「不会报告它在等你」；不在这台 Mac 上的合成一行；「复制报告」给出一份纯文本（版本、每个
-  Agent 的 hook 与最近事件、通知授权、终端自动化、快捷键、登录项），不含路径、提示词或会话
-- **更新** —— 检查更新（只问 GitHub 的 Latest；有新版本时打开发布页，在浏览器里下载）
-- 页脚：版本与构建 · 「卸载 Pulse…」
+  Agent 的 hook 与最近事件、通知授权、登录项），不含路径、提示词或会话
+- 页脚：版本与构建 · 「版本发布…」（在浏览器里打开 GitHub 的发布页；Pulse 不检查更新，也不连任何网络）
+
+界面语言跟随系统（中文系统读中文，其余读英文），没有语言选项；没有全局快捷键 —— 在 Spotlight / Raycast
+里再打开 Pulse 就是打开托盘。
 
 省电是硬约束：没有固定的探测间隔。事件文件一变就处理；此外只有一个便宜的时钟
 （托盘打开或刚出现等待时 5s，否则 60s，没有会话时停表）和按需退避的进程查看（30 秒起，
@@ -255,7 +250,7 @@ git push                               # CI 构建、打 tag、发布
 ```
 
 **预发布**（`[prerelease]`）与正式发布是同一个 DMG、同一份说明，但在 GitHub 上标为 pre-release、
-不设为 Latest：应用内的「检查更新」与 GitHub Latest 都看不见它。在真机上跑通之后，由维护者在
+不设为 Latest：GitHub Latest 看不见它。在真机上跑通之后，由维护者在
 GitHub 上编辑这个 Release：取消「Set as a pre-release」、勾上「Set as the latest release」。
 
 **tag 由 CI 用自己的 `contents: write` token 创建**，发布不依赖任何人的本地推送权限。
@@ -269,10 +264,6 @@ GitHub 上编辑这个 Release：取消「Set as a pre-release」、勾上「Set
 **任一凭据缺失时仍发布**（正式发布设为 GitHub Latest，跟当前 semver），产物为 ad-hoc /
 未公证，About 保持 `preview` —— **绝不能自称 stable / Gatekeeper-ready**。每个 Release 都附
 DMG 的 `.sha256`。
-
-> 应用内的「检查更新」只读 `/releases/latest`，走匿名请求 —— 仓库是 public，所以直接可用。
-> 若 fork 成私有仓库，需用 `Info.plist` 的 `PulseUpdateFeed` 指向一个可匿名访问的 feed，
-> 否则 GitHub 会返回 404。
 
 ---
 
@@ -296,6 +287,6 @@ DMG 的 `.sha256`。
 | [`EXPERIENCE.md`](EXPERIENCE.md) | 体验规格 —— UI 改动的验收依据 |
 | [`docs/architecture.md`](docs/architecture.md) | 谁持有什么状态、进程怎么读、版本身份（数据流在 `AGENTS.md`） |
 | [`docs/attention-bridge.md`](docs/attention-bridge.md) | hook 安装政策：只装观察型事件、逐字节可逆、卸载 |
-| [`docs/attention-protocol.md`](docs/attention-protocol.md) | Attention Protocol v5（事件日志 `events.tsv`）契约 |
+| [`docs/attention-protocol.md`](docs/attention-protocol.md) | Attention Protocol v6（事件日志 `events.tsv`）契约 |
 | [`docs/vendor-formats.md`](docs/vendor-formats.md) | 每个 Agent 的事实：装在哪、每个事件变成什么、出处 |
 | [`CHANGELOG.md`](CHANGELOG.md) | 每个版本改了什么 |

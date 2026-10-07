@@ -40,8 +40,6 @@ struct TrayState: Equatable {
     struct Context {
         var nowMs: Int64
         var lang: ResolvedLanguage = .en
-        /// The terminal-automation setting: AppleScript landing steps allowed.
-        var allowAutomation = false
         /// Seconds of silence that make a working session stalled; 0 off.
         var stalledSeconds: Double = AgentRow.stalledSeconds
         /// The previous projection's open waits (`waitingSince`): a row not
@@ -152,7 +150,7 @@ struct TrayState: Equatable {
             }
             row.landing = landing
             row.landingPlan = LandingPlan.make(
-                handle: landing, cwd: row.cwd, allowAutomation: context.allowAutomation,
+                handle: landing, cwd: row.cwd,
                 pid: live ? session.pid : 0, hostApp: hit?.hostApp
             )
 
@@ -182,7 +180,7 @@ struct TrayState: Equatable {
                 term: hit.viaWarp ? "WarpTerminal" : ""
             )
             row.landingPlan = LandingPlan.make(
-                handle: row.landing, cwd: row.cwd, allowAutomation: context.allowAutomation,
+                handle: row.landing, cwd: row.cwd,
                 pid: hit.pid, hostApp: hit.hostApp
             )
             row.startedMs = hit.startedMs

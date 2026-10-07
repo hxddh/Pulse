@@ -8,7 +8,7 @@ import XCTest
 // Sessions: the event reducer (SessionBook), its projection into the tray
 // (TrayState), row identity, and what a row carries.
 
-/// One vendor hook event as `pulse-hook` writes it — one v5 line, or
+/// One vendor hook event as `pulse-hook` writes it — one v6 line, or
 /// nothing — by the receiver's own reading of the vendor's event name and
 /// payload (`PulseHookReceiver.interpret`, then `.record`). The truth tables
 /// below replay recorded sequences through it.
@@ -759,9 +759,8 @@ struct SessionBookTests {
 
     /// The status marker is `:status` — a value no vendor tool name has. A
     /// real tool named `status` is a step and answers its own block; a
-    /// vendor tool spelled like a marker loses its colon. An earlier
-    /// receiver wrote the marker as `status` for Copilot and OpenCode
-    /// only: those lines still replay as the marker.
+    /// vendor tool spelled like a marker loses its colon. Only `:status`
+    /// is the marker, whoever wrote the line.
     @Test func theStatusMarkerCannotBeARealTool() {
         #expect(AttentionRecord.statusTool == ":status")
         let written = HookFeed.write(.opencode, "session.status", ["status": ["type": "busy"]], at: t0).lines.first
@@ -779,18 +778,11 @@ struct SessionBookTests {
         #expect(spoofed?.tool == "status")
         let dismissSpoof = HookFeed.write(.claude, "PostToolUse", ["tool_name": " :dismiss"], at: t0).lines.first
         #expect(dismissSpoof?.tool == "dismiss")
-        // Legacy `status` lines from Copilot and OpenCode replay as the marker.
-        var book = SessionBook()
-        book.apply(AttentionRecord(agent: "copilot", kind: "permission", ms: t0, message: "Allow bash?", session: "s1"), nowMs: t0)
-        book.apply(AttentionRecord(agent: "copilot", kind: "tool", ms: t0 + second, session: "s1", tool: "status"), nowMs: t0 + second)
-        #expect(HookFeed.word(book.sessions["copilot|s1"]?.state) == "blocked:permission", "a legacy status line never answers")
-        let legacySteps = book.sessions["copilot|s1"]?.steps
-        #expect(legacySteps?.isEmpty == true)
-        let legacyCopilot = AttentionRecord.isStatus(tool: "status", agent: "copilot")
-        let legacyOpenCode = AttentionRecord.isStatus(tool: "status", agent: "opencode")
-        let claudeStatus = AttentionRecord.isStatus(tool: "status", agent: "claude")
-        #expect(legacyCopilot && legacyOpenCode)
-        #expect(!claudeStatus, "only the two agents whose lines ever carried it")
+        // Only the marker is the marker: a bare `status` is a tool for every agent.
+        let bare = AttentionRecord(agent: "copilot", kind: "tool", ms: t0, session: "s1", tool: "status")
+        let marker = AttentionRecord(agent: "copilot", kind: "tool", ms: t0, session: "s1", tool: ":status")
+        #expect(!bare.isStatus)
+        #expect(marker.isStatus)
     }
 }
 

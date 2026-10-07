@@ -226,18 +226,10 @@ struct TrayHeaderFace: View {
 // MARK: - Notice
 
 /// The tray's one notice, with its one action as a button.
-/// The setup card's remaining steps, one line each, under its text, and its
-/// "Open at login" checkbox — unticked until the person ticks it.
+/// The setup card's remaining steps, one line each, under its text.
 struct TrayNoticeFace: View {
     let model: TrayNoticeModel
-    /// Sendable: the checkbox's binding carries it.
     var send: @MainActor @Sendable (TrayNoticeModel.Action) -> Void = { _ in }
-
-    @MainActor private var loginBinding: Binding<Bool> {
-        let send = self.send
-        let value = model.openAtLogin ?? false
-        return Binding(get: { value }, set: { send(.setOpenAtLogin($0)) })
-    }
 
     var body: some View {
         HStack(alignment: .center, spacing: PulseTheme.Space.s) {
@@ -254,12 +246,6 @@ struct TrayNoticeFace: View {
                         .font(PulseTheme.Font.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                }
-                if model.openAtLogin != nil {
-                    Toggle(model.openAtLoginTitle, isOn: loginBinding)
-                        .toggleStyle(.checkbox)
-                        .font(PulseTheme.Font.caption)
-                        .controlSize(.small)
                 }
             }
             Spacer(minLength: PulseTheme.Space.s)
@@ -383,7 +369,6 @@ struct TrayRowFace: View {
         case .enter: return KeyboardShortcut(.return, modifiers: [])
         case .right: return KeyboardShortcut(.rightArrow, modifiers: [])
         case .dismiss: return KeyboardShortcut("d", modifiers: .command)
-        case .mute: return KeyboardShortcut("m", modifiers: .command)
         default: return nil
         }
     }
@@ -422,24 +407,16 @@ struct TrayRowFace: View {
         .accessibilityLabel(t(.details))
     }
 
-    /// What the last Go did when it did not land exactly — and, when
-    /// Terminal automation is what stood in the way, its "Turn on".
+    /// What the last Go did when it did not land exactly.
     @MainActor private func notice(_ note: RowNotice) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: PulseTheme.Space.s) {
-            Text(note.text)
-                .font(PulseTheme.Font.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if note.offersAutomation {
-                Button(t(.turnOnAutomation)) { send(.turnOnAutomation) }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-            }
-        }
-        .padding(.leading, TrayChrome.padX + TrayChrome.oneLineTextStart)
-        .padding(.trailing, PulseTheme.Space.xs)
-        .padding(.bottom, Self.verticalPadding)
+        Text(note.text)
+            .font(PulseTheme.Font.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, TrayChrome.padX + TrayChrome.oneLineTextStart)
+            .padding(.trailing, PulseTheme.Space.xs)
+            .padding(.bottom, Self.verticalPadding)
     }
 
     /// The ask reads as secondary, the why of a stall in its tone, a step
@@ -476,11 +453,6 @@ struct TrayRowFace: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .fixedSize()
-            }
-            if model.muted {
-                Image(systemName: "bell.slash")
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(.tertiary)
             }
             if !model.age.isEmpty {
                 Text(model.age)

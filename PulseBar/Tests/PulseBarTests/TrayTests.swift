@@ -17,10 +17,10 @@ import XCTest
 final class BestEffortWorkspaceTests: XCTestCase {
     func testOnlyAnAbsoluteWorkspaceIsOpened() {
         let handle = LandingHandle(term: "vscode")
-        let opened = LandingPlan.make(handle: handle, cwd: "/Users/me/my-project", allowAutomation: false)
+        let opened = LandingPlan.make(handle: handle, cwd: "/Users/me/my-project")
         XCTAssertEqual(opened.steps.first, LandingStep.openFolder(bundleIDs: HostAppKind.vsCode.bundleIDs, path: "/Users/me/my-project"))
         for cwd in ["", "relative/path", "/", "/tmp", "/private/tmp"] {
-            let plan = LandingPlan.make(handle: handle, cwd: cwd, allowAutomation: false)
+            let plan = LandingPlan.make(handle: handle, cwd: cwd)
             XCTAssertEqual(plan.steps, [.activateApp(bundleIDs: HostAppKind.vsCode.bundleIDs)], "\(cwd) is not a workspace")
         }
     }
@@ -114,12 +114,10 @@ struct TrayInteractionTests {
         #expect(escape.handled)
     }
 
-    @Test func theDetailPageTakesCommandDAndCommandMAndReturn() {
+    @Test func theDetailPageTakesCommandDAndReturn() {
         let open = TrayKeys.State(selected: "a", detail: "a")
         let dismiss = press(open, [.dismiss])
         #expect(dismiss.effect == .dismiss("a"))
-        let mute = press(open, [.mute])
-        #expect(mute.effect == .toggleMute("a"))
         let go = press(open, [.enter])
         #expect(go.effect == .focus("a"))
     }
@@ -141,18 +139,16 @@ struct TrayInteractionTests {
         #expect(down.state.selected == nil)
     }
 
-    @Test func commandDAndCommandMActOnTheSelectedRow() {
+    @Test func commandDActsOnTheSelectedRow() {
         let onWait = TrayKeys.State(selected: "a", detail: nil)
         let dismiss = press(onWait, [.dismiss])
         #expect(dismiss.effect == .dismiss("a"))
-        let mute = press(onWait, [.mute])
-        #expect(mute.effect == .toggleMute("a"))
 
         let onRunning = TrayKeys.State(selected: "b", detail: nil)
         let notAWait = press(onRunning, [.dismiss])
-        #expect(notAWait.effect == nil, "⌘D is not a dismiss on a row that is not waiting")
+        #expect(notAWait.effect == nil, "⌘D is not an ignore on a row that is not waiting")
 
-        let nothingSelected = press(TrayKeys.State(), [.mute])
+        let nothingSelected = press(TrayKeys.State(), [.dismiss])
         #expect(nothingSelected.effect == nil)
     }
 
@@ -194,7 +190,7 @@ struct TrayInteractionTests {
     }
 
     /// A bare letter is not the tray's: the tray opens with a row selected,
-    /// and a bare D or M must never dismiss or mute.
+    /// and a bare D must never ignore a wait.
     @Test func eventsBecomeKeys() {
         let esc = TrayKeys.key(keyCode: 53, characters: "\u{1b}", command: false)
         #expect(esc == .escape)
@@ -206,8 +202,8 @@ struct TrayInteractionTests {
         #expect(dismiss == .dismiss)
         let dismissByDelete = TrayKeys.key(keyCode: 51, characters: "\u{7f}", command: true)
         #expect(dismissByDelete == .dismiss)
-        let mute = TrayKeys.key(keyCode: 46, characters: "m", command: true)
-        #expect(mute == .mute)
+        let commandM = TrayKeys.key(keyCode: 46, characters: "m", command: true)
+        #expect(commandM == nil, "⌘M is not the tray's")
         let bareD = TrayKeys.key(keyCode: 2, characters: "d", command: false)
         #expect(bareD == nil, "a bare D is never a dismiss")
         let backspace = TrayKeys.key(keyCode: 51, characters: "\u{7f}", command: false)
@@ -305,11 +301,11 @@ struct TrayInteractionTests {
     // MARK: - The one notice
 
     private func notice(
-        notify: Bool = true, authorized: Bool? = true, banner: Bool = false,
+        authorized: Bool? = true, banner: Bool = false,
         unconnected: [AgentID] = [], failure: String = "", connected: [AgentID]? = nil
     ) -> TrayNoticeModel? {
         TrayNoticeModel.pick(TrayNoticeModel.Input(
-            lang: .en, notifyOnWaiting: notify, notifyAuthorized: authorized,
+            lang: .en, notifyAuthorized: authorized,
             bannerFailed: banner, unconnected: unconnected, installFailure: failure, justConnected: connected
         ))
     }
@@ -336,8 +332,6 @@ struct TrayInteractionTests {
         let banner = notice(banner: true)
         #expect(banner?.kind == .bannerFailed)
         #expect(notice() == nil)
-        let optedOut = notice(notify: false, authorized: false)
-        #expect(optedOut == nil, "notifications turned off in Pulse are not a problem")
     }
 
     @Test func theSetupCardNamesTheAgentsAndItsRemainingSteps() {
@@ -431,8 +425,8 @@ struct TrayInteractionTests {
         #expect(ui.keys.selected == rows[1].rowKey)
     }
 
-    /// One gesture — a menu-bar click and the shortcut open the same
-    /// way, on the oldest wait.
+    /// One gesture — a menu-bar click and a reopen (Spotlight, Raycast)
+    /// open the same way, on the oldest wait.
     @MainActor
     @Test func everyOpenSelectsTheOldestWait() {
         let store = StatusStore()
@@ -756,7 +750,7 @@ struct LandingPlanTests {
         #expect(handle.tmuxPane == "%3")
         #expect(handle.tmuxSocket == "/private/tmp/tmux-501/default")
         #expect(handle.tty == "ttys004")
-        let plan = LandingPlan.make(handle: handle, cwd: "/Users/me/app", allowAutomation: false)
+        let plan = LandingPlan.make(handle: handle, cwd: "/Users/me/app")
         #expect(plan.steps == [
             .tmuxPane(pane: "%3", socket: "/private/tmp/tmux-501/default", hostBundleIDs: ["com.googlecode.iterm2"]),
             .activateApp(bundleIDs: ["com.googlecode.iterm2"]),
@@ -775,7 +769,7 @@ struct LandingPlanTests {
     @Test func anITermSessionIsSelectedByItsUniqueID() {
         let handle = LandingHandle("iterm:w0t1p0:9F1C-UUID;tty:/dev/ttys007;term:iTerm.app")
         #expect(handle.itermUniqueID == "9F1C-UUID")
-        let plan = LandingPlan.make(handle: handle, cwd: "/Users/me/app", allowAutomation: true)
+        let plan = LandingPlan.make(handle: handle, cwd: "/Users/me/app")
         #expect(plan.steps == [
             .iTermSession(uniqueID: "9F1C-UUID"),
             .ttyTab(tty: "ttys007"),
@@ -785,19 +779,19 @@ struct LandingPlanTests {
     }
 
     @Test func aTerminalTabIsFoundByItsTTY() {
-        let plan = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys001;term:Apple_Terminal"), cwd: "", allowAutomation: true)
+        let plan = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys001;term:Apple_Terminal"), cwd: "")
         #expect(plan.steps == [.ttyTab(tty: "ttys001"), .activateApp(bundleIDs: [LandingPlan.terminalBundleID])])
         #expect(plan.precision == .exact)
     }
 
     @Test func ghosttyIsTheAppOnly() {
-        let plan = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys002;term:ghostty"), cwd: "/Users/me/app", allowAutomation: true)
+        let plan = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys002;term:ghostty"), cwd: "/Users/me/app")
         #expect(plan.steps == [.activateApp(bundleIDs: ["com.mitchellh.ghostty"])], "the tab search asks only Terminal and iTerm")
         #expect(plan.precision == .app)
     }
 
     @Test func anEditorTerminalOpensTheFolderInThatEditor() {
-        let vscode = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys005;term:vscode"), cwd: "/Users/me/app", allowAutomation: true, pid: 812)
+        let vscode = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys005;term:vscode"), cwd: "/Users/me/app", pid: 812)
         #expect(vscode.steps == [
             .openFolder(bundleIDs: HostAppKind.vsCode.bundleIDs, path: "/Users/me/app"),
             .activateApp(bundleIDs: HostAppKind.vsCode.bundleIDs),
@@ -805,39 +799,42 @@ struct LandingPlanTests {
         ])
         #expect(vscode.precision == .app)
         let cursor = LandingPlan.make(
-            handle: LandingHandle("term:vscode;app:com.todesktop.230313mzl4w4u92"), cwd: "/Users/me/app", allowAutomation: false
+            handle: LandingHandle("term:vscode;app:com.todesktop.230313mzl4w4u92"), cwd: "/Users/me/app"
         )
         #expect(cursor.steps.first == LandingStep.openFolder(bundleIDs: HostAppKind.cursor.bundleIDs, path: "/Users/me/app"), "Cursor also says vscode")
     }
 
     @Test func anEmptyHandleFallsBackToTheProcessOwnerOrNothing() {
-        #expect(LandingPlan.make(handle: LandingHandle(""), cwd: "/Users/me/app", allowAutomation: true).isEmpty)
-        #expect(LandingPlan.make(handle: LandingHandle(), cwd: "", allowAutomation: true).precision == nil)
-        let process = LandingPlan.make(handle: LandingHandle(), cwd: "/Users/me/app", allowAutomation: false, pid: 4312)
+        #expect(LandingPlan.make(handle: LandingHandle(""), cwd: "/Users/me/app").isEmpty)
+        #expect(LandingPlan.make(handle: LandingHandle(), cwd: "").precision == nil)
+        let process = LandingPlan.make(handle: LandingHandle(), cwd: "/Users/me/app", pid: 4312)
         #expect(process.steps == [.activateOwner(pid: 4312)])
         #expect(process.precision == .app)
-        let ide = LandingPlan.make(handle: LandingHandle(), cwd: "/Users/me/app", allowAutomation: false, pid: 4312, hostApp: .zed)
+        let ide = LandingPlan.make(handle: LandingHandle(), cwd: "/Users/me/app", pid: 4312, hostApp: .zed)
         #expect(ide.steps.first == LandingStep.openFolder(bundleIDs: HostAppKind.zed.bundleIDs, path: "/Users/me/app"))
     }
 
-    @Test func automationOffNeverScriptsATerminal() {
-        let iterm = LandingPlan.make(handle: LandingHandle("iterm:w0t1p0:ABCD;tty:/dev/ttys007;term:iTerm.app"), cwd: "", allowAutomation: false)
-        #expect(iterm.steps == [.activateApp(bundleIDs: [LandingPlan.iTermBundleID])])
-        #expect(iterm.precision == .app)
-        let terminal = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys001"), cwd: "", allowAutomation: false)
-        #expect(terminal.isEmpty, "a bare tty with automation off is not a handle")
+    /// No setting gates the scripted steps: an iTerm session and a bare
+    /// tty are always tried, and macOS's own Automation prompt is the
+    /// consent. A placeholder tty is no handle.
+    @Test func theScriptedStepsAreAlwaysPlanned() {
+        let iterm = LandingPlan.make(handle: LandingHandle("iterm:w0t1p0:ABCD;tty:/dev/ttys007;term:iTerm.app"), cwd: "")
+        #expect(iterm.steps.first == .iTermSession(uniqueID: "ABCD"))
+        #expect(iterm.precision == .exact)
+        let terminal = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys001"), cwd: "")
+        #expect(terminal.steps == [.ttyTab(tty: "ttys001")], "a bare tty is searched in Terminal and iTerm")
         for placeholder in ["tty:?", "tty:??", "tty:-"] {
-            #expect(LandingPlan.make(handle: LandingHandle(placeholder), cwd: "", allowAutomation: true).isEmpty, "\(placeholder)")
+            #expect(LandingPlan.make(handle: LandingHandle(placeholder), cwd: "").isEmpty, "\(placeholder)")
         }
     }
 
     @Test func theLabelFollowsThePrecision() {
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
         #expect(!row.canFocusTerminal)
-        row.landingPlan = LandingPlan.make(handle: LandingHandle("term:ghostty"), cwd: "", allowAutomation: true)
+        row.landingPlan = LandingPlan.make(handle: LandingHandle("term:ghostty"), cwd: "")
         #expect(TrayRowModel.focusTitle(row, lang: .en) == "Open app")
         #expect(TrayRowModel.focusTitle(row, lang: .zh) == "打开应用")
-        row.landingPlan = LandingPlan.make(handle: LandingHandle("tmux:%1"), cwd: "", allowAutomation: false)
+        row.landingPlan = LandingPlan.make(handle: LandingHandle("tmux:%1"), cwd: "")
         #expect(TrayRowModel.focusTitle(row, lang: .en) == "Go to terminal")
         #expect(TrayRowModel.focusTitle(row, lang: .zh) == "前往终端")
         #expect(row.landingPlan.precision == .exact)
@@ -893,7 +890,8 @@ final class L10nTests: XCTestCase {
             XCTAssertFalse(en.contains("package.sh") || zh.contains("package.sh"), "\(key)")
             XCTAssertFalse(en.localizedCaseInsensitiveContains("unsigned"), "\(key): \(en)")
         }
-        XCTAssertEqual(L10n.t(.waitingSummaryTitle, .en), "%d agents need you")
+        XCTAssertEqual(L10n.t(.ignoreWait, .en), "Ignore")
+        XCTAssertEqual(L10n.t(.ignoreWait, .zh), "忽略")
         XCTAssertEqual(L10n.t(.settings, .zh), "设置…")
     }
 
@@ -1043,10 +1041,8 @@ struct TerminalTabScriptTests {
 final class RowActionNoticeTests: XCTestCase {
 
     @MainActor
-    private func store(_ lang: AppLanguage = .en) -> StatusStore {
-        let store = StatusStore()
-        store.settings.language = lang
-        return store
+    private func store(_ lang: ResolvedLanguage = .en) -> StatusStore {
+        StatusStore(lang: lang)
     }
 
     private func liveRow() -> AgentRow {
@@ -1074,29 +1070,12 @@ final class RowActionNoticeTests: XCTestCase {
         XCTAssertNil(s.rowActionNotice(other), "a notice belongs to the row that was clicked")
     }
 
-    /// "Turn on" on an app-only notice sets the one Terminal automation
-    /// setting — the Settings switch — and the offer, taken, leaves.
-    @MainActor
-    func testTurnOnSetsTheSettingsSwitchAndClearsTheOffer() {
-        let s = store()
-        let row = liveRow()
-        s.noteRowAction(row.rowKey, RowNotice(text: s.tr(.focusAppOnlyAutomation), offersAutomation: true))
-        XCTAssertFalse(s.settings.allowTerminalAutomation)
-        let ui = TrayUI(store: s)
-        ui.send(TrayRowModel.Action.turnOnAutomation, row: row)
-        XCTAssertTrue(s.settings.allowTerminalAutomation, "the same setting as Settings → General")
-        XCTAssertNil(s.rowActionNotice(row))
-        let fromDetail = store()
-        TrayUI(store: fromDetail).send(DetailModel.Action.turnOnAutomation, row: row)
-        XCTAssertTrue(fromDetail.settings.allowTerminalAutomation)
-    }
-
     @MainActor
     func testEveryFailureSentenceIsRealCopyInBothLanguages() {
         // These only ever appear when something went wrong, which is exactly
         // when an untranslated or empty string would be found by a user
         // rather than by us.
-        for key in [L10n.Key.focusFailed, .focusAppOnly] {
+        for key in [L10n.Key.focusFailed, .focusAppOnly, .focusAppOnlyAutomation] {
             XCTAssertFalse(L10n.t(key, .en).isEmpty, "\(key)")
             XCTAssertFalse(L10n.t(key, .zh).isEmpty, "\(key)")
             XCTAssertNotEqual(L10n.t(key, .en), L10n.t(key, .zh), "\(key)")
@@ -1457,7 +1436,9 @@ struct RowWordsTests {
         #expect(model.lamp == LampFace(shape: .filled, tone: .waiting))
         #expect(model.secondLine == TrayRowModel.SecondLine(kind: .ask, text: "Bash: npm run build"))
         let menu = model.menu.map { $0.action }
-        #expect(menu == [.focus, .details, .dismiss, .mute], "every verb is in the menu once")
+        #expect(menu == [.focus, .details, .dismiss], "every verb is in the menu once")
+        let ignore = model.menu.first { $0.action == .dismiss }?.title
+        #expect(ignore == "Ignore", "one word for setting a wait aside: the tray, the detail and the banner")
         // The only time on a waiting row is how long it has waited.
         let waited = TrayRowModel.waitDuration(SurfaceFixtures.rowPermission(), nowMs: SurfaceFixtures.nowMs, lang: .en)
         #expect(model.age == waited)
@@ -1468,7 +1449,7 @@ struct RowWordsTests {
     @Test func theContextMenuShowsEachItemsKey() {
         let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowPermission(), lang: .en)
         let keys: [TrayKeys.Key?] = model.menu.map { $0.key }
-        let expected: [TrayKeys.Key?] = [.enter, .right, .dismiss, .mute]
+        let expected: [TrayKeys.Key?] = [.enter, .right, .dismiss]
         #expect(keys == expected)
     }
 
@@ -1485,15 +1466,8 @@ struct RowWordsTests {
         #expect(model.lamp == LampFace(shape: .dotted, tone: .idle))
         #expect(model.secondLine == nil, "grey is not a warning")
         let actions = model.menu.map { $0.action }
-        #expect(actions == [.details, .mute], "details and mute; nothing to dismiss, nowhere to go")
+        #expect(actions == [.details], "details only; nothing to ignore, nowhere to go")
         #expect(!model.canFocus)
-    }
-
-    @Test func aMutedRowSaysSoAndOffersUnmute() {
-        let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowRunning(), lang: .en, muted: true)
-        #expect(model.muted)
-        let titles = model.menu.map { $0.title }
-        #expect(titles.contains(L10n.t(.unmute, .en)))
     }
 
     @Test func theProjectIsNotRepeatedWhenItIsTheHeadline() {
@@ -1576,11 +1550,9 @@ struct RowWordsTests {
         #expect(blocked.ask == "Bash: npm run build")
     }
 
-    /// The detail page carries the row's landing notice — the same words
-    /// and the same "Turn on".
-    @Test func theDetailCarriesTheLandingNoticeAndItsTurnOn() {
+    /// The detail page carries the row's landing notice — the same words.
+    @Test func theDetailCarriesTheLandingNotice() {
         let detail = SurfaceFixtures.detailAppOnly(lang: .en)
-        #expect(detail.notice?.offersAutomation == true)
         #expect(detail.notice?.text == L10n.t(.focusAppOnlyAutomation, .en))
         let row = SurfaceFixtures.rowModel(SurfaceFixtures.rowTerminalTab(), lang: .en, appOnly: true)
         #expect(row.notice == detail.notice)

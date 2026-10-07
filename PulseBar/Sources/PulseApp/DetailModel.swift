@@ -20,7 +20,7 @@ struct DetailModel: Equatable {
     }
 
     /// What the detail page can ask for.
-    enum Action: Equatable { case back, focus, dismiss, mute, turnOnAutomation }
+    enum Action: Equatable { case back, focus, dismiss }
 
     var lang: ResolvedLanguage
     var rowKey: String
@@ -44,16 +44,14 @@ struct DetailModel: Equatable {
     var canFocus: Bool
     var focusTitle: String
     var canDismiss: Bool
-    var muted: Bool
     /// What the last Go did when it did not land exactly (`RowNotice`) —
-    /// the same words, and the same "Turn on", as the row.
+    /// the same words as the row.
     var notice: RowNotice? = nil
 
     static func make(
         row: AgentRow,
         lang: ResolvedLanguage,
         nowMs: Int64,
-        muted: Bool = false,
         notice: RowNotice? = nil
     ) -> DetailModel {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
@@ -90,7 +88,6 @@ struct DetailModel: Equatable {
             canFocus: row.canFocusTerminal,
             focusTitle: Words.focusTitle(row, lang: lang),
             canDismiss: row.isBlocked,
-            muted: muted,
             notice: notice
         )
     }

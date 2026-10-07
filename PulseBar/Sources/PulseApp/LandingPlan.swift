@@ -1,7 +1,7 @@
 import Foundation
 import PulseHarvest
 
-/// Where a session can be reached, read from the v5 `landing` column
+/// Where a session can be reached, read from the v6 `landing` column
 /// (`HookLanding.handles`): `tmux:%3;tmuxsock:<path>;iterm:w0t1p0:<uuid>;
 /// tty:/dev/ttys004;term:<TERM_PROGRAM>;app:<bundle id>`.
 struct LandingHandle: Hashable, Sendable {
@@ -63,9 +63,10 @@ enum LandingStep: Hashable, Sendable {
     /// `select-pane`), then bring forward the app that hosts its client —
     /// found from the client's pid, else `hostBundleIDs`. No Automation.
     case tmuxPane(pane: String, socket: String, hostBundleIDs: [String])
-    /// iTerm2's session whose `unique id` matches (Automation opt-in).
+    /// iTerm2's session whose `unique id` matches (AppleScript: macOS asks
+    /// its own Automation question the first time).
     case iTermSession(uniqueID: String)
-    /// Terminal.app / iTerm tab whose tty matches (Automation opt-in).
+    /// Terminal.app / iTerm tab whose tty matches (AppleScript, likewise).
     case ttyTab(tty: String)
     /// `open -b <bundle> <folder>` — an editor host opened on the session's
     /// folder. App precision: the editor cannot be told which terminal.
@@ -120,15 +121,11 @@ struct LandingPlan: Hashable, Sendable {
     ///   - handle: the session's landing handle (or, for a process-only row,
     ///     what the process table knows).
     ///   - cwd: the session's folder, opened in an editor host.
-    ///   - allowAutomation: `PulseSettings.allowTerminalAutomation`. Gates every
-    ///     AppleScript step (iTerm session, Terminal/iTerm tab); tmux and app
-    ///     activation never need it.
     ///   - pid: a live agent process, for the owner-app fallback; 0 none.
     ///   - hostApp: the editor the process table found on the parent chain.
     static func make(
         handle: LandingHandle,
         cwd: String,
-        allowAutomation: Bool,
         pid: Int32 = 0,
         hostApp: HostAppKind? = nil
     ) -> LandingPlan {
@@ -141,7 +138,7 @@ struct LandingPlan: Hashable, Sendable {
             // Inside tmux the tty is the pane's, and `ITERM_SESSION_ID` /
             // `TERM_PROGRAM` may be the tmux server's: the pane is the handle.
             steps.append(.tmuxPane(pane: handle.tmuxPane, socket: handle.tmuxSocket, hostBundleIDs: hostBundles))
-        } else if allowAutomation {
+        } else {
             let iTermHost = term.isEmpty || term == "iterm.app"
             if iTermHost, !handle.itermUniqueID.isEmpty {
                 steps.append(.iTermSession(uniqueID: handle.itermUniqueID))

@@ -14,13 +14,12 @@ import Foundation
 /// | ↩              | go: the terminal, else the detail      | go              |
 /// | → / Space      | detail                                 | —               |
 /// | ← / Esc        | Esc: close                             | back            |
-/// | ⌘D / ⌘⌫        | dismiss the selected wait              | dismiss         |
-/// | ⌘M             | mute / unmute the selected agent       | mute / unmute   |
+/// | ⌘D / ⌘⌫        | ignore the selected wait               | ignore          |
 /// | ⌘R ⌘, ⌘Q       | refresh · settings · quit              | same            |
 /// | ⌘W             | close (as Esc here)                    | close           |
 ///
 /// A bare letter is not the tray's: the tray opens with a row selected, and a
-/// bare D or M must never dismiss or mute; the commands carry ⌘. ⌘W is the
+/// bare D must never ignore a wait; the commands carry ⌘. ⌘W is the
 /// tray's too: left to the system it would reach `performClose:` on the
 /// borderless panel, which has no close button, and beep.
 enum TrayKeys {
@@ -28,8 +27,6 @@ enum TrayKeys {
         case up, down, left, right, space, enter, escape
         /// ⌘D or ⌘⌫
         case dismiss
-        /// ⌘M
-        case mute
         /// ⌘R
         case refresh
         /// ⌘,
@@ -66,7 +63,6 @@ enum TrayKeys {
     enum Effect: Equatable {
         case focus(String)
         case dismiss(String)
-        case toggleMute(String)
         case refresh
         case openSettings
         case closePanel
@@ -107,8 +103,6 @@ enum TrayKeys {
             case .dismiss:
                 guard let row, row.blocked else { return done() }
                 return done(.dismiss(row.key))
-            case .mute:
-                return done(.toggleMute(open))
             default:
                 return done()
             }
@@ -138,9 +132,6 @@ enum TrayKeys {
         case .dismiss:
             guard let selected, selected.blocked else { return done() }
             return done(.dismiss(selected.key))
-        case .mute:
-            guard let selected else { return done() }
-            return done(.toggleMute(selected.key))
         case .refresh, .settings, .quit, .close:
             return done()
         }
@@ -176,7 +167,6 @@ enum TrayKeys {
             case "q": return .quit
             case "w": return .close
             case "d": return .dismiss
-            case "m": return .mute
             default: return nil
             }
         }
@@ -218,17 +208,12 @@ enum BannerIntent: Equatable {
         }
     }
 
-    /// The rows an "Ignore" dismisses: every wait the banner names (one, or
-    /// a summary's several) that is still open now. A wait answered, ended
-    /// or already dismissed meanwhile is left alone.
-    static func ignoreTargets(rowKey: String, summaryRowKeys: [String], rows: [AgentRow]) -> [AgentRow] {
-        var named = summaryRowKeys
-        if !rowKey.isEmpty, !named.contains(rowKey) { named.insert(rowKey, at: 0) }
-        var seen = Set<String>()
-        return named.compactMap { key in
-            guard seen.insert(key).inserted else { return nil }
-            return rows.first { $0.rowKey == key && $0.isBlocked }
-        }
+    /// The row an "Ignore" dismisses: the banner's wait, when it is still
+    /// open now. A wait answered, ended or already ignored meanwhile is
+    /// left alone.
+    static func ignoreTarget(rowKey: String, rows: [AgentRow]) -> AgentRow? {
+        guard !rowKey.isEmpty else { return nil }
+        return rows.first { $0.rowKey == rowKey && $0.isBlocked }
     }
 }
 

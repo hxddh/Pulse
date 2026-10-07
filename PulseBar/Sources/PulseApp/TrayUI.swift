@@ -128,8 +128,6 @@ final class TrayUI {
             if let row = lookup(key) { store.focusTerminal(row) }
         case .dismiss(let key):
             if let row = lookup(key) { store.dismissWaiting(row) }
-        case .toggleMute(let key):
-            if let row = lookup(key) { store.toggleMute(row.agent) }
         case .refresh:
             store.refresh(reason: "manual")
         case .openSettings:
@@ -154,8 +152,6 @@ final class TrayUI {
         case .details: showDetail(row.rowKey)
         case .dismiss: store.dismissWaiting(row)
         case .focus: store.focusTerminal(row)
-        case .mute: store.toggleMute(row.agent)
-        case .turnOnAutomation: store.turnOnTerminalAutomation(row)
         }
     }
 
@@ -164,8 +160,6 @@ final class TrayUI {
         case .back: closeDetail()
         case .focus: store.focusTerminal(row)
         case .dismiss: store.dismissWaiting(row)
-        case .mute: store.toggleMute(row.agent)
-        case .turnOnAutomation: store.turnOnTerminalAutomation(row)
         }
     }
 

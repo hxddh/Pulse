@@ -23,7 +23,7 @@ struct SessionDetailView: View {
 
 /// Renders a `DetailModel` and nothing else: the header (back, lamp, the
 /// agent's icon and the headline — the page's title), then the ask with Go
-/// and Dismiss, the landing notice (with its "Turn on"), the why, the recent
+/// and Ignore, the landing notice, the why, the recent
 /// steps, the last message, the error and the facts (this turn, the
 /// folder) — each block only when it has something to say.
 struct SessionDetailFace: View {
@@ -74,12 +74,6 @@ struct SessionDetailFace: View {
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if model.muted {
-                Image(systemName: "bell.slash")
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(.tertiary)
-                    .accessibilityLabel(t(.mutedWord))
-            }
         }
         .padding(.horizontal, PulseTheme.Space.s)
         .padding(.vertical, PulseTheme.Space.s)
@@ -100,18 +94,11 @@ struct SessionDetailFace: View {
                 actions
             }
             if let notice = model.notice {
-                HStack(alignment: .firstTextBaseline, spacing: PulseTheme.Space.s) {
-                    Text(notice.text)
-                        .font(PulseTheme.Font.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if notice.offersAutomation {
-                        Button(t(.turnOnAutomation)) { send(.turnOnAutomation) }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                    }
-                }
+                Text(notice.text)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             if let why = model.why {
                 Text(why)
@@ -161,7 +148,7 @@ struct SessionDetailFace: View {
                 Button {
                     send(.dismiss)
                 } label: {
-                    Text(t(.dismissWait)) + Text("  ⌘D").foregroundStyle(.secondary)
+                    Text(t(.ignoreWait)) + Text("  ⌘D").foregroundStyle(.secondary)
                 }
             }
             Spacer(minLength: 0)

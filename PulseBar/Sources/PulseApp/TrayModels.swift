@@ -49,9 +49,7 @@ struct TrayHeaderModel: Equatable {
 ///    next step") until the person says "Got it";
 /// 2. the setup card: agents on this Mac that are not connected — "Found
 ///    Claude, Codex — Connect" installs their hooks, then asks macOS to allow
-///    banners. It comes first: without a hook there is nothing to notify.
-///    It carries an "Open at login" checkbox, unticked unless Pulse already
-///    opens at login — the person ticks it; it is never ticked for them;
+///    banners. It comes first: without a hook there is nothing to notify;
 /// 3. an agent whose install failed, and why ("Gemini: its settings file is
 ///    not valid JSON — fix it, then install again") — never offered again as
 ///    "Connect", which would fail the same way;
@@ -67,8 +65,6 @@ struct TrayNoticeModel: Equatable {
 
     enum Action: Equatable {
         case connect, dismissSetup, openHooksSettings, openNotificationSettings, enableNotifications
-        /// The setup card's checkbox.
-        case setOpenAtLogin(Bool)
     }
 
     var kind: Kind
@@ -79,14 +75,9 @@ struct TrayNoticeModel: Equatable {
     var tone: PulseTheme.Tone
     /// What is left to do, one line each — the setup card's follow-up.
     var steps: [String] = []
-    /// The setup card's "Open at login" checkbox and whether it is ticked;
-    /// nil on every other notice.
-    var openAtLogin: Bool? = nil
-    var openAtLoginTitle: String = ""
 
     struct Input {
         var lang: ResolvedLanguage
-        var notifyOnWaiting: Bool
         /// nil: macOS has not been asked yet.
         var notifyAuthorized: Bool?
         /// Notification Center refused the last banner while a wait is open.
@@ -101,8 +92,6 @@ struct TrayNoticeModel: Equatable {
         /// The agents the setup card just connected (never empty); nil when
         /// it has no follow-up to show.
         var justConnected: [AgentID]? = nil
-        /// Pulse opens at login now (macOS says so): the checkbox shows it.
-        var openAtLogin: Bool = false
     }
 
     static func pick(_ input: Input) -> TrayNoticeModel? {
@@ -123,8 +112,7 @@ struct TrayNoticeModel: Equatable {
             return TrayNoticeModel(
                 kind: .setup, text: String(format: t(.setupFound), names(input.unconnected)),
                 actionTitle: t(.setupConnect), action: .connect,
-                systemImage: "link", tone: .idle,
-                openAtLogin: input.openAtLogin, openAtLoginTitle: t(.launchAtLogin)
+                systemImage: "link", tone: .idle
             )
         }
         if !input.installFailure.isEmpty {
@@ -134,14 +122,14 @@ struct TrayNoticeModel: Equatable {
                 systemImage: "exclamationmark.triangle", tone: .attention
             )
         }
-        if input.notifyOnWaiting, input.notifyAuthorized == false {
+        if input.notifyAuthorized == false {
             return TrayNoticeModel(
                 kind: .notificationsDenied, text: t(.noticeNotificationsDenied),
                 actionTitle: t(.openNotificationSettings), action: .openNotificationSettings,
                 systemImage: "bell.slash", tone: .attention
             )
         }
-        if input.notifyOnWaiting, input.notifyAuthorized == nil {
+        if input.notifyAuthorized == nil {
             return TrayNoticeModel(
                 kind: .notificationsOff, text: t(.noticeNotificationsOff),
                 actionTitle: t(.enableNotifications), action: .enableNotifications,

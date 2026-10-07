@@ -4,7 +4,7 @@ import Foundation
 /// what its events said about it — from the agents' own hook events.
 ///
 /// Pulse reads no vendor session file. Each supported agent's hook appends
-/// one v5 line to the event log (`EventLog`) when a session starts, takes a
+/// one v6 line to the event log (`EventLog`) when a session starts, takes a
 /// prompt, runs a tool, is blocked, finishes its turn or ends; a process exit
 /// ends a session. This is the reducer those lines feed, in file order — a
 /// pure value, `apply` in, `sessions` out — and `TrayState.project` turns it

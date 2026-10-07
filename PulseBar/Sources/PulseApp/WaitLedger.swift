@@ -34,8 +34,7 @@ struct WaitLedger: Equatable {
         /// open past `WaitingDelivery.deferAfterMs` while its app is not in
         /// front: it may have its one banner now.
         var frontDue = false
-        /// The id of the banner that announces it (a summary's id is shared
-        /// by every wait it names); nil while none is shown.
+        /// The id of the banner that announces it; nil while none is shown.
         var bannerID: String?
     }
 
@@ -52,15 +51,6 @@ struct WaitLedger: Equatable {
             .replacingOccurrences(of: "|", with: "-")
             .replacingOccurrences(of: "/", with: "-")
         return "pulse-waiting-\(safe)"
-    }
-
-    /// The summary banner for a burst of waits.
-    static func summaryID(rowKeys: [String]) -> String {
-        let seed = rowKeys.joined(separator: "|")
-        let safe = String(seed.unicodeScalars.map { scalar in
-            CharacterSet.alphanumerics.contains(scalar) ? String(scalar) : "-"
-        }.joined().prefix(96))
-        return "pulse-waiting-summary-\(safe)"
     }
 
     // MARK: - Changes
@@ -145,14 +135,12 @@ struct WaitLedger: Equatable {
         return ids.subtracting(live)
     }
 
-    /// Where a banner click goes: the first wait it names that is still
-    /// open and not dismissed; nil when every one was answered — the click
-    /// opens the tray instead of routing to a prompt that is gone.
-    func openWait(rowKey: String, summaryRowKeys: [String]) -> String? {
-        ([rowKey] + summaryRowKeys).first { key in
-            guard !key.isEmpty, let wait = waits[key] else { return false }
-            return !wait.dismissed
-        }
+    /// Whether a banner click has somewhere to go: its wait is still open
+    /// and not ignored. False when it was answered — the click opens the
+    /// tray instead of routing to a prompt that is gone.
+    func isOpen(_ rowKey: String) -> Bool {
+        guard !rowKey.isEmpty, let wait = waits[rowKey] else { return false }
+        return !wait.dismissed
     }
 
     /// Open waits whose banner is still owed.

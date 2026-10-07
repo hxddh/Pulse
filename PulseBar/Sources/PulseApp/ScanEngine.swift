@@ -5,7 +5,7 @@ import AppKit
 ///
 /// Nothing here polls a vendor. What moves a session:
 ///
-/// - the **event log** (`events.tsv`): a hook appends a v5 line; the
+/// - the **event log** (`events.tsv`): a hook appends a v6 line; the
 ///   watcher wakes the engine, which reads the bytes after its cursor off
 ///   the main thread and applies those lines, in order, to the
 ///   `SessionBook`. At launch the whole log is replayed **before the first
@@ -163,7 +163,6 @@ final class ScanEngine {
                     self.quietProcessScans = 0
                     self.read(.processes)
                     self.project()
-                    if let model = self.model { UpdateCheck.shared.startIfEnabled(store: model) }
                 }
             }
         }
@@ -238,11 +237,7 @@ final class ScanEngine {
         else { return }
         let timer = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
             guard let engine = self else { return }
-            Task { @MainActor in
-                engine.read(.processes)
-                // One date comparison unless a day has passed.
-                if let model = engine.model { UpdateCheck.shared.startIfEnabled(store: model) }
-            }
+            Task { @MainActor in engine.read(.processes) }
         }
         timer.tolerance = interval * 0.2
         processTimer = timer
@@ -482,7 +477,6 @@ final class ScanEngine {
             context: TrayState.Context(
                 nowMs: nowMs,
                 lang: model.lang,
-                allowAutomation: model.settings.allowTerminalAutomation,
                 previousWaits: lastWaits
             )
         )

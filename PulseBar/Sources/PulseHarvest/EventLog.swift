@@ -2,9 +2,14 @@ import Darwin
 import Foundation
 import PulseCore
 
-/// The one event log: `events.tsv`, append-only, one v5 line per hook
+/// The one event log: `events.tsv`, append-only, one v6 line per hook
 /// event (`AttentionRecord`), in the order the hooks wrote them.
 ///
+/// - **Only a v6 log is read.** A file whose first line is not a v6 header
+///   (`AttentionProtocol.isHeader`) is treated as absent: a read finds it
+///   empty, and the next writer (`append`, `ensureExists` at launch) empties
+///   it and starts a fresh v6 log under the same lock. It is never read and
+///   never migrated.
 /// - **Writers append** under an exclusive `flock` (`append`): the hook
 ///   receiver, the app's own `done` for a dismissal, an integrator's script.
 ///   The file is created 0600 (`PrivateFile.tighten`) with a header naming
@@ -120,16 +125,21 @@ package enum EventLog {
 
     // MARK: - Write
 
-    /// Append one line (a v5 record's `line`). Creates the file with its
-    /// header; compacts it first when the line would take it past
-    /// `maxBytes`. `url` nil is the real log; a test passes its own file.
+    /// Append one line (a v6 record's `line`). Creates the file with its
+    /// header — and starts it over when it is not a v6 log; compacts it
+    /// first when the line would take it past `maxBytes`. `url` nil is the
+    /// real log; a test passes its own file.
     @discardableResult
     package static func append(_ line: String, at url: URL? = nil, nowMs: Int64) -> Bool {
         let record = line.trimmingCharacters(in: .newlines)
         guard !record.isEmpty else { return false }
         return withExclusiveLock(at: url ?? path) { fd in
-            let size = Int(lseek(fd, 0, SEEK_END))
+            var size = Int(lseek(fd, 0, SEEK_END))
             guard size >= 0 else { return false }
+            if size > 0, !isCurrent(fd, size: size) {
+                guard ftruncate(fd, 0) == 0 else { return false }
+                size = 0
+            }
             if size > 0, size + record.utf8.count + 1 > maxBytes {
                 // Read whole or not at all: a rewrite from a partial copy
                 // would drop lines nobody has read.
@@ -160,21 +170,34 @@ package enum EventLog {
         } ?? false
     }
 
-    /// Create the file with its header if it is missing or empty — what the
-    /// watcher needs before it can open it.
+    /// Create the file with its header if it is missing, empty or not a v6
+    /// log (then it is emptied first, unread) — what the watcher needs
+    /// before it can open it.
     package static func ensureExists(at url: URL? = nil, nowMs: Int64) {
         _ = withExclusiveLock(at: url ?? path) { fd -> Bool in
-            guard lseek(fd, 0, SEEK_END) == 0 else { return true }
+            let size = Int(lseek(fd, 0, SEEK_END))
+            guard size >= 0 else { return false }
+            if size > 0 {
+                if isCurrent(fd, size: size) { return true }
+                DebugLog.write("events: not a v6 log — started over")
+                guard ftruncate(fd, 0) == 0 else { return false }
+            }
             return writeAll(fd, AttentionProtocol.header(generation: generation(nowMs: nowMs)))
         }
+    }
+
+    /// Whether the open file begins with a v6 header.
+    private static func isCurrent(_ fd: Int32, size: Int) -> Bool {
+        guard let head = readRange(fd, from: 0, count: min(size, 512)) else { return false }
+        return AttentionProtocol.isHeader(headerLine(head))
     }
 
     // MARK: - Read
 
     /// The lines after `cursor`, or the whole file when the cursor is nil,
-    /// from another generation, or past the end. A missing file is an empty
-    /// log (a fresh, empty chunk). Nil when the file could not be read — the
-    /// caller keeps what it had.
+    /// from another generation, or past the end. A missing file, or one
+    /// that is not a v6 log, is an empty log (a fresh, empty chunk). Nil
+    /// when the file could not be read — the caller keeps what it had.
     package static func read(at url: URL? = nil, after cursor: Cursor?) -> Chunk? {
         let target = url ?? path
         let fd = target.path.withCString { open($0, O_RDONLY) }
@@ -189,6 +212,7 @@ package enum EventLog {
         guard size > 0 else { return Chunk(header: "", lines: [], end: 0, fresh: true) }
         guard let head = readRange(fd, from: 0, count: min(size, 512)) else { return nil }
         let header = headerLine(head)
+        guard AttentionProtocol.isHeader(header) else { return Chunk(header: "", lines: [], end: 0, fresh: true) }
         var start = 0
         var fresh = true
         if let cursor, cursor.header == header, cursor.offset >= 0, cursor.offset <= size {

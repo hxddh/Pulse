@@ -16,7 +16,7 @@ says what is true now; CHANGELOG says when and why it became true.
 | [`docs/scenarios.md`](docs/scenarios.md) | You add or change an acceptance scenario — each row names the tests that pin it |
 | [`docs/vendor-formats.md`](docs/vendor-formats.md) | You touch a hook receiver or any per-agent fact — the one place they live: where each hook is installed, what each event becomes, which gives the title and the step; each contract has a pinned source, a test and a weekly drift sentinel |
 | [`docs/observability-matrix.md`](docs/observability-matrix.md) | You change what a row claims — the sources, and what is never shown |
-| [`docs/attention-protocol.md`](docs/attention-protocol.md) | You touch the event log (`events.tsv`, Attention Protocol v5) or a hook's line |
+| [`docs/attention-protocol.md`](docs/attention-protocol.md) | You touch the event log (`events.tsv`, Attention Protocol v6) or a hook's line |
 | [`docs/landing-hosts.md`](docs/landing-hosts.md) | You change how a click lands on a terminal or an editor |
 
 **The roster is seven agents**, an owner decision: Claude, Codex, Cursor (IDE
@@ -59,13 +59,20 @@ compiles and ships.
   into terminals. Bringing any of it back is a product decision, not a
   feature.
 - **Pulse keeps no record of its own.** The agents' hooks write the one
-  event log (`events.tsv`, append-only, Attention Protocol v5: every hook
+  event log (`events.tsv`, append-only, Attention Protocol v6: every hook
   event — start, prompt, tool, block, idle, turn, done, end — one line in
   order); it is the only state that outlives a launch, beside
   `settings.json` and the hook-install ledger. The app appends to it only a
   `done` for a dismissal. What the banner remembers (`WaitLedger`) is in
-  memory; files earlier versions kept (`attention.tsv`, `activity.d/`, …)
-  are deleted at launch, never read or migrated.
+  memory. A log whose header is not v6 is treated as absent — emptied and
+  started over, never read or migrated.
+- **Old versions do not exist.** No migration, no compatibility read, no
+  cleanup of what an earlier version left: `settings.json` decodes only the
+  current keys, the receiver and the installer know only the current marker
+  and ledger, and the login item is `SMAppService` alone.
+- **Pulse makes no network connection.** No update check, no telemetry:
+  Settings' "Releases…" opens the releases page in the browser
+  (`catalog_check` refuses `URLSession` and its cousins).
 - **Replay before the first projection.** At launch `ScanEngine` reads the
   whole log, applies every line in order to `SessionBook`, and only then
   projects; that projection is the banner baseline. After it the engine
@@ -160,7 +167,7 @@ contracts and drift), `AttentionTests` (the book reading event lines, the
 protocol, the event log, the hook receiver, the installer), `SessionTests` (the seven agents' truth
 tables, `TrayState`, identity), `NotifierTests` (`WaitLedger`,
 delivery, routing), `TrayTests` (the row's words, the lamp, keys, detail), `SettingsTests`, `DiagnosticsTests` (the
-report, the hooks section, the tray notice, version and updates),
+report, the hooks section, the tray notice, the version),
 `EngineTests`. A new test goes in the file of the component it tests — never
 a file named after a release. `docs/scenarios.md` names suites and methods,
 and `scenario_map.py` checks both exist.
@@ -258,11 +265,10 @@ runs gates and tests, packages the DMG, and publishes a Release whose body is
 that version's CHANGELOG section. **It creates the tag with its own
 `contents: write` token** — publishing does not depend on any developer's or
 agent's local credentials. A version that already has a Release is refused,
-so re-pushing is harmless. The in-app update check reads GitHub's
-`/releases/latest` only; an untagged version is invisible to users.
+so re-pushing is harmless. Pulse checks for no update: Settings' "Releases…"
+opens the releases page, where an untagged version does not exist.
 
-**A prerelease is invisible to the in-app update check and to GitHub
-Latest** (it is published with `prerelease: true`, `make_latest: false`).
+**A prerelease is invisible to GitHub Latest** (it is published with `prerelease: true`, `make_latest: false`).
 Use it for a version not yet run on a real Mac. After the owner's real-Mac
 smoke run, the owner promotes it by editing the release on GitHub: untick
 "Set as a pre-release" and tick "Set as the latest release" — or pushes a

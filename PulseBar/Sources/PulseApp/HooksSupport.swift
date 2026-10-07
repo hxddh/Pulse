@@ -103,32 +103,24 @@ enum HooksSupport {
     }
 
     /// Installs and removals run one at a time, on this queue: two clicks
-    /// (a line's fix while the section's install runs) never edit the same
-    /// config at once.
+    /// never edit the same config at once.
     static let installQueue = DispatchQueue(label: "com.pulse.hooks-install", qos: .userInitiated)
 
-    /// One install or removal: every agent (nil — for an install, every
-    /// agent whose vendor folder is on this Mac), or exactly these.
+    /// Settings' and the setup card's one job: install every agent on this
+    /// Mac, or remove every agent's hook.
     enum Job: Equatable, Sendable {
-        case install([AgentID]?)
-        case uninstall([AgentID]?)
-
-        /// The agents it names; nil for every agent.
-        var agents: [AgentID]? {
-            switch self {
-            case .install(let agents), .uninstall(let agents): return agents
-            }
-        }
+        case install
+        case uninstall
     }
 
     /// Do one job. `previous`: the failures already said, kept for the
-    /// agents this job did not touch — removing one agent's hook does not
-    /// forget why another's install failed.
+    /// agents this job did not touch — an install that skips an agent not on
+    /// this Mac does not forget why its last install failed.
     @discardableResult
     static func run(_ job: Job, previous: [AgentID: HooksInstaller.Failure] = [:]) -> Status {
         switch job {
-        case .install(let agents): return install(agents: agents, previous: previous)
-        case .uninstall(let agents): return uninstall(agents: agents, previous: previous)
+        case .install: return install(previous: previous)
+        case .uninstall: return uninstall(previous: previous)
         }
     }
 

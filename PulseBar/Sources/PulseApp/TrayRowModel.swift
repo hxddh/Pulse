@@ -8,7 +8,7 @@ import Foundation
 /// test · 12m ago", a past step, never "running"). No chip, no tint, no "new"
 /// dot, no buttons on the row: the verbs are a click (the body goes, the
 /// trailing "›" or an ⌥-click opens the detail — `clickAction`), keys (↩ →
-/// ⌘D ⌘M), the context menu (which shows each key), VoiceOver actions and
+/// ⌘D), the context menu (which shows each key), VoiceOver actions and
 /// the detail page.
 ///
 /// Pure: the row, the language, the clock and a few facts only the store
@@ -21,10 +21,7 @@ struct TrayRowModel: Equatable {
     enum Action: String, Equatable, Hashable {
         /// Go: focus the terminal when there is a handle, else the detail.
         case primary
-        case details, dismiss, focus, mute
-        /// The landing notice's "Turn on": Terminal automation, the same
-        /// setting as the Settings switch (`RowNotice.offersAutomation`).
-        case turnOnAutomation
+        case details, dismiss, focus
     }
 
     /// Where on the row a click landed: its body (both lines) or the
@@ -53,8 +50,7 @@ struct TrayRowModel: Equatable {
             case .focus: return .enter
             case .details: return .right
             case .dismiss: return .dismiss
-            case .mute: return .mute
-            case .primary, .turnOnAutomation: return nil
+            case .primary: return nil
             }
         }
     }
@@ -88,8 +84,6 @@ struct TrayRowModel: Equatable {
     var age: String
     /// "Your turn", quietly, for a session whose turn ended unseen.
     var turnLabel: String?
-    /// The agent is muted (no banners); the row shows a bell.slash.
-    var muted: Bool
     var secondLine: SecondLine?
     /// `why(_:lang:nowMs:)`: which evidence put this row in its state.
     var why: String
@@ -108,7 +102,6 @@ struct TrayRowModel: Equatable {
         var lang: ResolvedLanguage
         var nowMs: Int64
         var notice: RowNotice? = nil
-        var muted: Bool = false
     }
 
     static func make(_ input: Input) -> TrayRowModel {
@@ -129,9 +122,7 @@ struct TrayRowModel: Equatable {
             menu.append(Button(action: .focus, title: Self.focusTitle(row, lang: lang)))
         }
         menu.append(Button(action: .details, title: t(.details)))
-        if row.isBlocked { menu.append(Button(action: .dismiss, title: t(.dismissWait))) }
-        // Muting lives on the row it silences, not in a list of switches.
-        menu.append(Button(action: .mute, title: t(input.muted ? .unmute : .mute)))
+        if row.isBlocked { menu.append(Button(action: .dismiss, title: t(.ignoreWait))) }
 
         // VoiceOver hears whole words: "4 minutes", never the drawn "4m".
         var spoken = [row.agent.displayName, Self.stateText(row, lang: lang), headline]
@@ -140,7 +131,6 @@ struct TrayRowModel: Equatable {
         if !spokenAge.isEmpty { spoken.append(spokenAge) }
         if let second, second.kind != .step { spoken.append(second.text) } else { spoken.append(why) }
         if let second, second.kind == .step { spoken.append(second.text) }
-        if input.muted { spoken.append(t(.mutedWord)) }
 
         return TrayRowModel(
             lang: lang,
@@ -152,7 +142,6 @@ struct TrayRowModel: Equatable {
             headlineQuiet: row.isProcessOnly,
             age: age,
             turnLabel: turnLabel,
-            muted: input.muted,
             secondLine: second,
             why: why,
             canFocus: row.canFocusTerminal,
@@ -422,28 +411,20 @@ extension TrayRowModel {
 /// thing. Pure.
 struct RowNotice: Equatable {
     var text: String
-    /// The notice carries a "Turn on" button for Terminal automation — the
-    /// one switch that would have made this Go exact. Consent at the moment
-    /// of need; macOS's own Automation prompt still comes on the next Go.
-    var offersAutomation = false
 
-    /// A Go that reached the app, not the exact terminal. When the one
-    /// thing in the way is Terminal automation — off, and with it on the
-    /// same handle would land on the exact iTerm session or Terminal / iTerm
-    /// tab (no tmux pane already exact, no editor, no Ghostty) — the notice
-    /// says so and offers to turn it on; otherwise it says only where it
-    /// landed.
-    static func appOnly(row: AgentRow, automationAllowed: Bool, lang: ResolvedLanguage) -> RowNotice {
-        let editor = row.landingPlan.steps.contains { step in
-            if case .openFolder = step { return true }
-            return false
+    /// A Go that reached the app, not the exact terminal. When the plan
+    /// tried an iTerm session or a Terminal / iTerm tab — AppleScript, which
+    /// macOS lets run only once the person allowed it in its own Automation
+    /// prompt — the notice says where that permission is; otherwise it says
+    /// only where it landed. No button: macOS's prompt is the consent.
+    static func appOnly(row: AgentRow, lang: ResolvedLanguage) -> RowNotice {
+        let scripted = row.landingPlan.steps.contains { step in
+            switch step {
+            case .iTermSession, .ttyTab: return true
+            default: return false
+            }
         }
-        let exactWithAutomation = !automationAllowed && !editor
-            && LandingPlan.make(handle: row.landing, cwd: row.cwd, allowAutomation: true).precision == .exact
-        return RowNotice(
-            text: L10n.t(exactWithAutomation ? .focusAppOnlyAutomation : .focusAppOnly, lang),
-            offersAutomation: exactWithAutomation
-        )
+        return RowNotice(text: L10n.t(scripted ? .focusAppOnlyAutomation : .focusAppOnly, lang))
     }
 }
 

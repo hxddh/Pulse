@@ -60,18 +60,16 @@ program, or started after the session, ends the session.
   long ago; the prompt event's text is the title. No token, usage or cost
   field is read.
 - Settings → Hooks is the diagnostics: one line per agent on this Mac
-  (installed / not installed / failed and why, its last event, install and
-  remove buttons), the absent agents in one line, Codex and Cursor marked
+  (installed / not installed / failed and why, its last event), "Install
+  all" and "Remove all", the absent agents in one line, Codex and Cursor marked
   "doesn't report when it waits". "Copy report" writes it as plain text.
 
 ## Removing everything
 
-Settings → Hooks "Remove all" takes every hook out, byte for byte. Settings
-→ "Uninstall Pulse…" does that first and — only when no hook is left —
-removes the login item, deletes `~/Library/Application Support/Pulse` (the
-event log, settings, the launcher and the install record), quits and shows
-the app in Finder for the Trash. A hook that will not come out stops it
-before anything else is removed.
+Settings → Hooks "Remove all" takes every hook out, byte for byte. To remove
+Pulse itself: do that, quit Pulse, move the app to the Trash and delete
+`~/Library/Application Support/Pulse` (the event log, settings, the launcher
+and the install record) — the README's Uninstall section.
 
 ## Boundaries
 

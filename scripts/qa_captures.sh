@@ -46,6 +46,14 @@ if [[ ! -x "$APP" ]]; then
 fi
 OUT="${PULSE_QA_OUT:-$ROOT/zig-out/qa-captures}"
 
+# Pulse follows the system language; a run picks one the macOS way.
+apple_languages() {
+  case "$1" in
+    zh) echo "(zh-Hans)" ;;
+    *) echo "(en)" ;;
+  esac
+}
+
 quit_pulse() {
   # One Pulse per Mac (SingleInstanceGuard): a running app would keep the
   # driver from starting.
@@ -82,7 +90,7 @@ PY
       local suffix="$language-$appearance"
       echo "--- surfaces $suffix ---"
       quit_pulse
-      "$APP" --capture-surfaces="$out" --language="$language" --appearance="$appearance" &
+      "$APP" --capture-surfaces="$out" --appearance="$appearance" -AppleLanguages "$(apple_languages "$language")" &
       local pid=$!
       local deadline=$((SECONDS + timeout))
       while kill -0 "$pid" 2>/dev/null && (( SECONDS < deadline )); do
@@ -157,7 +165,7 @@ status_captures() {
       "$APP" \
         --tray-fixture="$fixture" \
         --appearance="$appearance" \
-        --language="$language" \
+        -AppleLanguages "$(apple_languages "$language")" \
         --open-tray-panel \
         --capture-tray-panel="$tray" \
         --capture-status-item="$lamp" &

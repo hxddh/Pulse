@@ -38,9 +38,9 @@ public enum AttentionKind: String, Sendable, CaseIterable {
     public var isOpen: Bool { isBlocking || self == .turn || self == .idle }
 }
 
-/// One v5 record: eleven tab-separated columns.
+/// One v6 record: ten tab-separated columns.
 ///
-/// `agent  kind  ms  message  session  cwd  front  pid  -  landing  tool`
+/// `agent  kind  ms  message  session  cwd  front  pid  landing  tool`
 ///
 /// - `message`: what the event said — a block's ask, a turn's last words
 ///   (or, on a failed turn, its error), a prompt's text, a tool's target;
@@ -48,8 +48,6 @@ public enum AttentionKind: String, Sendable, CaseIterable {
 ///   raised, `0` when it was not, empty when that could not be established;
 /// - `pid`: the agent process the hook ran under, empty when unknown (a
 ///   pid of 1 or less is never written: the hook's parent had exited);
-/// - the ninth column is reserved: written empty, never read (it once
-///   named a transcript file; Pulse reads none);
 /// - `landing`: where the session can be reached, most specific first,
 ///   `;`-separated — `tmux:%3`, `iterm:w0t1p0:<uuid>`, `tty:/dev/ttys004`,
 ///   `term:<TERM_PROGRAM>`;
@@ -92,25 +90,10 @@ public struct AttentionRecord: Equatable, Sendable {
     /// said again right after stay cleared; a vendor's "resolved" does not.
     public static let dismissTool = ":dismiss"
 
-    /// The status marker as an earlier receiver spelled it, read (never
-    /// written) so a log it wrote replays the same: a Copilot
-    /// `errorOccurred` or an OpenCode `session.status` line misread as a
-    /// tool named `status` would be a step, and could answer a block. Only
-    /// those two agents' lines ever carried it.
-    static let legacyStatusTool = "status"
-
-    /// Whether a `tool` line's `tool` column is the status marker, for the
-    /// agent that wrote it.
-    public static func isStatus(tool: String, agent: String) -> Bool {
-        let value = tool.trimmingCharacters(in: .whitespacesAndNewlines)
-        if value == statusTool { return true }
-        guard value == legacyStatusTool else { return false }
-        let id = AgentCatalog.agent(named: agent)
-        return id == .copilot || id == .opencode
+    /// This line's `tool` column is the status marker (`statusTool`).
+    public var isStatus: Bool {
+        tool.trimmingCharacters(in: .whitespacesAndNewlines) == Self.statusTool
     }
-
-    /// This line is a `tool` column status marker (`isStatus(tool:agent:)`).
-    public var isStatus: Bool { Self.isStatus(tool: tool, agent: agent) }
 
     /// This line is the app's own `done` (`dismissTool`).
     public var isDismissal: Bool {
@@ -163,14 +146,13 @@ public struct AttentionRecord: Equatable, Sendable {
             cwd,
             AttentionProtocol.frontField(front),
             pid > 1 ? String(pid) : "",
-            "",
             landing,
             tool,
         ].joined(separator: "\t")
     }
 
-    /// A complete v5 record, or nil for anything else (a comment, a blank
-    /// line, a v4 line with ten columns).
+    /// A complete v6 record, or nil for anything else (a comment, a blank
+    /// line, a line with another column count).
     public init?<S: StringProtocol>(line: S) {
         guard let cols = AttentionProtocol.columns(of: line) else { return nil }
         self.init(
@@ -182,14 +164,14 @@ public struct AttentionRecord: Equatable, Sendable {
             cwd: cols[5],
             front: AttentionProtocol.parseFront(cols[6]),
             pid: AttentionProtocol.parsePid(cols[7]),
-            landing: cols[9],
-            tool: cols[10]
+            landing: cols[8],
+            tool: cols[9]
         )
     }
 }
 
-/// Attention Protocol v5 — every hook event of every supported agent, read
-/// by its adapter in `pulse-hook` / `PulseBar --hook`, as one line of one
+/// Attention Protocol v6 — every hook event of every supported agent, read
+/// by its adapter in `pulse-hook` (the app's `--hook`), as one line of one
 /// append-only event log (`events.tsv`, `EventLog`).
 ///
 /// Writers: `PulseHookReceiver` (through `EventLog.append`) and the app's
@@ -197,20 +179,30 @@ public struct AttentionRecord: Equatable, Sendable {
 /// Reader: `SessionBook` (the app), every line in file order. Spec:
 /// `docs/attention-protocol.md`.
 public enum AttentionProtocol {
-    public static let version = 5
+    public static let version = 6
+
+    /// What every `events.tsv` header begins with. A file whose first line
+    /// does not is not a v6 log: it is deleted and a fresh one started,
+    /// never read (`EventLog`).
+    public static let headerPrefix = "# pulse-events v6 "
 
     /// The first line of `events.tsv`: the protocol and this file's
     /// generation (a new one each time the file is created or compacted, so
     /// a reader holding a byte offset knows the file was rewritten). Only
-    /// complete v5 records (eleven columns) are read.
+    /// complete v6 records (ten columns) are read.
     public static func header(generation: String) -> String {
-        "# pulse-events v5 \(generation) (agent\\tkind\\tms\\tmessage\\tsession\\tcwd\\tfront\\tpid\\t-\\tlanding\\ttool)\n"
+        headerPrefix + "\(generation) (agent\\tkind\\tms\\tmessage\\tsession\\tcwd\\tfront\\tpid\\tlanding\\ttool)\n"
     }
 
-    /// Column count of a complete v5 record.
-    public static let columnCount = 11
+    /// Whether a file's first line is a v6 header.
+    public static func isHeader<S: StringProtocol>(_ line: S) -> Bool {
+        line.hasPrefix(headerPrefix)
+    }
 
-    /// The columns of one v5 record, or nil for a blank line, a comment or
+    /// Column count of a complete v6 record.
+    public static let columnCount = 10
+
+    /// The columns of one v6 record, or nil for a blank line, a comment or
     /// header, or a line without exactly `columnCount` columns. Only the
     /// line's own break (`\n`, `\r`) is trimmed: a record's trailing columns
     /// are often empty, so trailing tabs are part of it.
@@ -225,7 +217,7 @@ public enum AttentionProtocol {
     }
 
     /// The typed kind of a line's `kind` column, or nil when it is not one
-    /// of the v5 kinds, spelled as written (`AttentionKind.rawValue`). No
+    /// of the v6 kinds, spelled as written (`AttentionKind.rawValue`). No
     /// other spelling is read: every writer is Pulse's own — the receiver's
     /// adapters and the app's dismissal — so a word the protocol does not
     /// know is never guessed into a state, and never into Waiting.

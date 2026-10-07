@@ -8,7 +8,7 @@ transcript, no protected app data.
 
 | Source | How | Answers |
 | --- | --- | --- |
-| **Events** | `pulse-hook` / plugin / extension → the event log `events.tsv` (v5, append-only, one line per hook event) | working, blocked (needs you), your turn, ended; the title (first prompt), the last words, a turn's error, the last steps and the turn's clock |
+| **Events** | `pulse-hook` / plugin / extension → the event log `events.tsv` (v6, append-only, one line per hook event) | working, blocked (needs you), your turn, ended; the title (first prompt), the last words, a turn's error, the last steps and the turn's clock |
 | **Processes** | libproc at launch / wake / an unknown hook pid, and on a timer backing off 30 s → 5 min; a `DispatchSource` exit source per session pid | is an agent running; is a session's process still alive |
 
 `SessionBook.apply(_:nowMs:)` is the only place state changes, and it is

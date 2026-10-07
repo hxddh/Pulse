@@ -10,15 +10,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private(set) var window: NSWindow?
     private var hosting: NSHostingController<SettingsView>?
     private(set) var isOpen = false
-    /// Called as the window closes: a shortcut being recorded stops.
-    private var onClose: () -> Void = {}
 
     /// Where it scrolls is `store.settingsFocus`, set by
     /// `StatusStore.openSettings(focus:)`.
     func show(store: StatusStore) {
         // Fast path: reuse window + hosting; SettingsView already observes store.
         SettingsPresenter.prepareToOpen()
-        onClose = { [weak store] in store?.stopRecordingHotkey() }
 
         if let window, let hosting {
             hosting.rootView = SettingsView(store: store)
@@ -64,7 +61,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         isOpen = false
-        onClose()
         SettingsPresenter.restoreAccessoryIfNeeded()
     }
 

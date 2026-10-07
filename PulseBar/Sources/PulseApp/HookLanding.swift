@@ -5,7 +5,7 @@ import Foundation
 ///
 /// The hook runs inside the agent's own process tree and environment, so it
 /// can say — at no cost to the scan — which process is the agent and how its
-/// terminal can be reached. Both go into the v5 event line (`pid`,
+/// terminal can be reached. Both go into the v6 event line (`pid`,
 /// `landing`). No fork, no `ps`, no `lsof`: `sysctl`, libproc and the
 /// environment only, matched by the same rule as the process scan
 /// (`AgentProcesses.match(args:)`).

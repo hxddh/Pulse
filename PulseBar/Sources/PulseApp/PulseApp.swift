@@ -129,7 +129,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DistributedNotificationCenter.default().removeObserver(reopenObserver)
             self.reopenObserver = nil
         }
-        GlobalHotKey.uninstall()
         statusPanel?.uninstall()
     }
 }

@@ -16,8 +16,10 @@ import SwiftUI
 //   --capture-status-item=<png> photograph the menu-bar item
 //   --capture-settings=<png>    photograph Settings
 //
-//   --language=zh|en            this run's language (never saved)
 //   --appearance=light|dark     this run's appearance
+//
+// The language is the system's, as in the app; a run picks one the macOS
+// way, with `-AppleLanguages "(zh-Hans)"` (`scripts/qa_captures.sh`).
 //
 // Built in the debug configuration only: it reaches the app's internals
 // through `@testable import`. The shipping app reads none of these flags
@@ -41,14 +43,8 @@ enum QADriver {
         arguments.first(where: { $0.hasPrefix(flag) }).map { String($0.dropFirst(flag.count)) }
     }
 
-    /// Before the app launches: the language (read once, as the tray and
-    /// the menu are built) and the appearance.
+    /// Before the app launches: the appearance.
     static func prepare(_ arguments: [String]) {
-        switch value("--language=", in: arguments) {
-        case "zh": AppServices.store.languageOverride = .zh
-        case "en": AppServices.store.languageOverride = .en
-        default: break
-        }
         switch value("--appearance=", in: arguments) {
         case "dark": NSApplication.shared.appearance = NSAppearance(named: .darkAqua)
         case "light": NSApplication.shared.appearance = NSAppearance(named: .aqua)

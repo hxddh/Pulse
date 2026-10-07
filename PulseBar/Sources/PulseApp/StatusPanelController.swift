@@ -184,12 +184,6 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         store.quit()
     }
 
-    /// The global shortcut is the menu-bar click — open closes,
-    /// closed opens on the oldest wait.
-    func toggleFromHotkey() {
-        togglePanel()
-    }
-
     func show() {
         // Already open: a reveal (a banner, a jump) is applied in place —
         // even over an open detail page — and nothing else resets.

@@ -38,10 +38,6 @@ final class StatusStore {
     /// The agents the setup card just connected: the card shows what is
     /// left to do until "Got it". nil otherwise; not saved.
     var setupConnected: Set<AgentID>?
-    /// False when the system refused the shortcut (another app owns it).
-    var hotkeyRegistered = true
-    /// The Settings shortcut recorder: listening, and what went wrong.
-    var hotkeyRecorder = HotkeyRecorder.State()
     /// Pulse's login item as macOS reports it (`SMAppService`); nil until
     /// read. The Settings toggle shows this, not what was asked.
     var loginItem: LoginItemState?
@@ -49,7 +45,6 @@ final class StatusStore {
     var notifyAuthorized: Bool?
     /// Notification Center refused the last "needs you" banner.
     var waitingBannerFailed = false
-    var updateStatus: UpdateCheck.Status = .idle
     /// What happened the last time the user pressed a button on this row —
     /// a click that reached nothing says so, briefly (and, once, what would
     /// make it land exactly).
@@ -82,30 +77,24 @@ final class StatusStore {
     /// Opens the tray. Tests replace it to see a reopen arrive; the app's
     /// is the status item's panel.
     @ObservationIgnored var showTray: @MainActor () -> Void = { TrayReveal.show() }
-    /// Settings are saved and applied (launchd, the shortcut, a rescan) only
-    /// once `start()` has read them, so a store a test or a fixture builds
-    /// never touches the developer's own file or login items.
+    /// Settings are saved and applied (the login item) only once `start()`
+    /// has read them, so a store a test or a fixture builds never touches
+    /// the developer's own file or login items.
     @ObservationIgnored private var started = false
-    /// The recorder's key listener, made on the first recording.
-    @ObservationIgnored private var hotkeyCapture: HotkeyCapture?
 
     let engine: ScanEngine
     let notifier: WaitNotifier
-    init() {
+    /// The interface's language: the system's (`ResolvedLanguage.system`),
+    /// read once. A test passes one.
+    let lang: ResolvedLanguage
+
+    init(lang: ResolvedLanguage = .system) {
+        self.lang = lang
         engine = ScanEngine()
         notifier = WaitNotifier()
         engine.model = self
         notifier.model = self
     }
-
-    // MARK: - Language
-
-    /// `PulseQA`'s `--language=`: wins over `settings.json` for that run and
-    /// is never saved. Set before launch; not observed — it does not change
-    /// while the app runs. The shipping app never sets it.
-    @ObservationIgnored var languageOverride: AppLanguage?
-
-    var lang: ResolvedLanguage { (languageOverride ?? settings.language).resolved }
 
     func tr(_ key: L10n.Key) -> String { L10n.t(key, lang) }
 
@@ -113,24 +102,18 @@ final class StatusStore {
 
     func start() {
         DebugLog.write("start begin \(PulseVersion.fingerprint)")
-        // The agents' own hooks are the only state that outlives a launch;
-        // files Pulse once kept of its own are deleted, never read.
-        Self.removeRetiredFiles()
         HooksSupport.seedAssets()
         landHooksStatus(HooksSupport.probeStatus())
         refreshPresentAgents()
         loadSettings()
-        adoptLoginItem()
-        applyHotkey()
+        refreshLoginItem()
         notifier.start()
         engine.start()
-        UpdateCheck.shared.startIfEnabled(store: self)
         DebugLog.write("start armed")
     }
 
     func quit() {
         engine.stop()
-        GlobalHotKey.uninstall()
         NSApp?.terminate(nil)
     }
 
@@ -145,35 +128,6 @@ final class StatusStore {
     func reopen() {
         DebugLog.write("reopen")
         requestTrayReveal()
-    }
-
-    /// Files earlier versions kept beside `events.tsv` (`PULSE_HOME`
-    /// moves it) and in the default support folder. Deleted at launch,
-    /// never migrated — the v4 attention file and the activity spool
-    /// included: the event log starts empty.
-    nonisolated static let retiredFileNames = [
-        "attention.tsv", "activity.d",
-        "session-log.json",
-        "attention-ledger.json", "attention-history.json", "session-timeline.json", "dismissed-pending.json",
-    ]
-
-    nonisolated static func removeRetiredFiles() {
-        let defaultDir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Pulse", isDirectory: true)
-        var dirs = [EventLog.directory]
-        if dirs[0].standardizedFileURL != defaultDir.standardizedFileURL { dirs.append(defaultDir) }
-        removeRetiredFiles(in: dirs)
-    }
-
-    nonisolated static func removeRetiredFiles(in dirs: [URL]) {
-        for dir in dirs {
-            for name in retiredFileNames {
-                let file = dir.appendingPathComponent(name)
-                if FileManager.default.fileExists(atPath: file.path) {
-                    try? FileManager.default.removeItem(at: file)
-                }
-            }
-        }
     }
 
     // MARK: - What the engine and the notifier hand over
@@ -217,22 +171,16 @@ final class StatusStore {
         if presentAgents != present { presentAgents = present }
     }
 
-    func landUpdateStatus(_ value: UpdateCheck.Status) {
-        if updateStatus != value { updateStatus = value }
-    }
-
     // MARK: - Settings
 
-    /// Read `settings.json` (an old `settings.txt` is deleted, unread).
-    /// With no file, the defaults stay. `PulseQA`'s language is
-    /// `languageOverride`, not a setting, so a file cannot undo it.
+    /// Read `settings.json`. With no file, the defaults stay.
     func loadSettings() {
         if let loaded = PulseSettings.loadIfPresent() {
             if loaded != settings { settings = loaded }
             DebugLog.write("settings \(loaded.debugDescription)")
         }
         started = true
-        // macOS already holds the login item; `adoptLoginItem` reads it.
+        // macOS already holds the login item; `refreshLoginItem` reads it.
         appliedLaunchAtLogin = settings.launchAtLogin
     }
 
@@ -242,8 +190,7 @@ final class StatusStore {
     }
 
     /// Change any number of settings at once: one assignment, one save, and
-    /// each effect applied once — only the ones a changed setting needs
-    /// (`effects(from:to:)`).
+    /// what the change needs applied once (`applyEffects`).
     func update(_ change: (inout PulseSettings) -> Void) {
         var next = settings
         change(&next)
@@ -252,41 +199,14 @@ final class StatusStore {
         settings = next
         guard started else { return }
         settings.save()
-        for effect in Self.effects(from: before, to: next).sorted() { apply(effect) }
+        applyEffects(from: before, to: next)
     }
 
-    /// The effects a change from `before` to `after` needs — nothing for a
-    /// mute or a notification switch, which are read where they are used.
-    /// Pure.
-    nonisolated static func effects(from before: PulseSettings, to after: PulseSettings) -> Set<SettingEffect> {
-        var out: Set<SettingEffect> = []
-        if before.language != after.language { out.formUnion([.bannerCategory, .mainMenu, .reproject]) }
-        if before.launchAtLogin != after.launchAtLogin { out.insert(.loginItem) }
-        if before.hotkey != after.hotkey { out.insert(.hotkey) }
-        if before.updateCheckEnabled != after.updateCheckEnabled { out.insert(.updateCheck) }
-        if before.allowTerminalAutomation != after.allowTerminalAutomation { out.insert(.reproject) }
-        return out
-    }
-
-    private func apply(_ effect: SettingEffect) {
-        switch effect {
-        case .bannerCategory: notifier.languageChanged(lang)
-        case .mainMenu: MainMenu.install(lang: lang)
-        case .loginItem: applyLaunchAtLoginIfChanged()
-        case .hotkey: applyHotkey()
-        case .updateCheck: UpdateCheck.shared.startIfEnabled(store: self)
-        case .reproject: engine.project()
-        }
-    }
-
-    func toggleMute(_ agent: AgentID) {
-        var muted = settings.mutedAgents
-        if muted.contains(agent) {
-            muted.remove(agent)
-        } else {
-            muted.insert(agent)
-        }
-        set(\.mutedAgents, muted)
+    /// What a change from `before` to `after` needs outside the file: the
+    /// login item, when it changed. Everything else is read where it is
+    /// used.
+    private func applyEffects(from before: PulseSettings, to after: PulseSettings) {
+        if before.launchAtLogin != after.launchAtLogin { applyLaunchAtLoginIfChanged() }
     }
 
     private func persistSettings() {
@@ -306,7 +226,7 @@ final class StatusStore {
         }
     }
 
-    /// The login toggle or the setup card's checkbox. The toggle shows what
+    /// The login toggle. It shows what
     /// macOS says, so it can read off while the setting is on (macOS did not
     /// take it, or the person removed Pulse in System Settings): the same
     /// answer asks macOS again rather than doing nothing.
@@ -323,35 +243,9 @@ final class StatusStore {
         if loginItem != state { loginItem = state }
     }
 
-    /// At launch: read the login item from macOS, and adopt the LaunchAgent
-    /// plist earlier versions wrote (`com.pulse.app.plist`, Pulse's own
-    /// file) — register Pulse with macOS first, and retire the plist only
-    /// once macOS has taken it, so the person's choice is never lost
-    /// (`LoginAdoption`). Then macOS is the truth: the setting follows what
-    /// it says — unless the register failed, when the plist and the setting
-    /// stay and Settings says macOS did not take it.
-    func adoptLoginItem() {
-        DispatchQueue.global(qos: .utility).async {
-            let hadLegacyAgent = LoginItem.hasLegacyAgent()
-            let state = hadLegacyAgent ? LoginItem.setEnabled(true) : LoginItem.state
-            let adoption = LoginAdoption.decide(hadLegacyAgent: hadLegacyAgent, state: state)
-            if adoption == .retireLegacyAndSync { LoginItem.retireLegacyAgent() }
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                switch adoption {
-                case .sync, .retireLegacyAndSync:
-                    self.syncLoginItem(state)
-                case .keepLegacy:
-                    // What macOS said, shown; the setting (and the plist
-                    // that still opens Pulse at login) left alone.
-                    self.landLoginItem(state)
-                }
-            }
-        }
-    }
-
-    /// Re-read the login item — Settings opening, the app coming forward:
-    /// the person may have changed it in System Settings.
+    /// Read the login item — at launch, Settings opening, the app coming
+    /// forward: the person may have changed it in System Settings. macOS is
+    /// the truth; the setting follows it.
     func refreshLoginItem() {
         guard started, !previewFixtureActive else { return }
         DispatchQueue.global(qos: .utility).async {
@@ -372,88 +266,13 @@ final class StatusStore {
         persistSettings()
     }
 
-    /// Re-register the global shortcut and report honestly when the system
-    /// refuses (another app already owns the combination).
-    func applyHotkey() {
-        let hotkey = settings.hotkey
-        let registered = GlobalHotKey.install(hotkey)
-        if hotkeyRegistered != registered { hotkeyRegistered = registered }
-        if let hotkey, !registered {
-            DebugLog.write("hotkey \(hotkey.label) registration FAILED — likely taken")
-        }
-    }
-
-    // MARK: - Recording a shortcut
-
-    /// Settings' shortcut control was clicked: listen for the next key.
-    /// The live shortcut is set aside meanwhile, so pressing it records it
-    /// rather than opening the tray.
-    func startRecordingHotkey() {
-        GlobalHotKey.uninstall()
-        let capture = hotkeyCapture ?? HotkeyCapture()
-        hotkeyCapture = capture
-        capture.onKey = { [weak self] keyCode, modifiers in
-            self?.recordHotkeyKey(keyCode: keyCode, modifiers: modifiers)
-        }
-        capture.start()
-        landRecorder(HotkeyRecorder.State(recording: true, problem: nil))
-    }
-
-    /// Stop listening (Esc, a second click, Settings closing) and put the
-    /// saved shortcut back.
-    func stopRecordingHotkey() {
-        guard hotkeyRecorder.recording || hotkeyCapture?.isListening == true else { return }
-        endRecording(problem: nil)
-        applyHotkey()
-    }
-
-    private func endRecording(problem: HotkeyRecorder.Problem?) {
-        hotkeyCapture?.stop()
-        landRecorder(HotkeyRecorder.State(recording: false, problem: problem))
-    }
-
-    private func landRecorder(_ next: HotkeyRecorder.State) {
-        if hotkeyRecorder != next { hotkeyRecorder = next }
-    }
-
-    /// One key while recording (`HotkeyRecorder.reduce` decides). A
-    /// combination macOS keeps, or one that will not register, is refused
-    /// and the old shortcut stays.
-    func recordHotkeyKey(keyCode: UInt32, modifiers: UInt32) {
-        switch HotkeyRecorder.reduce(keyCode: keyCode, modifiers: modifiers) {
-        case .cancel:
-            stopRecordingHotkey()
-        case .clear:
-            endRecording(problem: nil)
-            set(\.hotkey, nil)
-            applyHotkey()
-        case .needsModifier:
-            landRecorder(HotkeyRecorder.State(recording: true, problem: .needsModifier))
-        case .record(let hotkey):
-            endRecording(problem: nil)
-            guard HotkeyRecorder.usable(hotkey, systemTaken: GlobalHotKey.systemTaken()),
-                  GlobalHotKey.install(hotkey)
-            else {
-                DebugLog.write("hotkey \(hotkey.label) refused — the system or another app owns it")
-                landRecorder(HotkeyRecorder.State(recording: false, problem: .cantUse))
-                applyHotkey()
-                return
-            }
-            set(\.hotkey, hotkey)
-            applyHotkey()
-        }
-    }
-
     /// Open Settings, optionally scrolled to a section — the hook connections
-    /// (how an agent gets a Waiting signal), notifications, updates.
+    /// (how an agent gets a Waiting signal) or notifications.
     func openSettings(focus target: SettingsFocus.Target? = nil) {
         var next = settingsFocus
         next.target = target
         if target != nil { next.token &+= 1 }
         if next != settingsFocus { settingsFocus = next }
-        // The menu bar shows the main menu while Settings is open: in the
-        // language chosen now.
-        MainMenu.install(lang: lang)
         SettingsWindowController.shared.show(store: self)
     }
 
@@ -511,10 +330,8 @@ final class StatusStore {
 
     func noteRowAction(_ rowKey: String, _ notice: RowNotice) {
         rowActionNotices[rowKey] = notice
-        // A notice with a button stays long enough to reach it.
-        let seconds: UInt64 = notice.offersAutomation ? 20 : 8
         Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: 8 * 1_000_000_000)
             guard let self, self.rowActionNotices[rowKey] == notice else { return }
             self.rowActionNotices.removeValue(forKey: rowKey)
         }
@@ -542,24 +359,10 @@ final class StatusStore {
         }
     }
 
-    /// The Go reached the app, not the exact terminal. When Terminal
-    /// automation (a Settings toggle) would have reached the exact tab, the
-    /// notice says so and offers to turn it on.
+    /// The Go reached the app, not the exact terminal: the notice says so,
+    /// and where macOS's Automation permission is when a script was tried.
     private func noteAppOnly(_ row: AgentRow) {
-        noteRowAction(row.rowKey, RowNotice.appOnly(
-            row: row, automationAllowed: settings.allowTerminalAutomation, lang: lang
-        ))
-    }
-
-    /// The landing notice's "Turn on": the same setting as the Settings
-    /// switch, at the moment it is needed. It only allows the AppleScript
-    /// step; macOS asks its own Automation question on the next Go. The
-    /// offer has been taken, so its notice goes.
-    func turnOnTerminalAutomation(_ row: AgentRow) {
-        set(\.allowTerminalAutomation, true)
-        if rowActionNotices[row.rowKey]?.offersAutomation == true {
-            rowActionNotices.removeValue(forKey: row.rowKey)
-        }
+        noteRowAction(row.rowKey, RowNotice.appOnly(row: row, lang: lang))
     }
 
     /// Looking at a finished session is what "your turn" was asking for. A
@@ -691,13 +494,11 @@ final class StatusStore {
     /// Installs and removals run one at a time (`HooksSupport.installQueue`)
     /// and the buttons are disabled while one runs (`.working`).
     func installHooks(then done: @escaping @MainActor @Sendable (HooksSupport.Status) -> Void = { _ in }) {
-        runHooks(.install(nil), then: done)
+        runHooks(.install, then: done)
     }
 
-    /// One install or removal — every agent, or the one a Settings line
-    /// names. An install clears "don't suggest hooks"; removing every
-    /// agent's hook sets it (a decision); removing one agent's hook is
-    /// about that agent only.
+    /// One install or removal of every agent's hook. An install clears
+    /// "don't suggest hooks"; removing them sets it (a decision).
     func runHooks(
         _ job: HooksSupport.Job,
         then done: @escaping @MainActor @Sendable (HooksSupport.Status) -> Void = { _ in }
@@ -705,11 +506,7 @@ final class StatusStore {
         guard !hooksStatus.isWorking else { return }
         let previous = hooksStatus.failures
         landHooksStatus(.working)
-        switch job {
-        case .install: setHooksNudgeOff(false)
-        case .uninstall(.none): setHooksNudgeOff(true)
-        case .uninstall: break
-        }
+        setHooksNudgeOff(job == .uninstall)
         // `Task` inherits this class's main-actor isolation, so the assignment
         // lands on main while the hook installer stays off it.
         Task { [weak self] in
@@ -738,71 +535,7 @@ final class StatusStore {
     /// Removing every hook is a decision: stop suggesting hooks until the
     /// user installs them again.
     func uninstallHooks() {
-        runHooks(.uninstall(nil))
-    }
-
-    // MARK: - Uninstall
-
-    /// "Uninstall Pulse…": say what goes (`UninstallPlan`), and on the
-    /// person's yes remove every hook through the installer. Only when none
-    /// is left: the login item, then Pulse's folder, then quit and show the
-    /// app in Finder for the Trash. A hook that would not come out stops it
-    /// there — nothing else is removed, and Settings → Hooks says why.
-    func uninstallPulse() {
-        guard !hooksStatus.isWorking else { return }
-        let plan = UninstallPlan.make(
-            installed: hooksStatus.installedAgents,
-            loginItem: loginItem,
-            asked: settings.launchAtLogin,
-            folder: HooksSupport.supportDir(),
-            home: FileManager.default.homeDirectoryForCurrentUser
-        )
-        NSApp?.activate(ignoringOtherApps: true)
-        let confirm = NSAlert()
-        confirm.alertStyle = .warning
-        confirm.messageText = tr(.uninstallTitle)
-        confirm.informativeText = plan.message(lang)
-        let uninstall = confirm.addButton(withTitle: tr(.uninstallConfirm))
-        uninstall.hasDestructiveAction = true
-        confirm.addButton(withTitle: tr(.uninstallCancel))
-        guard confirm.runModal() == .alertFirstButtonReturn else { return }
-        DebugLog.write("uninstall: confirmed")
-        runHooks(.uninstall(nil)) { [weak self] status in
-            guard let self else { return }
-            guard UninstallPlan.hooksRemoved(status) else {
-                DebugLog.write("uninstall: stopped — a hook is still in place")
-                let stopped = NSAlert()
-                stopped.messageText = self.tr(.uninstallStopped)
-                stopped.runModal()
-                self.openSettings(focus: .waitingSignals)
-                return
-            }
-            self.finishUninstall(plan)
-        }
-    }
-
-    /// Every hook is out: the rest, then quit. Nothing may write to Pulse's
-    /// folder after it is deleted — the engine and the shortcut stop first,
-    /// and the last log line is written before it goes.
-    private func finishUninstall(_ plan: UninstallPlan) {
-        engine.stop()
-        GlobalHotKey.uninstall()
-        // Always: the plan's read of the login item may be stale (changed in
-        // System Settings since), and unregistering one that is off does
-        // nothing.
-        LoginItem.setEnabled(false)
-        let folder = HooksSupport.supportDir()
-        DebugLog.write("uninstall: deleting the support folder and quitting")
-        do {
-            try FileManager.default.removeItem(at: folder)
-        } catch {
-            DebugLog.write("uninstall: folder not deleted: \(error.localizedDescription)")
-        }
-        let app = Bundle.main.bundleURL
-        if app.pathExtension == "app" {
-            NSWorkspace.shared.activateFileViewerSelecting([app])
-        }
-        NSApp?.terminate(nil)
+        runHooks(.uninstall)
     }
 
     /// Persist the "don't suggest hooks" choice without a full rescan.
@@ -816,7 +549,7 @@ final class StatusStore {
         !hooksStatus.installedAgents.isEmpty
     }
 
-    // MARK: - Notifications and updates
+    // MARK: - Notifications
 
     /// Notification permission lives in System Settings, not in Pulse.
     func openSystemNotificationSettings() {
@@ -830,33 +563,6 @@ final class StatusStore {
     func requestNotificationAuthorization() {
         PulseNotify.requestAuthorizationAfterUserAction()
     }
-
-    func checkForUpdatesNow() {
-        UpdateCheck.shared.check(store: self, force: true)
-    }
-}
-
-/// What applying a setting means outside the settings file
-/// (`StatusStore.effects(from:to:)`).
-enum SettingEffect: Int, Comparable, Sendable {
-    /// Re-register the banner's button titles: they are baked into the
-    /// registered category and go stale on a language switch.
-    case bannerCategory
-    /// Re-install the main menu: its titles are the language's, and it is
-    /// in the menu bar while Settings — where the language is picked — is
-    /// open.
-    case mainMenu
-    /// Register (or unregister) Pulse's login item with macOS.
-    case loginItem
-    /// Re-register the global shortcut.
-    case hotkey
-    /// Start (or stop) the daily update check.
-    case updateCheck
-    /// Re-project the book: the words (language) or how a click lands
-    /// (Terminal automation) changed.
-    case reproject
-
-    static func < (a: SettingEffect, b: SettingEffect) -> Bool { a.rawValue < b.rawValue }
 }
 
 /// Where Settings scrolls when a deep link opens it. The token moves on
@@ -866,7 +572,6 @@ struct SettingsFocus: Equatable {
         /// The hooks: how an agent gets a "needs you" signal.
         case waitingSignals
         case notifications
-        case updates
     }
 
     var target: Target?

@@ -1,4 +1,4 @@
-// Settings: one page of five short groups and a footer. `SettingsView`
+// Settings: one page of three short groups and a footer. `SettingsView`
 // builds a `SettingsModel` from the store (settings and a few flags, never a
 // scan) and performs its actions; `SettingsFace` renders the value.
 
@@ -35,12 +35,11 @@ struct SettingsView: View {
 extension StatusStore {
     /// The Settings page as a value.
     var settingsModel: SettingsModel {
-        let notifications = SettingsModel.notifications(notifyAuthorized)
         var warning: String?
         if isVersionMismatch, let bundle = PulseVersion.bundleVersion {
             warning = String(format: tr(.versionMismatchHint), PulseVersion.semver, bundle)
         } else if PulseVersion.distributionChannel == "preview" {
-            warning = tr(.updatePreview)
+            warning = tr(.buildPreview)
         }
         let build = PulseVersion.buildLine
         let present = Set(AgentID.priority.filter(HooksInstaller.vendorPresent))
@@ -49,15 +48,7 @@ extension StatusStore {
             lang: lang,
             launchAtLogin: login.isOn,
             loginNote: login.note,
-            language: settings.language,
-            terminalAutomation: settings.allowTerminalAutomation,
-            hotkeyLabel: settings.hotkey?.label,
-            hotkeyRecording: hotkeyRecorder.recording,
-            hotkeyProblem: hotkeyRecorder.problem
-                ?? (settings.hotkey != nil && !hotkeyRegistered && !hotkeyRecorder.recording ? .cantUse : nil),
-            notifications: notifications,
-            notifyOnWaiting: notifications == .allowed && settings.notifyOnWaiting,
-            mutedAgents: SettingsModel.sortedMuted(settings.mutedAgents),
+            notifications: SettingsModel.notifications(notifyAuthorized),
             hooksStatus: hooksStatus.label(lang: lang),
             hooksInstalled: hooksInstalled,
             hooksBusy: hooksStatus.isWorking,
@@ -74,9 +65,6 @@ extension StatusStore {
                 present: present,
                 failed: hooksStatus.failures
             ),
-            updateCheckEnabled: settings.updateCheckEnabled,
-            updateStatus: updateStatusText,
-            updateAvailable: updateAvailableURL != nil,
             version: build.isEmpty ? PulseVersion.about : "\(PulseVersion.about) · \(build)",
             buildWarning: warning,
             focus: settingsFocus.target.map(SettingsModel.section(for:))
@@ -87,29 +75,13 @@ extension StatusStore {
         switch action {
         case .setLaunchAtLogin(let on): setLaunchAtLogin(on)
         case .openLoginItems: LoginItem.openSystemSettings()
-        case .setLanguage(let language): set(\.language, language)
-        case .setTerminalAutomation(let on): set(\.allowTerminalAutomation, on)
-        case .recordHotkey: startRecordingHotkey()
-        case .stopRecordingHotkey: stopRecordingHotkey()
-        case .clearHotkey:
-            stopRecordingHotkey()
-            set(\.hotkey, nil)
-            if hotkeyRecorder.problem != nil { hotkeyRecorder.problem = nil }
         case .enableNotifications: requestNotificationAuthorization()
         case .openNotificationSettings: openSystemNotificationSettings()
-        case .setNotifyOnWaiting(let on):
-            guard notifyAuthorized == true else { return }
-            set(\.notifyOnWaiting, on)
-        case .unmute(let agent):
-            if settings.mutedAgents.contains(agent) { toggleMute(agent) }
-        case .installHooks, .uninstallHooks, .installHook, .uninstallHook:
+        case .installHooks, .uninstallHooks:
             if let job = SettingsModel.hooksJob(action) { runHooks(job) }
         case .copyReport: copyReport()
-        case .setUpdateCheck(let on): set(\.updateCheckEnabled, on)
-        case .checkForUpdates: checkForUpdatesNow()
-        case .openRelease:
-            if let url = updateAvailableURL { NSWorkspace.shared.open(url) }
-        case .uninstallPulse: uninstallPulse()
+        case .openReleases:
+            if let url = URL(string: SettingsModel.releasesURL) { NSWorkspace.shared.open(url) }
         }
     }
 
@@ -126,10 +98,6 @@ extension StatusStore {
             lastEventMs: engine.latestHookEventMs,
             nowMs: Int64(Date().timeIntervalSince1970 * 1000),
             notifyAuthorized: notifyAuthorized,
-            notifyOnWaiting: settings.notifyOnWaiting,
-            terminalAutomation: settings.allowTerminalAutomation,
-            hotkey: settings.hotkey,
-            hotkeyRegistered: hotkeyRegistered,
             launchAtLogin: settings.launchAtLogin,
             loginItem: loginItem,
             sessions: cachedAll.map(SettingsModel.ReportSession.init)
@@ -188,12 +156,6 @@ struct SettingsFace: View {
         return Binding(get: { value }, set: { send(action($0)) })
     }
 
-    private var languageBinding: Binding<AppLanguage> {
-        let send = self.send
-        let value = model.language
-        return Binding(get: { value }, set: { send(.setLanguage($0)) })
-    }
-
     // MARK: Rows
 
     @ViewBuilder
@@ -216,54 +178,6 @@ struct SettingsFace: View {
             case nil:
                 EmptyView()
             }
-            Picker(t(.language), selection: languageBinding) {
-                ForEach(AppLanguage.allCases) { lang in
-                    Text(lang.menuLabel(model.lang)).tag(lang)
-                }
-            }
-            Toggle(isOn: binding(model.terminalAutomation) { .setTerminalAutomation($0) }) {
-                Text(t(.terminalAutomation))
-                Text(t(.terminalAutomationHint))
-            }
-        case .shortcut:
-            LabeledContent {
-                HStack(spacing: PulseTheme.Space.xs) {
-                    Button {
-                        send(model.hotkeyRecording ? .stopRecordingHotkey : .recordHotkey)
-                    } label: {
-                        Text(SettingsModel.shortcutTitle(model))
-                            .frame(minWidth: 120)
-                    }
-                    .buttonStyle(.bordered)
-                    if model.hotkeyLabel != nil, !model.hotkeyRecording {
-                        Button { send(.clearHotkey) } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.tertiary)
-                        }
-                        .buttonStyle(.borderless)
-                        .accessibilityLabel(t(.shortcutClear))
-                    }
-                }
-            } label: {
-                Text(t(.revealShortcut))
-            }
-            if model.hotkeyRecording, model.hotkeyProblem == nil {
-                Text(t(.shortcutRecordingHint))
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(.secondary)
-            }
-            switch model.hotkeyProblem {
-            case .needsModifier?:
-                Label(t(.shortcutNeedsModifier), systemImage: "keyboard")
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(.secondary)
-            case .cantUse?:
-                Label(t(.hotkeyTaken), systemImage: "exclamationmark.triangle")
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(PulseTheme.Tone.attention.color)
-            case nil:
-                EmptyView()
-            }
         case .notifications:
             switch model.notifications {
             case .notAsked:
@@ -280,26 +194,10 @@ struct SettingsFace: View {
                         .foregroundStyle(PulseTheme.Tone.attention.color)
                 }
             case .allowed:
-                EmptyView()
-            }
-            Toggle(t(.notifyWaiting), isOn: binding(model.notifyOnWaiting) { .setNotifyOnWaiting($0) })
-                .disabled(model.notifications != .allowed)
-            ForEach(model.mutedAgents, id: \.self) { agent in
                 LabeledContent {
-                    Button {
-                        send(.unmute(agent))
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(t(.unmute) + " " + agent.displayName)
+                    Button(t(.openNotificationSettings)) { send(.openNotificationSettings) }
                 } label: {
-                    Label {
-                        Text(agent.displayName)
-                    } icon: {
-                        AgentIconView(id: agent)
-                    }
+                    Text(t(.notifyAllowed))
                 }
             }
         case .hooks:
@@ -319,25 +217,11 @@ struct SettingsFace: View {
             }
             ForEach(model.hookAgents) { line in
                 LabeledContent {
-                    HStack(spacing: PulseTheme.Space.s) {
-                        Text(line.state)
-                            .foregroundStyle(
-                                line.failed ? AnyShapeStyle(PulseTheme.Tone.attention.color)
-                                    : line.installed ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary)
-                            )
-                        if line.needsFix {
-                            Button(t(.hookInstallOne)) { send(.installHook(line.agent)) }
-                                .controlSize(.small)
-                                .disabled(model.hooksBusy)
-                                .accessibilityLabel(String(format: t(.hookInstallOneA11y), line.agent.displayName))
-                        }
-                        if line.installed {
-                            Button(t(.hookRemoveOne)) { send(.uninstallHook(line.agent)) }
-                                .controlSize(.small)
-                                .disabled(model.hooksBusy)
-                                .accessibilityLabel(String(format: t(.hookRemoveOneA11y), line.agent.displayName))
-                        }
-                    }
+                    Text(line.state)
+                        .foregroundStyle(
+                            line.failed ? AnyShapeStyle(PulseTheme.Tone.attention.color)
+                                : line.installed ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary)
+                        )
                 } label: {
                     Label {
                         Text(line.agent.displayName)
@@ -362,18 +246,6 @@ struct SettingsFace: View {
                 Text(t(.settingsReportHint))
                     .foregroundStyle(.secondary)
             }
-        case .updates:
-            Toggle(t(.checkForUpdates), isOn: binding(model.updateCheckEnabled) { .setUpdateCheck($0) })
-            LabeledContent {
-                if model.updateAvailable {
-                    Button(t(.openRelease)) { send(.openRelease) }
-                } else {
-                    Button(t(.checkNow)) { send(.checkForUpdates) }
-                }
-            } label: {
-                Text(model.updateStatus)
-                    .foregroundStyle(model.updateAvailable ? AnyShapeStyle(PulseTheme.Tone.running.color) : AnyShapeStyle(.secondary))
-            }
         }
     }
 
@@ -384,13 +256,13 @@ struct SettingsFace: View {
             Text(t(.hooksHint))
                 .font(PulseTheme.Font.caption)
                 .foregroundStyle(.secondary)
-        case .general, .shortcut, .notifications, .updates:
+        case .general, .notifications:
             EmptyView()
         }
     }
 
     /// The version and what kind of build it is — one small block — and
-    /// "Uninstall Pulse…".
+    /// "Releases…", the one way to a newer Pulse.
     private var about: some View {
         Section {
             VStack(alignment: .leading, spacing: PulseTheme.Space.xs) {
@@ -404,8 +276,7 @@ struct SettingsFace: View {
                         .foregroundStyle(PulseTheme.Tone.attention.color)
                 }
             }
-            Button(t(.uninstallPulse), role: .destructive) { send(.uninstallPulse) }
-                .disabled(model.hooksBusy)
+            Button(t(.releases)) { send(.openReleases) }
         }
     }
 }

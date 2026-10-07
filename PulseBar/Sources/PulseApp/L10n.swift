@@ -1,35 +1,16 @@
 import Foundation
 
-enum AppLanguage: String, CaseIterable, Identifiable {
-    case auto, en, zh
-    var id: String { rawValue }
-
-    /// The picker's label, in the interface's language for "System"; each
-    /// language names itself.
-    func menuLabel(_ lang: ResolvedLanguage) -> String {
-        switch self {
-        case .auto: return L10n.t(.languageSystem, lang)
-        case .en: return "English"
-        case .zh: return "简体中文"
-        }
-    }
-
-    var resolved: ResolvedLanguage {
-        switch self {
-        case .en: return .en
-        case .zh: return .zh
-        case .auto:
-            // Every Chinese — zh-Hans, zh-Hant, zh-TW, zh-HK — reads the one
-            // Chinese table there is, Simplified; the picker says so
-            // ("简体中文").
-            let code = Locale.preferredLanguages.first ?? "en"
-            return code.hasPrefix("zh") ? .zh : .en
-        }
-    }
-}
-
+/// The interface's language: the system's. Every Chinese — zh-Hans,
+/// zh-Hant, zh-TW, zh-HK — reads the one Chinese table there is,
+/// Simplified; everything else reads English.
 enum ResolvedLanguage {
     case en, zh
+
+    /// The system's preferred language, as one of the two tables.
+    static var system: ResolvedLanguage {
+        let code = Locale.preferredLanguages.first ?? "en"
+        return code.hasPrefix("zh") ? .zh : .en
+    }
 }
 
 enum L10n {
@@ -82,20 +63,17 @@ enum L10n {
         case .settings: return "Settings…"
         case .quit: return "Quit Pulse"
         case .general: return "General"
-        case .notifyWaiting: return "Notify when an agent needs me"
         case .focusExact: return "Go to terminal"
         case .focusApp: return "Open app"
         case .focusOpenTray: return "Open Pulse tray"
         case .focusAppOnly: return "Opened the app — can't select the exact terminal"
         case .launchAtLogin: return "Open at login"
-        case .language: return "Language"
         case .hooksHint: return "Installs each agent's own documented hook, plugin or extension — observe-only events, never one that can gate or answer. Remove puts every file back byte for byte."
         case .installHooks: return "Install all"
-        case .shortcuts: return "Shortcuts"
         case .running: return "Running"
         case .settingsTitle: return "Pulse Settings"
         case .recent: return "Recent"
-        case .dismissWait: return "Dismiss"
+        case .ignoreWait: return "Ignore"
         case .focusFailed: return "Could not open it — that window may be gone. Rescanning."
         case .hooksUnknown: return "Not checked"
         case .hooksMissing: return "Not installed"
@@ -123,22 +101,10 @@ enum L10n {
         case .notificationsSection: return "Notifications"
         case .notifyNotConfigured: return "Notifications are not enabled yet. Pulse will not ask until you choose Enable."
         case .enableNotifications: return "Enable notifications"
-        case .notifyDenied: return "Notifications are turned off for Pulse — these switches cannot fire."
+        case .notifyDenied: return "Notifications are turned off for Pulse — an agent that needs you cannot reach you."
         case .openNotificationSettings: return "Open System Settings"
         case .uninstallHooks: return "Remove all"
-        case .revealShortcut: return "Open or close Pulse"
-        case .hotkeyTaken: return "Can't use this shortcut — macOS or another app already uses it."
         case .emptyHint: return "When a connected agent starts working, its session appears here."
-        case .checkForUpdates: return "Check for updates"
-        case .checkNow: return "Check now"
-        case .openRelease: return "Open release"
-        case .updateIdle: return "Not checked"
-        case .updateChecking: return "Checking…"
-        case .updateCurrent: return "Up to date"
-        case .updateCurrentPreview: return "Up to date on the preview channel (ad-hoc signed, not notarized)"
-        case .updateCurrentStable: return "Up to date on the stable channel"
-        case .updateAvailable: return "Update available: %@"
-        case .updateFailed: return "Check failed"
         case .a11yIdle: return "Idle"
         case .a11yRunning: return "Running"
         case .a11yStalled: return "Stalled"
@@ -147,22 +113,11 @@ enum L10n {
         case .agoFormat: return "%@ ago"
         case .stalled: return "Stalled"
         case .notifFocus: return "Go"
-        case .waitingSummaryTitle: return "%d agents need you"
-        case .updatePreview: return "Preview build · ad-hoc signed · not notarized"
+        case .buildPreview: return "Preview build · ad-hoc signed · not notarized"
+        case .releases: return "Releases…"
+        case .notifyAllowed: return "Allowed — macOS decides how banners look and when they show."
         case .yourTurn: return "Your turn"
-        case .shortcutRecord: return "Record Shortcut"
-        case .shortcutRecording: return "Type shortcut…"
-        case .shortcutRecordingHint: return "Press a combination with ⌘, ⌃ or ⌥. Esc cancels, Delete clears."
-        case .shortcutNeedsModifier: return "Add ⌘, ⌃ or ⌥ — a single key can't be a global shortcut."
-        case .shortcutClear: return "Clear shortcut"
-        case .notifIgnore: return "Ignore"
-        case .turnOnAutomation: return "Turn on"
         case .settingsHooksTitle: return "Agent hooks"
-        case .updateFailedBadFeed: return "Update feed address is invalid"
-        case .updateFailedNetwork: return "Could not reach GitHub"
-        case .updateFailedHTTP: return "GitHub answered %d"
-        case .updateFailedBadResponse: return "GitHub's answer was not a release"
-        case .updateFailedNoTag: return "The latest release has no version tag"
         case .waitingBannerFailed: return "macOS did not show the last “needs you” banner — check Notifications"
         case .lampRuleBlocked: return "Red: an agent is waiting on you."
         case .lampRuleStalled: return "Orange: a running session has gone quiet."
@@ -190,20 +145,7 @@ enum L10n {
         case .stalledN: return "stalled"
         case .yourTurnN: return "your turn"
         case .lampRuleProcessOnly: return "Gray: an agent is running that Pulse can see only as a process."
-        case .mute: return "Mute"
-        case .unmute: return "Unmute"
-        case .mutedWord: return "muted"
         case .copyReport: return "Copy report"
-        case .uninstallPulse: return "Uninstall Pulse…"
-        case .uninstallTitle: return "Uninstall Pulse?"
-        case .uninstallConfirm: return "Uninstall"
-        case .uninstallCancel: return "Cancel"
-        case .uninstallPlanHooks: return "Removes Pulse's hooks from %@ — each file goes back byte for byte; one you have edited since keeps your edits and loses only Pulse's entries."
-        case .uninstallNoHooks: return "No agent carries Pulse's hook."
-        case .uninstallLogin: return "Removes Pulse from Login Items."
-        case .uninstallFolder: return "Deletes %@ — the event log, the settings and the hook launcher."
-        case .uninstallThen: return "Then Pulse quits and shows itself in Finder, for you to move to the Trash."
-        case .uninstallStopped: return "Pulse was not uninstalled: a hook could not be removed. Settings → Hooks says why; nothing else was deleted."
         case .noticeNotificationsDenied: return "Notifications are off for Pulse — an agent that needs you cannot reach you"
         case .noticeNotificationsOff: return "Turn on notifications so an agent that needs you can reach you"
         case .settingsHookInstalled: return "Installed"
@@ -214,7 +156,6 @@ enum L10n {
         case .settingsHookNoEvent: return "no event yet"
         case .settingsHookNoWait: return "Doesn't report when it waits — running and your turn only"
         case .settingsHooksSection: return "Hooks"
-        case .settingsUpdatesSection: return "Updates"
         case .detailLastMessage: return "Last message"
         case .detailErrorHeading: return "Error"
         case .explainIdle: return "At its prompt · last step %@"
@@ -227,9 +168,7 @@ enum L10n {
         case .setupGotIt: return "Got it"
         case .setupStepCodex: return "Codex: run /hooks in Codex and trust Pulse"
         case .setupStepRestart: return "Sessions already running appear after their next step"
-        case .terminalAutomation: return "Go to the exact Terminal or iTerm tab"
-        case .terminalAutomationHint: return "Pulse selects the tab with AppleScript; macOS asks you once, the first time."
-        case .focusAppOnlyAutomation: return "Opened the app — turn on “Go to the exact Terminal or iTerm tab” to land on the tab itself (macOS asks once)"
+        case .focusAppOnlyAutomation: return "Opened the app — to land on the tab itself, allow Pulse in System Settings → Privacy & Security → Automation"
         case .durSecSpoken: return "%ds"
         case .durMinSpoken: return "%dm"
         case .durHourSpoken: return "%dh"
@@ -238,7 +177,6 @@ enum L10n {
         case .stepHeading: return "Recent steps"
         case .stepThisTurn: return "This turn"
         case .setupFailedAction: return "Open Settings"
-        case .languageSystem: return "System"
         case .menuOpenPulse: return "Open Pulse"
         case .menuAbout: return "About Pulse"
         case .menuEdit: return "Edit"
@@ -254,10 +192,6 @@ enum L10n {
         case .loginItemNeedsApproval: return "macOS is waiting for your OK in Login Items"
         case .loginItemFailed: return "macOS did not add Pulse to Login Items"
         case .openLoginItems: return "Open Login Items"
-        case .hookInstallOne: return "Install"
-        case .hookRemoveOne: return "Remove"
-        case .hookInstallOneA11y: return "Install the %@ hook"
-        case .hookRemoveOneA11y: return "Remove the %@ hook"
         case .a11yNewWait: return "%@ needs you: %@"
         case .a11yNewWaitNoAsk: return "%@ needs you"
         case .durNowFull: return "just now"
@@ -284,20 +218,17 @@ enum L10n {
         case .settings: return "设置…"
         case .quit: return "退出 Pulse"
         case .general: return "通用"
-        case .notifyWaiting: return "Agent 需要我时通知"
         case .focusExact: return "前往终端"
         case .focusApp: return "打开应用"
         case .focusOpenTray: return "打开 Pulse 托盘"
         case .focusAppOnly: return "已打开应用——无法选中具体的终端"
         case .launchAtLogin: return "登录时打开"
-        case .language: return "语言"
         case .hooksHint: return "为每个 Agent 安装它自己文档里的 hook、插件或扩展——只用观察型事件，从不用能拦截或代答的事件。移除时每个文件逐字节还原。"
         case .installHooks: return "全部安装"
-        case .shortcuts: return "快捷键"
         case .running: return "运行中"
         case .settingsTitle: return "Pulse 设置"
         case .recent: return "最近"
-        case .dismissWait: return "忽略"
+        case .ignoreWait: return "忽略"
         case .focusFailed: return "没能打开——那个窗口可能已经不在了，正在重新扫描"
         case .hooksUnknown: return "未检查"
         case .hooksMissing: return "未安装"
@@ -325,22 +256,10 @@ enum L10n {
         case .notificationsSection: return "通知"
         case .notifyNotConfigured: return "通知尚未启用。点「启用通知」后 Pulse 才会请求权限。"
         case .enableNotifications: return "启用通知"
-        case .notifyDenied: return "系统已关闭 Pulse 的通知权限，下面的开关不会生效。"
+        case .notifyDenied: return "系统已关闭 Pulse 的通知权限——需要你的 Agent 没法提醒你。"
         case .openNotificationSettings: return "打开系统设置"
         case .uninstallHooks: return "全部移除"
-        case .revealShortcut: return "打开或关闭 Pulse"
-        case .hotkeyTaken: return "不能使用这个快捷键——macOS 或其他应用已经在用它。"
         case .emptyHint: return "已连接的 Agent 开始工作时，会话会出现在这里。"
-        case .checkForUpdates: return "检查更新"
-        case .checkNow: return "立即检查"
-        case .openRelease: return "打开发布页"
-        case .updateIdle: return "未检查"
-        case .updateChecking: return "检查中…"
-        case .updateCurrent: return "已是最新"
-        case .updateCurrentPreview: return "已是最新（预览通道 · ad-hoc 签名 · 未公证）"
-        case .updateCurrentStable: return "已是最新（正式通道）"
-        case .updateAvailable: return "有新版本：%@"
-        case .updateFailed: return "检查失败"
         case .a11yIdle: return "空闲"
         case .a11yRunning: return "运行中"
         case .a11yStalled: return "停滞"
@@ -349,22 +268,11 @@ enum L10n {
         case .agoFormat: return "%@前"
         case .stalled: return "停滞"
         case .notifFocus: return "前往"
-        case .waitingSummaryTitle: return "%d 个 Agent 需要你"
-        case .updatePreview: return "预览版 · ad-hoc 签名 · 未公证"
+        case .buildPreview: return "预览版 · ad-hoc 签名 · 未公证"
+        case .releases: return "版本发布…"
+        case .notifyAllowed: return "已允许——横幅的样式和时机由 macOS 决定。"
         case .yourTurn: return "轮到你"
-        case .shortcutRecord: return "录制快捷键"
-        case .shortcutRecording: return "请按下快捷键…"
-        case .shortcutRecordingHint: return "须包含 ⌘、⌃ 或 ⌥。Esc 取消，Delete 清除。"
-        case .shortcutNeedsModifier: return "加上 ⌘、⌃ 或 ⌥——单个键不能做全局快捷键。"
-        case .shortcutClear: return "清除快捷键"
-        case .notifIgnore: return "忽略"
-        case .turnOnAutomation: return "开启"
         case .settingsHooksTitle: return "Agent 的 hooks"
-        case .updateFailedBadFeed: return "更新源地址无效"
-        case .updateFailedNetwork: return "无法连接 GitHub"
-        case .updateFailedHTTP: return "GitHub 返回 %d"
-        case .updateFailedBadResponse: return "GitHub 返回的不是发布信息"
-        case .updateFailedNoTag: return "最新发布没有版本标签"
         case .waitingBannerFailed: return "macOS 没有显示上一条「需要你」通知——请检查通知设置"
         case .lampRuleBlocked: return "红：有 Agent 在等你。"
         case .lampRuleStalled: return "橙：有运行中的会话停滞了。"
@@ -392,20 +300,7 @@ enum L10n {
         case .stalledN: return "停滞"
         case .yourTurnN: return "轮到你"
         case .lampRuleProcessOnly: return "灰：有 Agent 在运行，但 Pulse 只看到进程。"
-        case .mute: return "静音"
-        case .unmute: return "取消静音"
-        case .mutedWord: return "已静音"
         case .copyReport: return "复制报告"
-        case .uninstallPulse: return "卸载 Pulse…"
-        case .uninstallTitle: return "卸载 Pulse？"
-        case .uninstallConfirm: return "卸载"
-        case .uninstallCancel: return "取消"
-        case .uninstallPlanHooks: return "移除 %@ 里的 Pulse hook——每个文件逐字节还原；你之后改过的文件保留你的改动，只删 Pulse 的条目。"
-        case .uninstallNoHooks: return "没有 Agent 装着 Pulse 的 hook。"
-        case .uninstallLogin: return "从登录项中移除 Pulse。"
-        case .uninstallFolder: return "删除 %@——事件日志、设置与 hook 启动器。"
-        case .uninstallThen: return "然后 Pulse 退出，并在访达中显示自己，由你拖进废纸篓。"
-        case .uninstallStopped: return "Pulse 没有卸载：有一个 hook 没能移除。设置 → Hooks 写着原因；其他东西都没删。"
         case .noticeNotificationsDenied: return "Pulse 的通知被关闭了——需要你的 Agent 没法提醒你"
         case .noticeNotificationsOff: return "开启通知，需要你的 Agent 才能提醒到你"
         case .settingsHookInstalled: return "已安装"
@@ -416,7 +311,6 @@ enum L10n {
         case .settingsHookNoEvent: return "还没有事件"
         case .settingsHookNoWait: return "不会报告它在等你——只显示运行中和轮到你"
         case .settingsHooksSection: return "Hooks"
-        case .settingsUpdatesSection: return "更新"
         case .detailLastMessage: return "最后的消息"
         case .detailErrorHeading: return "错误"
         case .explainIdle: return "停在提示符 · 上一步：%@"
@@ -429,9 +323,7 @@ enum L10n {
         case .setupGotIt: return "知道了"
         case .setupStepCodex: return "Codex：在 Codex 里运行 /hooks 并信任 Pulse"
         case .setupStepRestart: return "已在运行的会话会在它们的下一步之后出现"
-        case .terminalAutomation: return "前往确切的 Terminal 或 iTerm 标签页"
-        case .terminalAutomationHint: return "Pulse 用 AppleScript 选中标签页；第一次前往时 macOS 会询问你一次。"
-        case .focusAppOnlyAutomation: return "已打开应用——开启「前往确切的 Terminal 或 iTerm 标签页」就能直接落到那个标签页（macOS 会问一次）"
+        case .focusAppOnlyAutomation: return "已打开应用——要直接落到那个标签页，请在 系统设置 → 隐私与安全性 → 自动化 中允许 Pulse"
         case .durSecSpoken: return "%d 秒"
         case .durMinSpoken: return "%d 分钟"
         case .durHourSpoken: return "%d 小时"
@@ -440,7 +332,6 @@ enum L10n {
         case .stepHeading: return "最近几步"
         case .stepThisTurn: return "本回合"
         case .setupFailedAction: return "打开设置"
-        case .languageSystem: return "跟随系统"
         case .menuOpenPulse: return "打开 Pulse"
         case .menuAbout: return "关于 Pulse"
         case .menuEdit: return "编辑"
@@ -456,10 +347,6 @@ enum L10n {
         case .loginItemNeedsApproval: return "macOS 在等你在「登录项」里允许"
         case .loginItemFailed: return "macOS 没有把 Pulse 加进登录项"
         case .openLoginItems: return "打开登录项"
-        case .hookInstallOne: return "安装"
-        case .hookRemoveOne: return "移除"
-        case .hookInstallOneA11y: return "安装 %@ 的 hook"
-        case .hookRemoveOneA11y: return "移除 %@ 的 hook"
         case .a11yNewWait: return "%@ 需要你：%@"
         case .a11yNewWaitNoAsk: return "%@ 需要你"
         case .durNowFull: return "刚刚"
@@ -479,11 +366,10 @@ enum L10n {
         case noAgents, noAgentsDetected, needsYou, waitingN, runningN
         case recent1, recentN, recent
         case settings, quit
-        case focusExact, focusApp, focusOpenTray, dismissWait
+        case focusExact, focusApp, focusOpenTray, ignoreWait
         case focusFailed, focusAppOnly
-        case general, notifyWaiting, launchAtLogin, language
+        case general, launchAtLogin
         case hooksHint, installHooks
-        case shortcuts
         case running, settingsTitle
         case hooksUnknown, hooksMissing, hooksInstalledCount
         case hooksFailed
@@ -497,30 +383,17 @@ enum L10n {
         case notificationsSection, notifyNotConfigured
         case enableNotifications, notifyDenied, openNotificationSettings
         case uninstallHooks
-        case revealShortcut, hotkeyTaken
         case emptyHint
-        case checkForUpdates, checkNow, openRelease
-        case updateIdle, updateChecking, updateCurrent, updateCurrentPreview, updateCurrentStable
-        case updateAvailable, updateFailed
         case a11yIdle, a11yRunning, a11yStalled, a11yWaiting
         case moreActions
         case agoFormat
         case stalled
         case notifFocus
-        case waitingSummaryTitle
-        case updatePreview
+        case buildPreview, releases, notifyAllowed
         case yourTurn
-        case shortcutRecord, shortcutRecording, shortcutRecordingHint, shortcutNeedsModifier, shortcutClear
-        case notifIgnore
-        case turnOnAutomation
         case settingsHooksTitle
         case settingsHookAbsent, settingsReportHint
         case settingsHookInstalled, settingsHookLastEvent, settingsHookLastEventNow, settingsHookNoEvent, settingsHookNoWait
-        case updateFailedBadFeed
-        case updateFailedNetwork
-        case updateFailedHTTP
-        case updateFailedBadResponse
-        case updateFailedNoTag
         case waitingBannerFailed
         case lampRuleBlocked
         case lampRuleStalled
@@ -548,30 +421,22 @@ enum L10n {
         case stalledN
         case yourTurnN
         case lampRuleProcessOnly
-        case mute
-        case unmute
-        case mutedWord
         case copyReport
-        case uninstallPulse, uninstallTitle, uninstallConfirm, uninstallCancel
-        case uninstallPlanHooks, uninstallNoHooks, uninstallLogin, uninstallFolder, uninstallThen, uninstallStopped
         case noticeNotificationsDenied
         case noticeNotificationsOff
         case settingsHooksSection
-        case settingsUpdatesSection
         case detailLastMessage
         case detailErrorHeading
         case explainIdle, explainEnded, explainQuiet, explainSilent
         case setupFound, setupConnect, setupDone, setupGotIt, setupStepCodex, setupStepRestart
-        case terminalAutomation, terminalAutomationHint, focusAppOnlyAutomation
+        case focusAppOnlyAutomation
         case durSecSpoken, durMinSpoken, durHourSpoken
         case durUnderMinute
         case stepStalled, stepHeading, stepThisTurn
         case setupFailedAction
-        case languageSystem
         case menuOpenPulse, menuAbout, menuEdit, menuUndo, menuRedo, menuCut, menuCopy, menuPaste, menuSelectAll
         case menuWindow, menuClose, menuMinimize
         case loginItemNeedsApproval, loginItemFailed, openLoginItems
-        case hookInstallOne, hookRemoveOne, hookInstallOneA11y, hookRemoveOneA11y
         case a11yNewWait, a11yNewWaitNoAsk
         case durNowFull, durUnderMinuteFull
         case durSecFull1, durSecFullN, durMinFull1, durMinFullN, durHourFull1, durHourFullN

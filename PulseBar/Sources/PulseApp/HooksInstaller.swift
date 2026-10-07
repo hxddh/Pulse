@@ -50,15 +50,9 @@ enum HooksInstaller {
     /// What marks an entry as Pulse's: the launcher `pulse-hook` as a whole
     /// command token — a path ending in `/pulse-hook`, or the bare word —
     /// never a substring (a user's `impulse-hook.sh` must never be taken for
-    /// Pulse's and removed). Legacy installs that pointed straight at the
-    /// binary (`…/PulseBar --hook claude`) are the token `PulseBar` followed
-    /// by the token `--hook`; a bare `--hook` alone (`mytool --hook-dir`) is
-    /// never ours. The quote and backslash boundaries cover the command as
-    /// it sits inside JSON and JavaScript text.
-    static let pulseMarkerPatterns = [
-        #"(?:^|[\s/"'\\])pulse-hook(?:$|[\s"'\\])"#,
-        #"(?:^|[\s/"'\\])PulseBar["'\\]*\s+--hook(?:$|[\s"'\\])"#,
-    ]
+    /// Pulse's and removed). The quote and backslash boundaries cover the
+    /// command as it sits inside JSON and JavaScript text.
+    static let pulseMarkerPattern = #"(?:^|[\s/"'\\])pulse-hook(?:$|[\s"'\\])"#
 
     /// Seconds a hook may run before the vendor gives up on it. Pulse's hook
     /// exits at once; this only bounds a pathological case.
@@ -372,7 +366,7 @@ enum HooksInstaller {
         /// The file existed before Pulse first wrote it.
         var existed: Bool
         /// Its exact contents then — nil when Pulse cannot know them (it
-        /// already carried a Pulse entry from an older install).
+        /// already carried a Pulse entry this ledger has no record of).
         var original: String?
         /// What Pulse wrote last.
         var written: String
@@ -569,7 +563,7 @@ enum HooksInstaller {
     }
 
     static func containsPulseMarker(_ text: String) -> Bool {
-        pulseMarkerPatterns.contains { text.range(of: $0, options: .regularExpression) != nil }
+        text.range(of: pulseMarkerPattern, options: .regularExpression) != nil
     }
 
     enum InstallError: LocalizedError {

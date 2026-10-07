@@ -35,8 +35,6 @@ struct ScanQuietTests {
         [
             ("cachedAll", \StatusStore.cachedAll),
             ("hooksStatus", \StatusStore.hooksStatus),
-            ("hotkeyRecorder", \StatusStore.hotkeyRecorder),
-            ("hotkeyRegistered", \StatusStore.hotkeyRegistered),
             ("loginItem", \StatusStore.loginItem),
             ("notifyAuthorized", \StatusStore.notifyAuthorized),
             ("presentAgents", \StatusStore.presentAgents),
@@ -46,7 +44,6 @@ struct ScanQuietTests {
             ("setupConnected", \StatusStore.setupConnected),
             ("snapshot", \StatusStore.snapshot),
             ("traySessionToken", \StatusStore.traySessionToken),
-            ("updateStatus", \StatusStore.updateStatus),
             ("waitingBannerFailed", \StatusStore.waitingBannerFailed),
         ]
     }
@@ -186,7 +183,7 @@ struct ScanQuietTests {
         // The model stays small — the book, the watchers and banner
         // bookkeeping live in `ScanEngine` and `WaitNotifier`.
         let count = Self.observed.count
-        #expect(count <= 25, "the observed model grew to \(count) properties")
+        #expect(count <= 15, "the observed model grew to \(count) properties")
         let listed = Set(Self.observed.map(\.0))
         let stored = Mirror(reflecting: quietStore()).children.compactMap(\.label)
         // `@Observable` stores a tracked property as `_name`; an ignored one
@@ -203,7 +200,7 @@ struct ScanQuietTests {
     @Test func aSettingChangeWakesOnlySettings() {
         let store = quietStore()
         let fired = watch(store, Self.observed)
-        store.settings.notifyOnWaiting = false
+        store.settings.hooksNudgeOff = true
         #expect(fired.names == ["settings"], "\(fired.names)")
     }
 
@@ -211,7 +208,7 @@ struct ScanQuietTests {
     @Test func anUnchangedSettingWritesNothing() {
         let store = quietStore()
         let fired = watch(store, Self.observed)
-        store.set(\.notifyOnWaiting, true)
+        store.set(\.hooksNudgeOff, false)
         #expect(fired.names == [])
     }
 
@@ -222,8 +219,8 @@ struct ScanQuietTests {
         let loop = ObservationLoop(track: { _ = store.snapshot }, onChange: {})
         defer { loop.cancel() }
 
-        store.settings.notifyOnWaiting.toggle()
-        store.hotkeyRegistered.toggle()
+        store.settings.hooksNudgeOff.toggle()
+        store.waitingBannerFailed.toggle()
         for _ in 0..<10 { await Task.yield() }
         #expect(loop.deliveries == 0, "a settings write does not touch the lamp")
 
@@ -566,7 +563,7 @@ struct EventFeedTests {
         store.engine.landLog(late, nowMs: now)
         let tools = store.engine.book.sessions["claude|s1"]?.steps.map(\.tool)
         #expect(tools == ["Read", "Grep", "Edit"])
-        let stale = EventLog.Chunk(header: "# pulse-events v5 gOLD", lines: [tool("Bash", now - 3_000).line], end: 4_096, fresh: false, start: 10)
+        let stale = EventLog.Chunk(header: "# pulse-events v6 gOLD", lines: [tool("Bash", now - 3_000).line], end: 4_096, fresh: false, start: 10)
         store.engine.landLog(stale, nowMs: now)
         let still = store.engine.book.sessions["claude|s1"]?.steps.map(\.tool)
         #expect(still == ["Read", "Grep", "Edit"], "a generation the engine has left")
@@ -741,7 +738,7 @@ struct HookToBannerTests {
             }
             // Notification Center accepts the banner.
             let banner = WaitLedger.bannerID(rowKey: key)
-            store.notifier.finishDelivery(keys: [key], bannerID: banner, success: true)
+            store.notifier.finishDelivery(key: key, bannerID: banner, success: true)
             ms += 1_000
             deliver(item.agent, item.answer, log: log, at: ms)
             land(store, log: log, at: ms)

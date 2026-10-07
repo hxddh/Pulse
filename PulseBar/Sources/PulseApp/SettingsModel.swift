@@ -1,17 +1,18 @@
 import Foundation
 
-/// Settings as a value: one page, five short groups, a footer.
+/// Settings as a value: one page, three short groups, a footer.
 ///
-/// General (open at login, language, Terminal automation) · Shortcut (a recorder) · Notifications (and the muted
-/// agents, each with ✕) · Hooks — the diagnostics: one line per agent on this
-/// Mac (installed or not, its last event, a fix), the agents that are not
-/// here collapsed into one line, and "Copy report" · Updates. The version and
-/// the kind of build are the footer, with "Uninstall Pulse…". `SettingsFace` renders this and sends
-/// `Action`s; the store builds it from `settings` and a few flags — never
-/// from a scan. Pure.
+/// General (open at login) · Notifications (whether macOS allows banners) ·
+/// Hooks — the diagnostics: Install all / Remove all, one line per agent on
+/// this Mac (installed or not, its last event, why an install failed), the
+/// agents that are not here collapsed into one line, and "Copy report". The
+/// version, the kind of build and "Releases…" are the footer. The language
+/// is the system's. `SettingsFace` renders this and sends `Action`s; the
+/// store builds it from `settings` and a few flags — never from a scan.
+/// Pure.
 struct SettingsModel: Equatable {
     enum Section: String, CaseIterable, Equatable {
-        case general, shortcut, notifications, hooks, updates
+        case general, notifications, hooks
     }
 
     /// Whether macOS lets Pulse post a banner.
@@ -29,54 +30,27 @@ struct SettingsModel: Equatable {
     enum Action: Equatable {
         case setLaunchAtLogin(Bool)
         case openLoginItems
-        case setLanguage(AppLanguage)
-        case setTerminalAutomation(Bool)
-        /// The shortcut control was clicked: listen for the next key.
-        case recordHotkey
-        /// Clicked again while listening: stop, keep the old shortcut.
-        case stopRecordingHotkey
-        /// The ✕ beside a recorded shortcut: no shortcut.
-        case clearHotkey
         case enableNotifications
         case openNotificationSettings
-        case setNotifyOnWaiting(Bool)
-        case unmute(AgentID)
-        /// Every agent on this Mac, or one.
+        /// Every agent on this Mac.
         case installHooks
+        /// Every agent's hook.
         case uninstallHooks
-        case installHook(AgentID)
-        case uninstallHook(AgentID)
         case copyReport
-        case setUpdateCheck(Bool)
-        case checkForUpdates
-        case openRelease
-        /// "Uninstall Pulse…": confirm, then remove everything Pulse put on
-        /// this Mac (`UninstallPlan`) and quit.
-        case uninstallPulse
+        /// The footer's "Releases…": Pulse's releases page, in the browser.
+        case openReleases
     }
+
+    /// Where "Releases…" goes. Pulse itself never asks the network.
+    static let releasesURL = "https://github.com/hxddh/Pulse/releases"
 
     var lang: ResolvedLanguage
     // General
     /// The toggle: what macOS says (`LoginItemState`), else what was asked.
     var launchAtLogin: Bool
     var loginNote: LoginNote? = nil
-    var language: AppLanguage
-    /// Go may select the exact Terminal / iTerm tab with AppleScript.
-    var terminalAutomation: Bool = false
-    // Shortcut
-    /// The recorded shortcut in macOS's glyphs ("⌃⌥Space"); nil: none.
-    var hotkeyLabel: String?
-    /// The control is listening for the next key.
-    var hotkeyRecording = false
-    /// Said under the control: the key needs ⌘, ⌃ or ⌥, or macOS (or
-    /// another app) owns the shortcut — a recorded one that was refused, or
-    /// a saved one that no longer registers.
-    var hotkeyProblem: HotkeyRecorder.Problem? = nil
     // Notifications
     var notifications: Notifications
-    /// The switch as it takes effect: off while macOS does not allow banners.
-    var notifyOnWaiting: Bool
-    var mutedAgents: [AgentID]
     // Hooks
     var hooksStatus: String
     var hooksInstalled: Bool
@@ -87,10 +61,6 @@ struct SettingsModel: Equatable {
     var hookAgents: [HookAgent] = []
     /// The agents that are not on this Mac, said once: "Not on this Mac: …".
     var absentAgents: [AgentID] = []
-    // Updates
-    var updateCheckEnabled: Bool
-    var updateStatus: String
-    var updateAvailable: Bool
     // Footer
     var version: String
     /// Said in orange: a preview or unnotarized build, or a stale bundle.
@@ -111,9 +81,6 @@ struct SettingsModel: Equatable {
         /// The last install or removal failed for this agent (the state
         /// says why, in words from `L10n`).
         var failed = false
-        /// The agent is here and its hook is not (or did not go in): the
-        /// line offers the install.
-        var needsFix = false
 
         var id: AgentID { agent }
     }
@@ -159,8 +126,7 @@ struct SettingsModel: Equatable {
                 installed: isInstalled,
                 lastEvent: lastEvent,
                 note: agent.waitingSource == .none ? t(.settingsHookNoWait) : nil,
-                failed: failure != nil,
-                needsFix: failure != nil || !isInstalled
+                failed: failure != nil
             )
         }
     }
@@ -187,9 +153,8 @@ struct SettingsModel: Equatable {
 
     /// What "Copy report" puts on the clipboard: plain text, English, no
     /// path, prompt, session id or project — the version, each agent's hook
-    /// and when it last reported, whether macOS allows banners, whether
-    /// Pulse may script a terminal, the global shortcut, the login item as
-    /// macOS sees it, and how Pulse reads each listed
+    /// and when it last reported, whether macOS allows banners, the login
+    /// item as macOS sees it, and how Pulse reads each listed
     /// session (the detail page does not say it).
     struct ReportInput: Equatable {
         var version: String
@@ -201,11 +166,6 @@ struct SettingsModel: Equatable {
         var nowMs: Int64
         /// nil: macOS has not been asked yet.
         var notifyAuthorized: Bool?
-        var notifyOnWaiting: Bool
-        var terminalAutomation: Bool
-        var hotkey: Hotkey? = nil
-        /// The system took the shortcut (false: another app owns it).
-        var hotkeyRegistered = true
         var launchAtLogin: Bool
         /// What macOS says of Pulse's login item; nil when not read.
         var loginItem: LoginItemState? = nil
@@ -260,16 +220,11 @@ struct SettingsModel: Equatable {
         case .some(false): authorization = "denied"
         case .none: authorization = "not asked"
         }
-        let shortcut = input.hotkey.map {
-            "\($0.label), registered: \(input.hotkeyRegistered ? "yes" : "no — taken")"
-        } ?? "off"
         var lines: [String] = [
             "Pulse report",
             input.version,
             "macOS \(input.macOS)",
-            "notifications: \(authorization), needs-you banners \(input.notifyOnWaiting ? "on" : "off")",
-            "terminal automation: \(input.terminalAutomation ? "allowed" : "off")",
-            "shortcut: \(shortcut)",
+            "notifications: \(authorization)",
             "open at login: \(input.launchAtLogin ? "on" : "off"), macOS: \(input.loginItem?.reportWord ?? "not read")",
             "hooks:",
         ]
@@ -299,34 +254,23 @@ struct SettingsModel: Equatable {
         return lines.joined(separator: "\n")
     }
 
-    /// The hook work an action asks for — every agent on this Mac, or the
-    /// one a line names; nil for any other action. Pure.
+    /// The hook work an action asks for; nil for any other action. Pure.
     static func hooksJob(_ action: Action) -> HooksSupport.Job? {
         switch action {
-        case .installHooks: return .install(nil)
-        case .uninstallHooks: return .uninstall(nil)
-        case .installHook(let agent): return .install([agent])
-        case .uninstallHook(let agent): return .uninstall([agent])
+        case .installHooks: return .install
+        case .uninstallHooks: return .uninstall
         default: return nil
         }
     }
 
     /// The page, top to bottom.
-    static let sections: [Section] = [.general, .shortcut, .notifications, .hooks, .updates]
+    static let sections: [Section] = [.general, .notifications, .hooks]
 
     /// A deep link's target, as the section it scrolls to.
-    /// What the shortcut control says: "Type shortcut…" while it listens,
-    /// else the recorded combination ("⌃⌥Space"), else "Record Shortcut".
-    static func shortcutTitle(_ model: SettingsModel) -> String {
-        if model.hotkeyRecording { return L10n.t(.shortcutRecording, model.lang) }
-        return model.hotkeyLabel ?? L10n.t(.shortcutRecord, model.lang)
-    }
-
     static func section(for target: SettingsFocus.Target) -> Section {
         switch target {
         case .waitingSignals: return .hooks
         case .notifications: return .notifications
-        case .updates: return .updates
         }
     }
 
@@ -334,10 +278,8 @@ struct SettingsModel: Equatable {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         switch section {
         case .general: return t(.general)
-        case .shortcut: return t(.shortcuts)
         case .notifications: return t(.notificationsSection)
         case .hooks: return t(.settingsHooksSection)
-        case .updates: return t(.settingsUpdatesSection)
         }
     }
 
@@ -354,11 +296,6 @@ struct SettingsModel: Equatable {
         }
     }
 
-    /// Muted agents in the order a person reads them.
-    static func sortedMuted(_ agents: Set<AgentID>) -> [AgentID] {
-        agents.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
-    }
-
     static func notifications(_ authorized: Bool?) -> Notifications {
         switch authorized {
         case .some(true): return .allowed
@@ -370,61 +307,6 @@ struct SettingsModel: Equatable {
 
 /// Pulse's login item as macOS reports it (`SMAppService.mainApp.status`,
 /// read by `LoginItem`). Pure.
-/// "Uninstall Pulse…" as a value: everything Pulse put on this Mac, said in
-/// the confirmation before any of it is removed. Pure — `StatusStore` does
-/// it, in this order: every agent's hook comes out through the installer
-/// (byte for byte, from the record of what each install replaced); only
-/// when none is left does the login item go (always asked of macOS) and the folder — that record
-/// with it — get deleted; then Pulse quits and shows itself in Finder.
-struct UninstallPlan: Equatable, Sendable {
-    /// The agents whose config carries Pulse's hook now, in roster order.
-    /// The removal runs for every agent all the same.
-    var hooks: [AgentID]
-    /// The confirmation names the login item: macOS said it is on (or
-    /// waiting for approval), or — not read yet — the person asked for it.
-    /// Only what is said: the removal always unregisters, whatever this
-    /// read said (it may be stale, and unregistering an item that is off
-    /// does nothing).
-    var loginItem: Bool
-    /// Pulse's folder, as a person reads it (`~/Library/…`).
-    var folder: String
-
-    static func make(installed: Set<AgentID>, loginItem: LoginItemState?, asked: Bool = false, folder: URL, home: URL) -> UninstallPlan {
-        let path = folder.path
-        let homePath = home.path.hasSuffix("/") ? String(home.path.dropLast()) : home.path
-        let shown = path.hasPrefix(homePath + "/") ? "~" + String(path.dropFirst(homePath.count)) : path
-        return UninstallPlan(
-            hooks: AgentID.priority.filter(installed.contains),
-            loginItem: loginItem?.isOn ?? asked,
-            folder: shown
-        )
-    }
-
-    /// The confirmation's body: what goes, one line each, then what happens.
-    func message(_ lang: ResolvedLanguage) -> String {
-        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-        var lines: [String] = []
-        lines.append(hooks.isEmpty
-            ? t(.uninstallNoHooks)
-            : String(format: t(.uninstallPlanHooks), L10n.joinNames(hooks.map(\.displayName), lang)))
-        if loginItem { lines.append(t(.uninstallLogin)) }
-        lines.append(String(format: t(.uninstallFolder), folder))
-        lines.append(t(.uninstallThen))
-        return lines.joined(separator: "\n\n")
-    }
-
-    /// Whether the hook removal left nothing of Pulse's in any agent's
-    /// config. Only then is the folder — and with it the record a later
-    /// byte-for-byte removal would need — deleted.
-    static func hooksRemoved(_ status: HooksSupport.Status) -> Bool {
-        switch status {
-        case .missing: return true
-        case .installed(let agents, let failed): return agents.isEmpty && failed.isEmpty
-        case .unknown, .working, .failed: return false
-        }
-    }
-}
-
 enum LoginItemState: String, Equatable, Sendable {
     /// Not registered.
     case off
@@ -445,25 +327,5 @@ enum LoginItemState: String, Equatable, Sendable {
         case .requiresApproval: return "requires approval"
         case .unavailable: return "unavailable"
         }
-    }
-}
-
-/// What launch does with the login item, from whether the LaunchAgent an
-/// earlier version wrote was there and what macOS said after Pulse asked
-/// for the login item in its place. Pure.
-enum LoginAdoption: Equatable, Sendable {
-    /// No LaunchAgent: the setting follows what macOS says.
-    case sync
-    /// macOS took the login item: the LaunchAgent goes, and the setting
-    /// follows macOS.
-    case retireLegacyAndSync
-    /// macOS did not take it: the LaunchAgent stays (it still opens Pulse
-    /// at login), the setting is left as it is, and Settings says macOS
-    /// did not add Pulse.
-    case keepLegacy
-
-    static func decide(hadLegacyAgent: Bool, state: LoginItemState) -> LoginAdoption {
-        guard hadLegacyAgent else { return .sync }
-        return state.isOn ? .retireLegacyAndSync : .keepLegacy
     }
 }

@@ -14,8 +14,7 @@ extension StatusStore {
             row: row,
             lang: lang,
             nowMs: Int64(Date().timeIntervalSince1970 * 1000),
-            notice: rowActionNotice(row),
-            muted: settings.mutedAgents.contains(row.agent)
+            notice: rowActionNotice(row)
         ))
     }
 
@@ -25,7 +24,6 @@ extension StatusStore {
             row: row,
             lang: lang,
             nowMs: Int64(Date().timeIntervalSince1970 * 1000),
-            muted: settings.mutedAgents.contains(row.agent),
             notice: rowActionNotice(row)
         )
     }
@@ -80,13 +78,11 @@ extension StatusStore {
     var trayNotice: TrayNoticeModel? {
         TrayNoticeModel.pick(TrayNoticeModel.Input(
             lang: lang,
-            notifyOnWaiting: settings.notifyOnWaiting,
             notifyAuthorized: notifyAuthorized,
             bannerFailed: waitingBannerFailed && cachedAll.contains(where: \.isBlocked),
             unconnected: setupAgents,
             installFailure: setupFailureText,
-            justConnected: setupConnected.map { connected in AgentID.priority.filter(connected.contains) },
-            openAtLogin: loginItem?.isOn ?? settings.launchAtLogin
+            justConnected: setupConnected.map { connected in AgentID.priority.filter(connected.contains) }
         ))
     }
 
@@ -97,44 +93,6 @@ extension StatusStore {
         case .openHooksSettings: openSettings(focus: .waitingSignals)
         case .openNotificationSettings: openSystemNotificationSettings()
         case .enableNotifications: requestNotificationAuthorization()
-        case .setOpenAtLogin(let on): setLaunchAtLogin(on)
-        }
-    }
-
-    // MARK: - Settings copy
-
-    var updateStatusText: String {
-        switch updateStatus {
-        case .idle: return tr(.updateIdle)
-        case .checking: return tr(.updateChecking)
-        case .current:
-            switch PulseVersion.distributionChannel {
-            case "stable": return tr(.updateCurrentStable)
-            case "preview": return tr(.updateCurrentPreview)
-            default: return tr(.updateCurrent)
-            }
-        case .available(let release): return String(format: tr(.updateAvailable), release.version)
-        case .failed(let failure): return "\(tr(.updateFailed)) · \(updateFailureText(failure))"
-        }
-    }
-
-    var updateAvailableURL: URL? {
-        if case .available(let release) = updateStatus, !release.pageURL.isEmpty {
-            return URL(string: release.pageURL)
-        }
-        return nil
-    }
-
-    /// The reason in the person's language; only the system's own
-    /// network message stays as the system wrote it.
-    func updateFailureText(_ failure: UpdateCheck.Failure) -> String {
-        switch failure {
-        case .badFeed: return tr(.updateFailedBadFeed)
-        case .network(let message):
-            return message.isEmpty ? tr(.updateFailedNetwork) : "\(tr(.updateFailedNetwork)) (\(message))"
-        case .http(let code): return String(format: tr(.updateFailedHTTP), code)
-        case .badResponse: return tr(.updateFailedBadResponse)
-        case .noTag: return tr(.updateFailedNoTag)
         }
     }
 }
