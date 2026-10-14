@@ -10,8 +10,8 @@ import XCTest
 /// In tests a key may be written as its description — `"claude|s1"`,
 /// `"codex|pid:7"`, `"claude|hook:<hash>"` — or as a bare id, a Claude
 /// session (`"a"`).
-extension SessionKey: @retroactive ExpressibleByStringLiteral {
-    package init(stringLiteral text: String) {
+extension SessionKey: ExpressibleByStringLiteral {
+    public init(stringLiteral text: String) {
         let parts = text.split(separator: "|", maxSplits: 1).map(String.init)
         guard parts.count == 2, let agent = AgentID(rawValue: parts[0]) else {
             self.init(.claude, text)
