@@ -1999,8 +1999,11 @@ struct EventLogTests {
         #expect(newest?.seq == Int64(appendedBefore + 2))
         let unapplied = after.unapplied(after: cursor)
         #expect(!unapplied.contains { $0.seq <= cursor.seq }, "nothing applied is applied again")
-        let next = after.header?.next
-        #expect(next == (newest?.seq ?? 0) + 1, "the header's next follows the kept lines")
+        // The header's `next` is a floor, not a counter: the next line
+        // continues after the newest one, whatever the header says.
+        EventLog.append(record(.tool, t0 + 2, session: "busy", message: pad, tool: "Read"), at: home.log, nowMs: t0 + 2)
+        let last = try #require(EventLog.read(at: home.log, after: nil)).records.last
+        #expect(last?.seq == (newest?.seq ?? 0) + 1, "numbers continue after a compaction")
     }
 
     /// Compaction keeps a block together with what answers it, groups a
