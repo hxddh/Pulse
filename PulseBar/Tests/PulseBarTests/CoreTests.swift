@@ -3,15 +3,14 @@ import Darwin
 import AppKit
 import XCTest
 @testable import PulseApp
-@testable import PulseCore
-@testable import PulseHarvest
+@testable import PulseKit
 
 // Core: the agent catalog, bounded IO, and the agent processes (libproc).
 
 /// The roster is one table, and the table is whole.
 final class AgentCatalogTests: XCTestCase {
     func testEveryAgentHasExactlyOneSpecInDeclarationOrder() {
-        XCTAssertEqual(AgentCatalog.all.map(\.id), AgentID.allCases,
+        XCTAssertEqual(Agents.all.map(\.id), AgentID.allCases,
                        "catalog order is process-rule precedence; it must follow the enum")
         for id in AgentID.allCases {
             XCTAssertEqual(id.spec.id, id)
@@ -20,7 +19,7 @@ final class AgentCatalogTests: XCTestCase {
 
     func testAliasesNeverShadowAnotherAgent() {
         var seen: [String: AgentID] = [:]
-        for spec in AgentCatalog.all {
+        for spec in Agents.all {
             for alias in spec.aliases {
                 XCTAssertNil(AgentID(rawValue: alias), "\(alias) is already a raw value")
                 XCTAssertNil(seen[alias], "\(alias) names two agents")
@@ -30,29 +29,30 @@ final class AgentCatalogTests: XCTestCase {
     }
 
     func testEverySpellingResolves() {
-        for spec in AgentCatalog.all {
-            XCTAssertEqual(AgentCatalog.agent(named: spec.id.rawValue), spec.id)
+        for spec in Agents.all {
+            XCTAssertEqual(Agents.agent(named: spec.id.rawValue), spec.id)
             for alias in spec.aliases {
-                XCTAssertEqual(AgentCatalog.agent(named: alias), spec.id)
+                XCTAssertEqual(Agents.agent(named: alias), spec.id)
             }
         }
-        XCTAssertNil(AgentCatalog.agent(named: "not-an-agent"))
+        XCTAssertNil(Agents.agent(named: "not-an-agent"))
     }
 
     /// The owner's roster, and nothing else.
-    func testRosterIsTheSevenSupportedAgents() {
+    func testRosterIsTheSixSupportedAgents() {
         XCTAssertEqual(
             AgentID.allCases.map(\.rawValue),
-            ["claude", "codex", "cursor", "pi", "gemini", "copilot", "opencode"]
+            ["claude", "codex", "cursor", "pi", "copilot", "opencode"]
         )
+        XCTAssertNil(Agents.agent(named: "gemini"), "Gemini CLI is not supported")
         XCTAssertEqual(Set(AgentID.priority), Set(AgentID.allCases))
-        XCTAssertEqual(AgentCatalog.agent(named: "cursor-agent"), .cursor, "the CLI is Cursor")
-        XCTAssertEqual(AgentCatalog.agent(named: "cursor_agent"), .cursor)
+        XCTAssertEqual(Agents.agent(named: "cursor-agent"), .cursor, "the CLI is Cursor")
+        XCTAssertEqual(Agents.agent(named: "cursor_agent"), .cursor)
     }
 
     /// Waiting by evidence — only a vendor hook that reports a block.
     func testWaitingComesOnlyFromAVendorBlockEvent() {
-        let reportsBlocks: Set<AgentID> = [.claude, .gemini, .copilot, .opencode, .pi]
+        let reportsBlocks: Set<AgentID> = [.claude, .copilot, .opencode, .pi]
         for id in AgentID.allCases {
             XCTAssertEqual(id.waitingSource == .hooks, reportsBlocks.contains(id), id.rawValue)
         }
@@ -65,7 +65,7 @@ final class AgentCatalogTests: XCTestCase {
 
     /// Every agent's hook is the vendor's documented, non-blocking one.
     func testEveryHookContractIsObserveOnly() {
-        for spec in AgentCatalog.all {
+        for spec in Agents.all {
             let names = spec.hooks.events.map(\.name)
             XCTAssertFalse(names.isEmpty, spec.id.rawValue)
             XCTAssertEqual(Set(names).count, names.count, "\(spec.id.rawValue) lists an event twice")
@@ -246,12 +246,11 @@ final class AgentProcessesTests: XCTestCase {
             (.codex, "/opt/homebrew/bin/codex app-server"),
             (.cursor, "/Applications/Cursor.app/Contents/MacOS/Cursor"),
             (.pi, "pi"),
-            (.gemini, "/opt/homebrew/bin/node /opt/homebrew/bin/gemini"),
+            (.pi, "/opt/homebrew/bin/node /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"),
             (.copilot, "/opt/homebrew/bin/copilot"),
             (.opencode, "opencode"),
         ]
 
-        XCTAssertEqual(samples.count, AgentID.allCases.count)
         XCTAssertEqual(Set(samples.map(\.0)), Set(AgentID.allCases))
         for (agent, argv) in samples {
             XCTAssertEqual(AgentProcesses.match(args: argv), agent, "\(agent.displayName): \(argv)")
@@ -296,7 +295,7 @@ final class AgentProcessesTests: XCTestCase {
             "/bin/cat /Users/me/.local/bin/claude",
             "/Users/me/.local/bin/claude-mcp-server --port 3",
             "/opt/homebrew/bin/claude-squad",
-            "/usr/bin/less /opt/homebrew/bin/gemini",
+            "/usr/bin/less /opt/homebrew/bin/copilot",
             "/opt/homebrew/bin/node /Users/me/tools/copilot-cli-helper/index.js --watch",
         ]
         for argv in notAgents {
@@ -318,7 +317,7 @@ final class AgentProcessesTests: XCTestCase {
         XCTAssertFalse(AgentProcesses.containsComponent("/opt/homebrew/bin/pinentry-mac", "/opt/homebrew/bin/pi"))
         XCTAssertTrue(AgentProcesses.containsComponent("/x/anysphere.cursor-agent-1.2.0/main.js", "anysphere.cursor-agent"))
         XCTAssertFalse(AgentProcesses.containsComponent("/x/myanysphere.cursor-agent/main.js", "anysphere.cursor-agent"))
-        XCTAssertEqual(AgentProcesses.commandLine(path: "/usr/local/bin/node", argv: ["node", "/opt/homebrew/bin/gemini"]), "/usr/local/bin/node /opt/homebrew/bin/gemini")
+        XCTAssertEqual(AgentProcesses.commandLine(path: "/usr/local/bin/node", argv: ["node", "/opt/homebrew/bin/copilot"]), "/usr/local/bin/node /opt/homebrew/bin/copilot")
         XCTAssertEqual(AgentProcesses.commandLine(path: "", argv: ["pi", "--model", "x"]), "pi --model x")
     }
 

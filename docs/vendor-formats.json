@@ -74,47 +74,24 @@
     "pi": {
       "hooks": {
         "source": "repo",
-        "repo": "https://github.com/badlogic/pi-mono",
-        "commit": "312184edb68c38248e1acfc3eec68500ba49d9cb",
-        "checked": "2026-09-29",
+        "repo": "https://github.com/earendil-works/pi",
+        "commit": "3daa20280f6a7c7cbe0935680c9a38fdc3863005",
+        "checked": "2026-10-14",
         "watch": [
           "packages/coding-agent/docs/extensions.md",
+          "packages/coding-agent/docs/json.md",
           "packages/coding-agent/src/core/extensions/types.ts"
         ],
-        "note": "Extension events are notifications when the handler returns nothing; ui_prompt_start/ui_prompt_end are Pi's own report of a blocking user-facing prompt. Pulse's extension forwards tool_execution_end's toolName and one short argument (command, path, file_path, pattern, url or query, from the event's args when present) as tool_name / tool_input — the step. agent_start carries no prompt, so a Pi row has no title from its events.",
+        "note": "The repository moved from badlogic/pi-mono to earendil-works/pi (package @earendil-works/pi-coding-agent; user extensions still load from ~/.pi/agent/extensions). Extension events are notifications when the handler returns nothing (ExtensionHandler<E> with no result type); before_agent_start, input, tool_call, tool_result, turn_end and message_end can change what Pi does and are never subscribed. ui_prompt_start/ui_prompt_end (reason \"ui_prompt\", kind, title) are Pi's own report of a blocking user-facing prompt. tool_execution_end no longer carries the call's args (toolCallId, toolName, result, isError, durationMs, parentToolCallId): the extension keeps one short argument per toolCallId from tool_execution_start (observed, never forwarded) and sends it with the end as tool_name / tool_input — the step. message_start is forwarded only for role \"user\": its text is the prompt (the title). agent_settled (aborted) is final; the extension adds the run's last assistant words — or its errorMessage when stopReason is \"error\" — from agent_end (observed, never forwarded). session_start / session_shutdown with reason \"reload\" are not sent: the same session goes on.",
         "events": [
           "session_start",
           "session_shutdown",
           "agent_start",
+          "message_start",
           "tool_execution_end",
           "ui_prompt_start",
           "ui_prompt_end",
           "agent_settled"
-        ],
-        "tests": [
-          "AttentionTests.swift",
-          "SessionTests.swift"
-        ]
-      }
-    },
-    "gemini": {
-      "hooks": {
-        "source": "repo",
-        "repo": "https://github.com/google-gemini/gemini-cli",
-        "commit": "d75234cae935d58f896f4dbf305e0c51602fa385",
-        "checked": "2026-09-29",
-        "watch": [
-          "docs/hooks/reference.md",
-          "docs/hooks/index.md"
-        ],
-        "note": "Exit 0 with empty stdout passes every event; only exit 2 or a decision in stdout blocks. Notification is observability only. Hooks run with a sanitized environment, so terminal handles may be missing. AfterTool is observe-only for Pulse (it prints nothing, so no decision, no continue:false, no tailToolCallRequest): the tool ran, which answers a ToolPermission raised for it.",
-        "events": [
-          "SessionStart",
-          "SessionEnd",
-          "BeforeAgent",
-          "AfterTool",
-          "AfterAgent",
-          "Notification"
         ],
         "tests": [
           "AttentionTests.swift",

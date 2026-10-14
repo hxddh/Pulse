@@ -13,18 +13,21 @@ CHANGELOG.
 | [`README.md`](README.md) | You want to know what the product is |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You change anything the user sees — it is the behaviour spec |
 | [`docs/architecture.md`](docs/architecture.md) | You need who owns which state, how processes are read, how a click lands, or the version identity |
-| [`docs/attention-protocol.md`](docs/attention-protocol.md) | You touch the event log (`events.tsv`, Attention Protocol v6) or a hook's line |
+| [`docs/attention-protocol.md`](docs/attention-protocol.md) | You touch the event log (`events.tsv`, Attention Protocol v7) or a hook's line |
 | [`docs/vendor-formats.md`](docs/vendor-formats.md) | You touch a hook receiver, the installer or any per-agent fact — each contract has a pinned source (`vendor-formats.json`), a test and a weekly drift sentinel |
 
 The tests are the spec's proof: a behaviour is pinned by a test in the file of
 its component, not by a document.
 
-**The roster is seven agents**, an owner decision: Claude, Codex, Cursor (IDE
-+ `cursor-agent` CLI), Pi, Gemini CLI, Copilot CLI, OpenCode. Adding one is a
-product decision; mechanically it is one `case` and one `AgentSpec` (with its
-`HookContract`) in `PulseCore/AgentCatalog.swift`, its receiver adapter in
-`PulseHookReceiver`, its icon, README row, a truth table in
-`SessionBookTests` and a `hooks` entry in `docs/vendor-formats.json`.
+**The roster is six agents**, an owner decision: Claude Code, Codex, Cursor
+(IDE + `cursor-agent` CLI), Pi, Copilot CLI, OpenCode. Adding one is a
+product decision; mechanically it is one `case` in
+`PulseKit/Agents/Agents.swift`, one adapter file beside it (its `AgentSpec`:
+identity, process rule, waiting source, `HookContract` with each event's
+action, and a `read` for payload-dependent events), its icon, README row, a
+truth table in `SessionBookTests` and a `hooks` entry in
+`docs/vendor-formats.json`. Nothing outside `Agents/` switches on an agent
+or spells a vendor event (`catalog_check`).
 
 ## Invariants
 
@@ -32,8 +35,9 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
 
 - **No fake Waiting.** Waiting comes only from the vendor's own hook / plugin /
   extension event that reports a block (`waiting: .hooks`). Codex and Cursor
-  are `waiting: .none`: the receiver refuses a blocked line for them and the
-  product says "doesn't report when it waits". **Red means blocked** —
+  are `waiting: .none`: the receiver writes an `ignored` line instead of a
+  blocked one, the reducer refuses one whoever wrote it, and the product says
+  "doesn't report when it waits". **Red means blocked** —
   `permission`, `question`, `waiting`. A finished turn (`turn`) is "your
   turn": a quiet tray count, never red, never a banner, never a row of its own.
 - **No quota, cost or reset HUD.** Tokens, context, cost, model and plan are
@@ -49,21 +53,29 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
 - **No network.** Pulse makes no network connection; "Releases…" opens the
   releases page in the browser.
 - **Pulse keeps no record of its own.** The hooks write the one event log
-  (`events.tsv`, append-only, v6); beside it only `settings.json`, the
+  (`events.tsv`, append-only, v7); beside it only `settings.json`, the
   hook-install ledger and `debug.log` outlive a launch. The app appends only a
-  `done` for a dismissal. Banner bookkeeping (`WaitLedger`) is in memory. A log
-  that is not v6 is treated as absent and started over — never read or
-  migrated.
+  `dismiss` (a wait set aside, a finished turn looked at). Banner bookkeeping
+  (`WaitLedger`) is in memory. A log that is not v7 is treated as absent and
+  started over — never read or migrated.
+- **Every heard event is one line.** The receiver writes a state line, or an
+  `ignored` line that says why not (an event not installed, a payload that is
+  not JSON, a blocked event from an agent that cannot report one) — never the
+  payload's words. The reducer changes no state for `ignored`; it goes on its
+  session's timeline and Settings' "last ignored" — it is there to be read.
 - **Replay before the first projection.** At launch `ScanEngine` applies the
   whole log, in order, to `SessionBook`, and only then projects; that
-  projection is the banner baseline. After it only the bytes past the cursor
-  are read. A rewritten log (new generation) is read whole and matched to the
-  applied lines by position (`EventLog.unapplied`), never by text alone. A
-  failed or empty read changes nothing.
+  projection is the banner baseline. Every line carries a `seq` assigned
+  under the append lock; after the replay only the bytes past the cursor are
+  read, and only lines numbered past the last applied are applied. A
+  rewritten log (a compaction keeps the log's `gen` and every kept line's
+  `seq`) is read whole and applied past that number; a log started over
+  (another `gen`) is applied whole. Identity is the number, never the text.
+  A failed or empty read changes nothing.
 - **The log is bounded without losing an answer.** Compaction keeps, per
   session, the recent lines, an open block with everything after it, the
   lines a replay rebuilds the title and clocks from, and always the line being
-  appended. Lines end at `\n` bytes only.
+  appended — each under its own `seq`. Lines end at `\n` bytes only.
 - **A source failure must not blank the tray.** A failed libproc scan keeps
   the last good list; a failed log read keeps what was applied and retries on
   one backing-off timer (5 s → 60 s). Sessions leave only by an `end`, a
@@ -79,6 +91,11 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
 - **The reducer and the projection stay pure.** `SessionBook.apply` and
   `TrayState.project` take values and return values. Side effects live in
   `ScanEngine`, `WaitNotifier` and `StatusStore`.
+  The projection carries state only (`AgentRow.Status`); what moves with
+  every tool line — steps, last words, clocks, the vendor events behind the
+  state and the timeline (`SessionFacts`) — is read from the book when a row
+  is drawn, so a projection that finds the same world is equal and lands
+  nothing.
 - **Install only documented, observe-only hooks, reversibly.** Never a gating
   event (`HookContract.gatingEvents`: PreToolUse, beforeShellExecution, …),
   never anything that returns a decision; an event not installed is not read.
@@ -89,28 +106,36 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
 
 ## Architecture
 
-Swift under `PulseBar/`, five targets, dependencies pointing down only:
+Swift under `PulseBar/`, four targets (and the tests), dependencies
+pointing down only:
 
 | Target | Kind | What it holds |
 | --- | --- | --- |
-| `PulseCore` | library | the agent catalog, the protocol, bounded and private IO, process supervision, the cadence, the debug log (members `public`) |
-| `PulseHarvest` | library | `EventLog` (append, read from a cursor, compact, match a rewrite), libproc `AgentProcesses`, `RowIdentity`, `TitleHeuristics` (members `package`) |
-| `PulseApp` | library | `SessionBook` → `TrayState` → `StatusStore`, `ScanEngine`, `WaitNotifier` + `WaitLedger`, the hook receiver and installer, every view; owns the resources (`PulseResources`, never `Bundle.module`) |
+| `PulseKit` | library, Foundation only | the agent adapters (`Agents/`), the protocol, `EventLog`, the hook receiver and installer (`JSONSplice`, the ledger), libproc `AgentProcesses`, `SessionBook` → `TrayState`, `WaitLedger`, `WaitingDelivery`, `LandingPlan`, every surface model (`TrayRowModel`, `DetailModel`, `SettingsModel`, `Connection`, `TrayKeys`…), `L10n`, bounded and private IO, the cadence, the debug log (members `package`) |
+| `PulseApp` | library | `ScanEngine` and the watchers, `StatusStore`, `WaitNotifier` + `PulseNotify`, `TerminalFocus`, `StatusItemController`, every view, the login item; owns the resources (`PulseResources`, never `Bundle.module`) |
 | `PulseBar` | executable | `PulseBarMain.main()` — the shipping app |
-| `PulseQA` | executable | fixtures, captures, the preview window, `QADriver` (`@testable import PulseApp`) |
+| `PulseQA` | executable | fixtures, captures, the preview window, `QADriver` (`@testable import PulseApp`, `PulseKit`) |
 
-No library below `PulseApp` imports AppKit or SwiftUI, and none reaches
-`StatusStore`.
+`PulseKit` imports no AppKit, SwiftUI, UserNotifications or
+ServiceManagement (`surface_check`) and never reaches `StatusStore`; the
+`--hook` path runs in it without starting AppKit.
 
-Data flow: a hook appends a line to `events.tsv` → `AttentionWatcher` wakes
-`ScanEngine`, which applies the new lines to `SessionBook` →
-`TrayState.project(book:processes:context:)` returns rows, lamp, title, one
+Data flow: a hook appends one numbered line to `events.tsv` →
+`AttentionWatcher` wakes `ScanEngine`, which applies the lines numbered past
+its cursor to `SessionBook` → `TrayState.project(book:processes:context:)`
+returns rows (each with one `AgentRow.Status` — state only), lamp, title, one
 `TrayState.Counts` and newly-blocked edges → `StatusStore.land` assigns an
-observed property only when it changed (a projection that moves only quiet
-facts — steps, clocks — lands at most once per tick) → `WaitNotifier` plans
-one banner per wait from the edges and withdraws it when the wait is
-answered, dismissed or ends. `TrayRowModel` says every row's headline and
-why; the detail page says the same words.
+observed property only when it changed (plain equality: the projection
+carries no step and no clock) → `WaitNotifier` plans one banner per wait from
+the edges and withdraws it when the wait is answered, dismissed or ends.
+`TrayRowModel` says every row's headline and why — citing the vendor event
+that caused the state — from the row and its `SessionFacts`, read from the
+book when it is drawn (the tray's `TimelineView` clock); the detail page
+says the same words and draws the session's timeline. Settings → Hooks says
+each agent's `Connection` (install complete / partial / stale / failed, the
+event heard last, the last one not used). Every key inside
+Pulse is a `SessionKey`; its `description` is the one string that leaves the
+process (a banner's id and user info).
 
 ## Working on it
 
@@ -126,7 +151,7 @@ prefer `Sendable` types and `Guarded`.
 
 Tests live in `PulseBar/Tests/PulseBarTests/`, one file per component:
 `CoreTests`, `VendorFormatTests`, `AttentionTests` (protocol, event log,
-receiver, installer), `SessionTests` (the seven agents' truth tables,
+receiver, installer), `SessionTests` (the six agents' truth tables,
 `TrayState`, identity), `NotifierTests`, `TrayTests`, `SettingsTests`,
 `DiagnosticsTests`, `EngineTests`. A new test goes in its component's file.
 A wrong tray state is fixed with a failing test — `SessionBookTests`,
@@ -146,11 +171,13 @@ python3 scripts/package_check.py      # the built .app: flat resource bundle, no
 ./scripts/qa_captures.sh              # surface + status fixture PNGs (PulseQA)
 ```
 
-`gates.sh` runs `version_check` (one semver), `catalog_check` (roster, hook
+`gates.sh` runs `version_check` (one semver), `catalog_check` (roster, one
+adapter file per agent and no vendor event spelled outside `Agents/`, hook
 contracts and their sources, no gating event, libproc only, AppleScript only
 in `TerminalFocus`, no network API, no token / usage / cost reads),
-`make_agent_icons --check`, `surface_check` (views render values, QA files
-stay in `PulseQA`, a why never says "hook", a step never says "running") and
+`make_agent_icons --check`, `surface_check` (views render values, the pure
+models stay in `PulseKit` and it imports no UI framework, QA files stay in
+`PulseQA`, a why never says "hook", a step never says "running") and
 a `Bundle.module` grep. `vendor_drift.py` runs weekly
 (`vendor-drift.yml`). A gate earns its place by guarding a real fact.
 
@@ -173,7 +200,31 @@ still publishes, but the build is `preview` / ad-hoc / unnotarized and must
 never be labelled `stable` or Gatekeeper-ready (`PulseDistributionChannel`).
 Release notes and the DMG's note lead with System Settings → Privacy &
 Security → "Open Anyway", with `xattr -dr com.apple.quarantine` as the
-Terminal alternative. Every release carries the DMG's `.sha256`.
+Terminal alternative. Every release carries the DMG's `.sha256` and a
+build-provenance attestation (`actions/attest-build-provenance`, checked
+with `gh attestation verify <dmg> -R hxddh/Pulse`; the release job alone
+holds `id-token` / `attestations: write`). Provenance is not notarization.
+
+Distribution is the DMG only — no Homebrew, no Sparkle, no update check.
+The DMG (`pulse-<ver>-macos-PulseBar.dmg`, volume "Pulse", the app icns as
+volume icon) opens to Pulse.app left, an arrow, an `/Applications` link
+right, and — unnotarized builds only — "首次打开必读 · Read Me First.txt"
+below. `scripts/make_dmg_art.py` draws the background (shapes only, no
+text) and writes `PulseBar/Packaging/DMG/layout.json`, the one source of
+the geometry (`--check` in `gates.sh`); `dmgbuild` with `DMG/settings.py`
+writes the window's `.DS_Store` headlessly. dmgbuild is a hash-pinned
+packaging tool (`DMG/requirements.txt`) that CI installs into a throwaway
+venv and passes as `PULSE_DMGBUILD`; it never ships. The layout is
+cosmetic: dmgbuild missing or failing falls back to a plain `hdiutil` image
+that still holds the app, the link and the guide — package.sh mounts the
+result and fails only when one of those is missing.
+
+When `xcrun -f actool` exists, package.sh compiles the Icon Composer bundle
+`PulseBar/Packaging/Pulse.icon` (from `make_brand.py`) to `Assets.car` and
+adds `CFBundleIconName=Pulse` only then; `CFBundleIconFile=AppIcon` and
+`AppIcon.icns` are always there. An actool failure warns and ships the
+icns alone. `package_check.py` requires the icns, allows `Assets.car`, and
+fails a `CFBundleIconName` without it.
 
 "Open at login" is `SMAppService.mainApp` (works only from a bundle; macOS
 may hold it for approval). Never add the

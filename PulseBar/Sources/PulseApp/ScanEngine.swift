@@ -5,14 +5,15 @@ import AppKit
 ///
 /// Nothing here polls a vendor. What moves a session:
 ///
-/// - the **event log** (`events.tsv`): a hook appends a v6 line; the
-///   watcher wakes the engine, which reads the bytes after its cursor off
-///   the main thread and applies those lines, in order, to the
-///   `SessionBook`. At launch the whole log is replayed **before the first
-///   projection**, and that projection is the baseline (no banner for what
-///   was already there). A rewritten log (compaction: a new generation) is
-///   read whole again, and only lines not already applied are applied; a
-///   failed or empty read changes nothing;
+/// - the **event log** (`events.tsv`): a hook appends a numbered v7 line;
+///   the watcher wakes the engine, which reads the bytes after its cursor
+///   off the main thread and applies the lines numbered past the last it
+///   applied, in order, to the `SessionBook`. At launch the whole log is
+///   replayed **before the first projection**, and that projection is the
+///   baseline (no banner for what was already there). A rewritten log (a
+///   compaction) is read whole again and, the same, only lines past the last
+///   `seq` are applied; a log started over (another `gen`) is applied whole;
+///   a failed or empty read changes nothing;
 /// - a **process exit**: kqueue (`ProcessExitWatch`) ends the sessions that
 ///   process ran;
 /// - the **process scan** (libproc — at launch, on wake, when a hook names
@@ -24,14 +25,12 @@ import AppKit
 ///
 /// Each change re-projects the book (`TrayState.project`, pure) and hands
 /// the result to `StatusStore.land`, which assigns an observed property only
-/// when its value changed. A projection an event read produced that moves
-/// only a row's quiet facts — its last step, its clocks
-/// (`TrayState.quietSignature`) — lands at most once per tick: a burst of
-/// tool lines is one landing, not one per line. No vendor file is read:
-/// what a row says comes from its events. A failed read — event log,
-/// process table — keeps what the engine had: a source failure never blanks
-/// the tray, and a failed log read is retried on one timer that backs off
-/// from 5 s to 60 s.
+/// when its value changed. The projection carries state only — a burst of
+/// tool lines moves the book's facts (`SessionFacts`), which the views read
+/// when they draw, and lands nothing. No vendor file is read: what a row
+/// says comes from its events. A failed read — event log, process table —
+/// keeps what the engine had: a source failure never blanks the tray, and a
+/// failed log read is retried on one timer that backs off from 5 s to 60 s.
 @MainActor
 final class ScanEngine {
     /// The model this engine feeds. Weak: the model owns the engine.
@@ -44,28 +43,26 @@ final class ScanEngine {
     let powerMonitor = PowerMonitor()
     let attentionWatcher = AttentionWatcher()
     let exitWatch = ProcessExitWatch()
-    private let ioQueue = DispatchQueue(label: "com.pulse.events", qos: .userInitiated)
+    private let ioQueue = DispatchQueue(label: PulseVersion.bundleID + ".events", qos: .userInitiated)
 
     // MARK: The world, as the events said it
 
     private(set) var book = SessionBook()
-    /// Where the engine is in the event log: its generation and the byte
-    /// after the last line applied.
+    /// Where the engine is in the event log: the header it read, the byte
+    /// after the last line read, the log's `gen` and the last `seq` applied.
     private(set) var logCursor: EventLog.Cursor?
-    /// Every line of the current generation applied so far, in the order it
-    /// was applied — consulted only when the log was rewritten and is read
-    /// whole again (`EventLog.unapplied`), so a line the compaction kept is
-    /// not applied twice and a line written twice is not skipped. Bounded by
-    /// the log.
-    private var appliedLines: [String] = []
     /// Agent processes the last process scan found.
     private(set) var processes: [AgentProcesses.Hit] = []
-    /// The newest hook event per agent, for Settings' "last event" and the
-    /// report. Kept here so a redraw never reads a file.
-    private(set) var latestHookEventMs: [AgentID: Int64] = [:]
+    /// The newest line each agent's hook wrote — its vendor event and when —
+    /// for Settings' connection lines and the report. Kept here so a redraw
+    /// never reads a file.
+    private(set) var latestHeard: [AgentID: Connection.Heard] = [:]
+    /// The newest line each agent's hook sent that was `ignored` — its
+    /// event, why and when.
+    private(set) var latestIgnored: [AgentID: Connection.Ignored] = [:]
     /// The last projection's open waits (`TrayState.waitingSince`) — what
     /// the next one finds its Waiting edges against.
-    private var lastWaits: [String: Int64] = [:]
+    private var lastWaits: [SessionKey: Int64] = [:]
     /// The event log has been read once: every projection up to and
     /// including the one after that read (the launch replay) is the
     /// baseline — a wait already in the log is not news. Only the launch
@@ -80,14 +77,6 @@ final class ScanEngine {
     private(set) var logRetryDelay: Duration = ScanEngine.firstLogRetry
     nonisolated static let firstLogRetry: Duration = .seconds(5)
     nonisolated static let maxLogRetry: Duration = .seconds(60)
-    /// What the last landing looked like with its quiet facts set aside
-    /// (`TrayState.quietSignature`).
-    private var landedQuiet: TrayState?
-    /// A projection landed since the last tick: an event read that moves
-    /// only quiet facts waits for the next one.
-    private var landedSinceTick = false
-    /// Projections handed to the model — what `ScanQuietTests` counts.
-    private(set) var landings = 0
 
     // MARK: Cadence
 
@@ -190,10 +179,8 @@ final class ScanEngine {
     }
 
     /// The tray came on screen or left it — tick faster while it is read.
-    /// A tray that just opened shows the newest steps at once.
     func setTrayOpen(_ open: Bool) {
         trayOpen = open
-        if open { landedSinceTick = false }
         rescheduleTimer()
     }
 
@@ -293,51 +280,28 @@ final class ScanEngine {
 
     // MARK: - Applying what was read
 
-    /// One read of the event log, in file order. The first is the launch
-    /// replay: every line, then the first projection, which is the
-    /// baseline. After it, only the lines after the cursor — unless the log
-    /// was rewritten (`chunk.fresh`), when the lines already applied are
-    /// skipped. An empty read changes nothing: it never resets what was
-    /// applied, so the next read cannot replay an answered block. A read
-    /// that began behind the cursor (another landed first) applies only the
-    /// lines past it, and one from a generation the cursor has left applies
-    /// nothing: a line is applied once.
+    /// One read of the event log. The first is the launch replay: every
+    /// line, then the first projection, which is the baseline. After it,
+    /// only the lines numbered past the last one applied — from a whole-file
+    /// read of a rewritten log too; every line of a log started over
+    /// (`EventLog.Chunk.unapplied`). A read that found no log changes
+    /// nothing: the cursor and the book stay, so the next read cannot replay
+    /// an answered block.
     func landLog(_ chunk: EventLog.Chunk, nowMs: Int64 = ScanEngine.nowMs()) {
         holdProjection = false
         logRetry?.cancel()
         logRetry = nil
         logRetryDelay = Self.firstLogRetry
-        var chunk = chunk
-        if !chunk.fresh, let start = chunk.start, let cursor = logCursor {
-            // The whole-file read of the newer generation already applied
-            // what this one holds.
-            guard chunk.header == cursor.header else { return }
-            if start < cursor.offset {
-                guard chunk.end > cursor.offset, let rest = chunk.lines(after: cursor.offset) else { return }
-                chunk.lines = rest
-                chunk.lineEnds = chunk.lineEnds.filter { $0 > cursor.offset }
-                chunk.start = cursor.offset
-            }
-        }
         let baseline = !logRead
-        if chunk.lines.isEmpty, chunk.fresh {
-            // Nothing there (a missing file, an empty one): keep the cursor
-            // and what was applied.
+        let records = chunk.unapplied(after: logCursor)
+        logCursor = chunk.advancing(logCursor)
+        if records.isEmpty {
+            // Nothing new (or nothing there): the empty replay is still the
+            // baseline.
             if baseline { project(nowMs: nowMs) }
-            logRead = true
-            return
-        }
-        let fresh: [String]
-        if chunk.fresh {
-            fresh = EventLog.unapplied(chunk.lines, after: appliedLines)
-            appliedLines = chunk.lines
         } else {
-            fresh = chunk.lines
-            appliedLines += chunk.lines
+            apply(records: records, nowMs: nowMs, verifyPids: baseline)
         }
-        logCursor = chunk.cursor
-        let records = fresh.compactMap { AttentionRecord(line: $0) }
-        apply(records: records, nowMs: nowMs, verifyPids: baseline, quiet: !baseline)
         // The projection above was the baseline; the next one can notify.
         logRead = true
     }
@@ -369,23 +333,30 @@ final class ScanEngine {
         min(delay * 2, maxLogRetry)
     }
 
-    private func noteHookEvent(_ agent: AgentID, atMs ms: Int64) {
-        if (latestHookEventMs[agent] ?? 0) < ms { latestHookEventMs[agent] = ms }
+    /// One line an agent's hook wrote: the newest wins, a later line on
+    /// the same clock too.
+    private func noteHookEvent(_ record: AttentionRecord, atMs ms: Int64) {
+        if (latestHeard[record.agent]?.ms ?? 0) <= ms {
+            latestHeard[record.agent] = Connection.Heard(event: record.event, ms: ms)
+        }
+        guard record.kind == .ignored, (latestIgnored[record.agent]?.ms ?? 0) <= ms else { return }
+        latestIgnored[record.agent] = Connection.Ignored(event: record.event, reason: record.message, ms: ms)
     }
 
     /// Event records, in order. Tests call this directly. `verifyPids` (the
     /// launch replay) also ends a session whose pid now belongs to another
-    /// process — a pid reused since the log was written. `quiet`: the
-    /// records came from an event read, so a projection that moves only
-    /// quiet facts may wait for the tick.
-    func apply(records: [AttentionRecord], nowMs: Int64, verifyPids: Bool = false, quiet: Bool = false) {
+    /// process — a pid reused since the log was written.
+    func apply(records: [AttentionRecord], nowMs: Int64, verifyPids: Bool = false) {
         for record in records {
             book.apply(record, nowMs: nowMs)
-            // A `done` may be Pulse's own (a dismissal): not the agent's hook
-            // speaking, so not its "last event".
-            if let agent = AgentCatalog.agent(named: record.agent), record.ms > 0,
-               AttentionProtocol.kind(record.kind) != .done {
-                noteHookEvent(agent, atMs: min(record.ms, nowMs))
+            // A `dismiss` is Pulse's own: not the agent's hook speaking, so
+            // not its "last event". An ignored line is — the hook ran.
+            if record.kind != .dismiss, record.ms > 0 {
+                noteHookEvent(record, atMs: min(record.ms, nowMs))
+            }
+            if record.kind == .ignored, logRead {
+                let event = Connection.reportEvent(record.event)
+                DebugLog.write("ignored agent=\(record.agent.rawValue) \(event) (\(Connection.reportReason(record.message)))")
             }
         }
         // A pid the log names that is gone ended while nobody watched.
@@ -408,7 +379,7 @@ final class ScanEngine {
                 read(.processes)
             }
         }
-        project(nowMs: nowMs, deferQuiet: quiet)
+        project(nowMs: nowMs)
     }
 
     /// A process scan. `nil` — the table could not be read — keeps the last
@@ -457,24 +428,21 @@ final class ScanEngine {
         })
     }
 
-    /// The tick: time moved, nothing else. Its projection always lands, so
-    /// whatever an event read left for it goes on screen now.
+    /// The tick: time moved, nothing else — the time rules (a stall, a
+    /// held turn's grace, the recent bounds) and the menu-bar title's age.
     func tick(nowMs: Int64 = ScanEngine.nowMs()) {
-        landedSinceTick = false
         project(nowMs: nowMs)
     }
 
     /// The book as rows, landed on the model. Pure but for the landing.
-    /// Held while the launch replay is being read. `deferQuiet`: when this
-    /// projection differs from the last landed one only in quiet facts and a
-    /// projection already landed since the last tick, it waits for the tick.
-    func project(nowMs: Int64 = ScanEngine.nowMs(), deferQuiet: Bool = false) {
+    /// Held while the launch replay is being read.
+    func project(nowMs: Int64 = ScanEngine.nowMs()) {
         guard let model, !holdProjection else { return }
         // A turn held for a block lands once its grace has passed, even when
         // no event follows (a denied prompt, then Stop within 20 s).
         book.settleHeldTurns(nowMs: nowMs)
         book.prune(nowMs: nowMs)
-        var state = TrayState.project(
+        let state = TrayState.project(
             book: book,
             processes: processes,
             context: TrayState.Context(
@@ -484,17 +452,8 @@ final class ScanEngine {
             )
         )
         exitWatch.follow(book.livePids)
-        let quiet = state.quietSignature
-        if deferQuiet, landedSinceTick, quiet == landedQuiet {
-            // Only a step or a clock moved: the tick lands it.
-            return
-        }
         lastWaits = state.waitingSince
-        state.snapshot.updatedAt = Date(timeIntervalSince1970: Double(nowMs) / 1000)
         model.land(state, nowMs: nowMs, baseline: !logRead)
-        landedQuiet = quiet
-        landedSinceTick = true
-        landings += 1
         let snap = state.snapshot
 
         // Re-arm the tick only when its tier moved.
@@ -509,7 +468,7 @@ final class ScanEngine {
         }
 
         // One line when the lamp or the counts move — not one per tick.
-        let signature = "rows=\(snap.rows.count) lamp=\(snap.lamp.rawValue) " +
+        let signature = "rows=\(state.rows.count) lamp=\(snap.lamp.rawValue) " +
             "activity=\(activity) wait=\(state.waitingSince.count) procs=\(processes.count)"
         if signature != lastApplyLogSignature {
             lastApplyLogSignature = signature

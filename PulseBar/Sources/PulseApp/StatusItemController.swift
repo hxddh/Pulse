@@ -264,14 +264,14 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         // The empty bootstrap snapshot is not a transition: the first
         // completed scan seeds the count, so launching Pulse dips and
         // announces nothing.
-        guard snapshot.updatedAt != .distantPast else { return }
+        guard snapshot.projected else { return }
         if let previous = lastBlocked, snapshot.counts.blocked > previous {
             dipLamp(button)
         }
         // VoiceOver speaks up only for a new wait: who, and what it asks
         // (`WaitAnnouncement`). Other changes are the tray's to say when the
         // person looks.
-        if let text = WaitAnnouncement.text(previousBlocked: lastBlocked, rows: store.cachedAll, lang: store.lang) {
+        if let text = WaitAnnouncement.text(previousBlocked: lastBlocked, rows: store.rows, lang: store.lang) {
             NSAccessibility.post(
                 element: button,
                 notification: .announcementRequested,

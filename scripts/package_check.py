@@ -14,10 +14,19 @@ Run against a built app:
 from __future__ import annotations
 
 import plistlib
+import re
 import sys
 from pathlib import Path
 
 BUNDLE_NAME = "PulseBar_PulseApp.bundle"
+MODELS = Path(__file__).resolve().parent.parent / "PulseBar" / "Sources" / "PulseApp" / "Models.swift"
+
+
+def bundle_id() -> str:
+    """`PulseVersion.bundleID` — the one place the identifier is spelled."""
+    match = re.search(r'static let bundleID = "([^"]+)"', MODELS.read_text(encoding="utf-8"))
+    return match.group(1) if match else ""
+
 
 # The QA driver (`PulseQA`) is a separate executable and never ships. These
 # strings exist only in its code — the flags that swap this Mac's sessions for
@@ -39,9 +48,14 @@ REQUIRED_IN_BUNDLE = [
 ]
 
 # Read by Finder and the Dock (CFBundleIconFile), not by the app's code.
+# Required on every build: it is the icon every macOS version reads.
 REQUIRED_IN_APP = [
     "AppIcon.icns",
 ]
+
+# What Contents/Resources/ may hold: the icns, the resource bundle, and the
+# Liquid Glass icon actool compiles from Pulse.icon (best effort, so optional).
+ALLOWED_IN_RESOURCES = {"AppIcon.icns", BUNDLE_NAME, "Assets.car"}
 
 
 def fail(problems: list[str]) -> int:
@@ -86,6 +100,20 @@ def main(argv: list[str]) -> int:
             problems.append("Contents/Info.plist has no CFBundleShortVersionString")
         if info.get("CFBundleExecutable") != "PulseBar":
             problems.append("Contents/Info.plist CFBundleExecutable is not PulseBar")
+        if info.get("CFBundleIdentifier") != bundle_id():
+            problems.append(f"Contents/Info.plist CFBundleIdentifier is {info.get('CFBundleIdentifier')!r}, "
+                            f"not PulseVersion.bundleID {bundle_id()!r}")
+        if info.get("CFBundleIconFile") != "AppIcon":
+            problems.append("Contents/Info.plist CFBundleIconFile is not AppIcon")
+        # CFBundleIconName names an icon inside Assets.car; package.sh sets it
+        # only when actool produced one. Naming a missing catalog leaves
+        # macOS 26 without the icon it was told to use.
+        icon_name = info.get("CFBundleIconName")
+        if icon_name is not None:
+            if icon_name != "Pulse":
+                problems.append(f"Contents/Info.plist CFBundleIconName is {icon_name!r}, not 'Pulse'")
+            if not (resources / "Assets.car").is_file():
+                problems.append("Contents/Info.plist names CFBundleIconName but Contents/Resources/Assets.car is missing")
 
     # Two locations are defensible, and which one works depends on how the
     # resource bundle is resolved:
@@ -132,6 +160,10 @@ def main(argv: list[str]) -> int:
     for rel in REQUIRED_IN_APP:
         if not (resources / rel).is_file():
             problems.append(f"Contents/Resources/{rel} is missing")
+    if resources.is_dir():
+        stray = sorted(p.name for p in resources.iterdir() if p.name not in ALLOWED_IN_RESOURCES)
+        if stray:
+            problems.append(f"Contents/Resources/ carries unexpected files: {', '.join(stray)}")
 
     if problems:
         return fail(problems)
@@ -140,6 +172,8 @@ def main(argv: list[str]) -> int:
     where = ", ".join(str(b.relative_to(app)) for b in found)
     print(f"package OK — {app.name} {version or '?'} · {icons} agent icons")
     print(f"  resource bundle at: {where} (flat, Info.plist present)")
+    glass = "Assets.car + CFBundleIconName" if (resources / "Assets.car").is_file() else "none (AppIcon.icns only)"
+    print(f"  Liquid Glass icon: {glass}")
     print("  structure only — run `PulseBar --selftest` to prove it resolves")
     return 0
 

@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 @testable import PulseApp
+@testable import PulseKit
 
 /// Opt-in visual QA host for the tray content.
 ///

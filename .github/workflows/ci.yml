@@ -50,6 +50,20 @@ jobs:
         run: swift test
         working-directory: PulseBar
 
+      # The same hash-pinned dmgbuild release.yml uses, so every push builds
+      # the laid-out DMG. Cosmetic: without it package.sh builds the plain one.
+      - name: DMG layout tool (packaging only, never shipped)
+        run: |
+          set -euo pipefail
+          VENV="$RUNNER_TEMP/dmgenv"
+          if python3 -m venv "$VENV" \
+             && "$VENV/bin/pip" install --quiet --disable-pip-version-check \
+                  --require-hashes --only-binary :all: -r PulseBar/Packaging/DMG/requirements.txt; then
+            echo "PULSE_DMGBUILD=$VENV/bin/dmgbuild" >> "$GITHUB_ENV"
+          else
+            echo "::warning::dmgbuild could not be installed; the DMG will have no window layout"
+          fi
+
       # Package on every push, not just at release. A launch crash can live
       # entirely in the packaging step, with source fine and tests green.
       # package.sh runs scripts/package_check.py against the assembled .app.

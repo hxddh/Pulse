@@ -63,7 +63,7 @@ final class SingleInstanceGuard {
 
     /// The distributed notification a second copy posts and the running
     /// copy observes (`AppDelegate`): open the tray. No payload.
-    static let reopenNotification = Notification.Name("com.pulse.app.reopen")
+    static let reopenNotification = Notification.Name(PulseVersion.bundleID + ".reopen")
 
     /// The caller already knows another copy owns the lock: ask it to open
     /// its tray, then exit. A distributed notification with no payload —

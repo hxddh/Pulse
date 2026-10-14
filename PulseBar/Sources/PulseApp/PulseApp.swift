@@ -1,8 +1,6 @@
-// The app sees the kernel and its libraries everywhere without every file
-// importing them. The dependencies only point one way: no library target can
-// import this one.
-@_exported import PulseCore
-@_exported import PulseHarvest
+// The app sees the kernel everywhere without every file importing it. The
+// dependencies only point one way: the kernel cannot import this target.
+@_exported import PulseKit
 import SwiftUI
 import AppKit
 import Darwin
@@ -40,7 +38,11 @@ package enum PulseBarMain {
             if isatty(STDIN_FILENO) == 0, !PulseHookReceiver.payloadInArguments(arguments) {
                 stdinText = PulseHookReceiver.readStdin()
             }
-            exit(Int32(PulseHookReceiver.run(arguments: arguments, stdin: stdinText)))
+            exit(Int32(PulseHookReceiver.run(
+                arguments: arguments,
+                stdin: stdinText,
+                front: { PromptVisibility.promptIsFrontmost() }
+            )))
         }
         let guardLock = SingleInstanceGuard()
         guard guardLock.acquire() else {

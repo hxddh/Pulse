@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 @testable import PulseApp
+@testable import PulseKit
 
 // PulseQA — the product's QA driver, never linked into the shipping app.
 //

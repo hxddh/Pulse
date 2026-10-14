@@ -117,6 +117,15 @@ jobs:
     needs: decide
     if: needs.decide.outputs.release == 'true'
     runs-on: macos-26
+    # contents: write publishes the Release and creates its tag; id-token and
+    # attestations let actions/attest-build-provenance sign a SLSA provenance
+    # statement for the DMG (Sigstore, keyless), which
+    # `gh attestation verify <dmg> -R hxddh/Pulse` checks. Only this job
+    # gets them.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -185,11 +194,35 @@ jobs:
           echo "sign_identity=$PULSE_SIGN_IDENTITY" >> "$GITHUB_OUTPUT"
           echo "notary_profile=pulse-release" >> "$GITHUB_OUTPUT"
 
+      - name: DMG layout tool (packaging only, never shipped)
+        # dmgbuild lays out the DMG window headlessly. Hash-pinned, into a
+        # throwaway venv; a failure here is cosmetic — package.sh then builds
+        # the plain DMG (app + Applications link) and says so.
+        run: |
+          set -euo pipefail
+          VENV="$RUNNER_TEMP/dmgenv"
+          if python3 -m venv "$VENV" \
+             && "$VENV/bin/pip" install --quiet --disable-pip-version-check \
+                  --require-hashes --only-binary :all: -r PulseBar/Packaging/DMG/requirements.txt; then
+            echo "PULSE_DMGBUILD=$VENV/bin/dmgbuild" >> "$GITHUB_ENV"
+          else
+            echo "::warning::dmgbuild could not be installed; the DMG will have no window layout"
+          fi
+
       - name: Package
         env:
           PULSE_SIGN_IDENTITY: ${{ steps.signing.outputs.sign_identity }}
           PULSE_NOTARY_PROFILE: ${{ steps.signing.outputs.notary_profile }}
         run: ./PulseBar/Scripts/package.sh
+
+      # SLSA build provenance for the DMG, signed with this run's OIDC
+      # identity and stored on GitHub (no key to manage). It proves the file
+      # was built by this workflow from this commit — it is not an Apple
+      # signature and does not change what Gatekeeper says.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: zig-out/package/pulse-${{ needs.decide.outputs.version }}-macos-PulseBar.dmg
 
       - name: Release notes and checksum
         run: |
@@ -230,6 +263,16 @@ jobs:
             echo '```text'
             cat "zig-out/package/$DMG_NAME.sha256"
             echo '```'
+            echo
+            echo "In the download folder:"
+            echo
+            echo '```bash'
+            echo "shasum -a 256 -c $DMG_NAME.sha256"
+            echo "gh attestation verify $DMG_NAME -R ${GITHUB_REPOSITORY}"
+            echo '```'
+            echo
+            echo "The second line checks the build provenance: this DMG was built by"
+            echo "this repository's Release workflow from \`${GITHUB_SHA::7}\`."
           } >> /tmp/notes.md
 
       - name: Publish

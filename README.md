@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`29.0.1`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v29.0.1) · macOS 14+
+**版本：`30.0.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v30.0.0) · macOS 14+
 
 开着 Claude Code 写代码，切去开会，回来发现它二十分钟前就停在一个授权提示上。Pulse 把这件事变成余光可见：
 
@@ -22,31 +22,44 @@ Pulse **只做灯**：不在托盘里回答授权，不派活、不跑检查、�
 
 ## 安装
 
-从 [Releases](https://github.com/hxddh/Pulse/releases) 下载 DMG，把 Pulse 拖进「应用程序」。
+1. 从 [Releases](https://github.com/hxddh/Pulse/releases) 下载 `pulse-x.y.z-macos-PulseBar.dmg`。
+2. 打开 DMG，把左边的 Pulse 拖到右边的「应用程序」（Applications）。
+3. **首次打开**：目前的构建是 ad-hoc 签名、未公证的 `preview` 包（DMG 里的「首次打开必读 · Read Me First」写的
+   就是这一步），macOS 第一次会拦下它：
+   - 双击打开一次；提示无法验证时点「完成」。
+   - 打开「**系统设置 → 隐私与安全性**」，在「安全性」里点 Pulse 旁边的「**仍要打开**」并确认。
 
-> **首次打开**：目前的构建是 ad-hoc 签名、未公证的 `preview` 包，macOS 第一次会拦下它：
->
-> 1. 双击打开一次；提示无法验证时点「完成」。
-> 2. 打开「**系统设置 → 隐私与安全性**」，在「安全性」里点 Pulse 旁边的「**仍要打开**」并确认。
->
-> 或者在「终端」里移除 Pulse 的下载隔离标记：
-> ```bash
-> xattr -dr com.apple.quarantine /Applications/Pulse.app
-> ```
-> macOS 15 起按住 Control 点「打开」不再能放行未公证的 App。不要全局关闭 Gatekeeper。每个 Release 的 DMG 旁有
-> `.sha256`，可用 `shasum -a 256 -c pulse-x.y.z-macos-PulseBar.dmg.sha256` 校验。
+   或者在「终端」里只移除 Pulse 自己的下载隔离标记：
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Pulse.app
+   ```
+   macOS 15 起按住 Control 点「打开」不再能放行未公证的 App。不要全局关闭 Gatekeeper。
 
 第一次打开时，托盘顶上的设置卡会找到这台 Mac 上的 Agent：点「连接」装上它们各自的官方 hook，再允许通知即可。
 
+**校验**（可选，在下载文件夹里）：每个 Release 附带 DMG 的 `.sha256`；较新的 Release 还有 GitHub Actions 签的构建来源证明
+（build provenance），证明这个 DMG 由本仓库的 Release 工作流从对应提交构建，不等于 Apple 公证。
+
+```bash
+shasum -a 256 -c pulse-x.y.z-macos-PulseBar.dmg.sha256
+gh attestation verify pulse-x.y.z-macos-PulseBar.dmg -R hxddh/Pulse   # 需要 GitHub CLI
+```
+
+**升级**：Pulse 不连网络，也就不自动更新。下载新版 DMG，退出 Pulse（右键菜单栏图标 →「退出 Pulse」），
+把新的 Pulse 拖进「应用程序」并选「替换」，再打开一次——每个未公证的新版本都要重新「仍要打开」（或 `xattr`）。
+各 Agent 的 hook 不用重装：它们调用的是 `~/Library/Application Support/Pulse/pulse-hook`，不是 App 本身；
+这个启动器按 `hook-runner.path` 记下的路径找 Pulse（找不到时再试 `/Applications` 与 `~/Applications`），
+每次打开 Pulse 都会刷新这个路径。替换的那几秒里 hook 静默跳过、不会卡住 Agent；放行新版之前它发出的事件可能被
+macOS 拦下而丢失。把 Pulse 换到别的位置时，打开一次新位置的 Pulse 即可。事件日志与设置原样保留。
+
 ## 支持的 Agent
 
-只支持七个。每个都走厂商自己文档里的 hook / 插件 / 扩展，**只装不能改变 Agent 决定的观察型事件**
+只支持六个。每个都走厂商自己文档里的 hook / 插件 / 扩展，**只装不能改变 Agent 决定的观察型事件**
 （从不装 PreToolUse 这类能拦截的 hook，也从不返回任何决定），移除时每个文件逐字节还原。
 
 | Agent | 上一步 | 会不会报告「需要你」 |
 | --- | --- | --- |
 | Claude Code | `PostToolUse` | 会（PermissionRequest、权限 / 提问通知） |
-| Gemini CLI | `AfterTool` | 会（`ToolPermission` 通知） |
 | Copilot CLI | `postToolUse` | 会（`permission_prompt` / `elicitation_dialog`） |
 | OpenCode | — | 会（插件：`permission.asked` / `question.asked`） |
 | Pi | `tool_execution_end` | 会（扩展：`ui_prompt_start`） |

@@ -6,26 +6,81 @@ The targets, the data flow and the invariants are in
 [`vendor-formats.md`](vendor-formats.md). This page keeps only what those do
 not say.
 
+## The kernel and the adapters
+
+`PulseKit` is everything that can be said without a screen: the agent
+adapters, the protocol and the event log, the hook receiver and the
+installer, the process table, the session book, the tray projection, every
+surface model and the copy. It imports Foundation (and Darwin, CryptoKit,
+CoreGraphics for the cadence) and nothing that draws, notifies or registers
+with the system; `surface_check.py` fails an import of SwiftUI, AppKit,
+UserNotifications or ServiceManagement there. Its members are `package`: the
+app, the QA driver and the tests are its only clients. `PulseApp` keeps
+what needs AppKit or the main actor — the engine, the store, the notifier,
+terminal focus, the status item, the views, the login item and the
+frontmost-app question (`PromptVisibility.promptIsFrontmost`, which the
+`--hook` path passes to the receiver without starting NSApplication).
+
+An agent is one file in `PulseKit/Agents/`: an `AgentSpec` (identity,
+process rule, waiting source, `HookContract` — path, format, each event
+with its action — and a `read` for the events whose meaning is in the
+payload). `AgentSpec.reading(_:payload:)` is the whole dispatch: an event
+not in the contract writes nothing, otherwise `read` decides or the event's
+own action stands. The installer has one writer per `HookFormat`
+(`nested`, `versioned`, `ownedJSON`, `module`), parameterized by the
+format's flavor — never by the agent.
+
 ## Who owns what
 
 - **`ScanEngine`** (`@MainActor`, not observed): the `SessionBook`, the
-  event-log cursor (generation header + byte offset) and the lines applied
-  in this generation, the last good process list, the previous projection's
+  event-log cursor (the header read, the byte offset, the log's `gen` and the
+  last `seq` applied), the last good process list, the previous projection's
   open waits (the next edge baseline), one backing-off log retry and the two
   cheap timers. It reads the log and the process table off the main thread,
-  calls `TrayState.project`, and hands the result to `StatusStore.land`. It
-  holds no UI state.
+  applies the lines numbered past the cursor, calls `TrayState.project`, and
+  hands the result to `StatusStore.land`. It holds no UI state.
 - **`WaitNotifier`** (`@MainActor`, not observed): banner planning
   (`WaitingDelivery`), posting (`PulseNotify`), rate limiting, withdrawal and
   clicks. Its bookkeeping is the pure `WaitLedger`, in memory only.
 - **`StatusStore`** (`@Observable`): only what views read — the snapshot,
   rows, settings, a few flags — and the intents views send; every decision
-  is a pure model's (`TrayNoticeModel`, `BannerRoute`, `TrayRowModel`,
-  `PulseSnapshot.needsPublish`). `land` assigns an observed property only
-  when its value changed (`ScanQuietTests`). Settings (open at login,
+  is a pure model's (`TrayNoticeModel`, `BannerRoute`, `TrayRowModel`).
+  `land` assigns an observed property only when its value changed
+  (`ScanQuietTests`). The projection carries state only — a row's
+  `AgentRow.Status`, never a step or a clock — so plain equality says "the
+  same world" and a burst of tool lines lands nothing. What a session said
+  lately (`SessionFacts`: steps, last words, error, clocks, the vendor
+  events behind its state — `stateEvent`, `lastEvent` — and its timeline)
+  is read from the book when a row or the detail page is drawn
+  (`StatusStore.facts(for:)`),
+  on the tray's own clock (`TimelineView`, `TrayChrome.clock`). Settings (open at login,
   "don't suggest hooks") go through `StatusStore.set`, which writes
   `settings.json` only on a change; a login change asks macOS. The language is the system's
   (`ResolvedLanguage.system`), read once.
+
+## Provenance and connections
+
+Every line keeps its vendor event (the v7 `event` column) through the
+reducer: a session holds the event that put it in its current state (a
+re-raise inside the grace keeps the first raise's, a held turn lands with
+its own, a process exit has none) and its last `SessionBook.maxTimeline`
+heard lines, each with the `SessionBook.Effect` the reducer decided as it
+applied it — raised, said again, answered, your turn, held, dismissed,
+seen, a step, an `ignored` line's reason. Nothing is guessed from an event's
+name, and the ring is rebuilt by the launch replay like every other fact.
+The why cites the event (`TrayRowModel.cause`; `EventName.display` refuses a
+column that is not a name); the detail page draws the ring; the report
+carries the last three, a step by its tool only.
+
+Settings' per-agent line is a `Connection`: the install
+`HooksSupport.inspect` reads from the agent's config — the events that carry
+Pulse's command against the adapter's contract (complete or partial), and
+the launcher paths they name against this Pulse's launcher, which must run,
+as must the app `hook-runner.path` names (else stale) — the last install's
+failure, which wins, and the newest line and `ignored` line per agent, kept
+by `ScanEngine` as it applies the log. `inspect` runs at launch, when
+Settings opens and after an install; never on the scan path. Install all
+fixes a partial or stale install.
 
 ## Processes (libproc)
 
@@ -55,12 +110,15 @@ the popover is shown, hands every key to the pure `TrayKeys.reduce`
 back to the app that had it. The row's context menu shows each item's key.
 Settings is `SettingsWindowController` rendering `SettingsFace` from
 `SettingsModel`.
-Views do no I/O; every surface is a value with a fixture in
+A row and the detail page redraw on the tray's clock (`TimelineView`,
+every `TrayChrome.clock` seconds while the tray is open): their relative
+times and the session's facts move without a projection. Views do no I/O;
+every surface is a value with a fixture in
 `PulseQA/SurfaceFixtures.swift` and a capture from `scripts/qa_captures.sh`.
 
 ## Landing — how ↩, a click or a banner reaches the prompt
 
-The hook records where its session lives (the v6 `landing` column, most
+The hook records where its session lives (the v7 `landing` column, most
 specific first): `tmux:%3;tmuxsock:<socket>;iterm:w0t1p0:<uuid>;tty:/dev/ttys004;term:<TERM_PROGRAM>;app:<__CFBundleIdentifier>`.
 `LandingPlan.make(handle:cwd:pid:hostApp:)` (pure, once per projection)
 turns it into ordered steps; `TerminalFocus.land` (on the click) runs them
@@ -89,7 +147,11 @@ are never enumerated at scan time.
 ## Version identity
 
 `PulseVersion.semver` is the truth; `package.sh` stamps the git sha, the
-build date and the distribution channel into `Info.plist`.
+build date and the distribution channel into `Info.plist`, and the bundle
+identifier from `PulseVersion.bundleID` (`io.github.hxddh.pulse`;
+`package_check.py` holds the built app to it). Every other reverse-DNS name
+— the queues, the reopen notification — derives from it. Nothing is carried
+over from an earlier identifier.
 
 | `PulseVersion.channel` | When | About shows |
 | --- | --- | --- |

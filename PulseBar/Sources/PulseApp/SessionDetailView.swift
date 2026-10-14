@@ -15,16 +15,20 @@ struct SessionDetailView: View {
     let row: AgentRow
 
     var body: some View {
-        SessionDetailFace(model: store.detailModel(row), maxHeight: CGFloat(ui.maxListHeight)) { action in
-            ui.send(action, row: row)
+        // On the tray's clock: the page's times, timeline and last words
+        // move without a projection.
+        TimelineView(.periodic(from: .now, by: TrayChrome.clock)) { context in
+            SessionDetailFace(model: store.detailModel(row, at: context.date), maxHeight: CGFloat(ui.maxListHeight)) { action in
+                ui.send(action, row: row)
+            }
         }
     }
 }
 
 /// Renders a `DetailModel` and nothing else: the header (back, lamp, the
 /// agent's icon and the headline — the page's title), then the ask with Go
-/// and Ignore, the landing notice, the why, the recent
-/// steps, the last message, the error and the facts (this turn, the
+/// and Ignore, the landing notice, the why, the timeline of what Pulse
+/// heard, the last message, the error and the facts (this turn, the
 /// folder) — each block only when it has something to say.
 struct SessionDetailFace: View {
     let model: DetailModel
@@ -106,9 +110,9 @@ struct SessionDetailFace: View {
                     .foregroundStyle(model.lamp == .stalled ? AnyShapeStyle(PulseTheme.warning) : AnyShapeStyle(.secondary))
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if !model.steps.isEmpty {
-                section(t(.stepHeading)) {
-                    FactGrid(facts: model.steps)
+            if !model.timeline.isEmpty {
+                section(t(.timelineHeading)) {
+                    TimelineGrid(entries: model.timeline)
                 }
             }
             if let message = model.lastMessage {
@@ -186,5 +190,41 @@ struct FactGrid: View {
             }
         }
         .font(PulseTheme.Font.caption)
+    }
+}
+
+/// The timeline: one heard line per row — how long ago, the vendor's event
+/// in small monospaced type, what it did. A raise is red; a line that
+/// changed nothing is quiet.
+struct TimelineGrid: View {
+    let entries: [DetailModel.Entry]
+
+    var body: some View {
+        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: PulseTheme.Space.s, verticalSpacing: PulseTheme.Space.xxs) {
+            ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
+                GridRow {
+                    Text(entry.time)
+                        .foregroundStyle(.secondary)
+                        .gridColumnAlignment(.trailing)
+                    Text(entry.event)
+                        .font(PulseTheme.Font.code)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Text(entry.effect)
+                        .foregroundStyle(Self.style(entry.tone))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+        }
+        .font(PulseTheme.Font.caption)
+    }
+
+    private static func style(_ tone: DetailModel.Entry.Tone) -> AnyShapeStyle {
+        switch tone {
+        case .alert: return AnyShapeStyle(Lamp.waiting.color)
+        case .plain: return AnyShapeStyle(.primary)
+        case .quiet: return AnyShapeStyle(.tertiary)
+        }
     }
 }

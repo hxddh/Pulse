@@ -1,0 +1,38 @@
+{
+  "groups": [
+    {
+      "layers": [
+        {
+          "glass": true,
+          "image-name": "dot.svg",
+          "name": "dot"
+        },
+        {
+          "glass": true,
+          "image-name": "ring.svg",
+          "name": "ring"
+        }
+      ],
+      "name": "Lamp",
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      }
+    },
+    {
+      "layers": [
+        {
+          "glass": false,
+          "image-name": "background.svg",
+          "name": "background"
+        }
+      ],
+      "name": "Background"
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}

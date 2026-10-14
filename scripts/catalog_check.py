@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Catalog gate: one agent roster, read from AgentCatalog.swift, and every
-promise made about it.
+"""Catalog gate: one agent roster — `AgentID` in PulseKit/Agents/Agents.swift
+and one adapter file per agent beside it — and every promise made about it.
 
 The checks are the ones that guard a real fact; prose checks went.
 
-1. Roster — `AgentCatalog.all` has one `AgentSpec` per `AgentID` case, in
-   declaration order (process-rule precedence).
+1. Roster — `Agents.all` has one `AgentSpec` per `AgentID` case, in
+   declaration order (process-rule precedence), each declared in its own
+   adapter file under PulseKit/Agents/; no source outside that folder spells
+   an installed vendor event (one adapter per agent: nothing else reads a
+   vendor's events).
 2. Processes — agent processes come from the kernel's table (libproc,
    `AgentProcesses.swift`): no `ps`, no `lsof`, no subprocess; and Cursor's
    private worker daemon is denied.
@@ -16,7 +19,7 @@ The checks are the ones that guard a real fact; prose checks went.
    their cousins) from a payload or a module's event — an owner decision.
 4. Vendor sources — every agent has an entry in
    docs/vendor-formats.json with a `hooks` block: the roster is exactly the
-   seven supported agents; each has a `HookContract` whose events are never
+   six supported agents; each has a `HookContract` whose events are never
    a gating event, and its manifest entry names the source it was read from
    (repo + full commit, or docs URLs), the date, the same event list and a
    test file that mentions the agent.
@@ -33,11 +36,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ROOT / "PulseBar" / "Sources"
-CATALOG = SOURCES / "PulseCore" / "AgentCatalog.swift"
+AGENTS = SOURCES / "PulseKit" / "Agents"
+CATALOG = AGENTS / "Agents.swift"
 MANIFEST = ROOT / "docs" / "vendor-formats.json"
 TESTS = ROOT / "PulseBar" / "Tests" / "PulseBarTests"
 # The owner's roster. Adding an agent is a product decision.
-ROSTER = ["claude", "codex", "cursor", "pi", "gemini", "copilot", "opencode"]
+ROSTER = ["claude", "codex", "cursor", "pi", "copilot", "opencode"]
 
 
 @dataclass
@@ -48,11 +52,12 @@ class Agent:
     waiting: str       # hooks | none
     hook_format: str   # HookFormat case
     hook_events: list[str]
+    file: str          # its adapter file
 
 
 def swift_file(name: str) -> Path:
     """A Swift source by file name, in whichever target holds it."""
-    hits = sorted(SOURCES.glob(f"*/{name}"))
+    hits = sorted(SOURCES.rglob(name))
     if len(hits) != 1:
         raise SystemExit(f"catalog_check: expected one {name}, found {len(hits)}")
     return hits[0]
@@ -62,7 +67,7 @@ def cases(text: str) -> list[tuple[str, str]]:
     """(case name, raw value) of `AgentID`, in declaration order."""
     block = re.search(r"enum AgentID[^{]*\{(.*?)\n\n", text, re.S)
     if not block:
-        raise SystemExit("catalog_check: enum AgentID not found in AgentCatalog.swift")
+        raise SystemExit("catalog_check: enum AgentID not found in Agents.swift")
     out: list[tuple[str, str]] = []
     for line in block.group(1).splitlines():
         line = line.strip()
@@ -77,29 +82,49 @@ def cases(text: str) -> list[tuple[str, str]]:
     return out
 
 
+def adapters() -> dict[str, Path]:
+    """Adapter file of each `AgentSpec` declared under Agents/, by case name."""
+    out: dict[str, Path] = {}
+    for path in sorted(AGENTS.glob("*.swift")):
+        for m in re.finditer(r"static let \w+ = AgentSpec\(\s*\n\s*id: \.(\w+),", path.read_text(encoding="utf-8")):
+            if m.group(1) in out:
+                raise SystemExit(f"catalog_check: {m.group(1)} has two specs ({out[m.group(1)].name}, {path.name})")
+            out[m.group(1)] = path
+    return out
+
+
 def agents(text: str) -> list[Agent]:
+    """The specs in `Agents.all` order, read from their adapter files."""
     raw_of = dict(cases(text))
-    starts = [m.start() for m in re.finditer(r"\n        AgentSpec\(\n", text)]
+    files = adapters()
+    listed = re.search(r"static let all: \[AgentSpec\] = \[(.*?)\]", text, re.S)
+    order = re.findall(r"\.(\w+)", listed.group(1)) if listed else []
     out: list[Agent] = []
-    for i, start in enumerate(starts):
-        chunk = text[start:starts[i + 1] if i + 1 < len(starts) else len(text)]
+    for case in order:
+        path = files.get(case)
+        if path is None:
+            raise SystemExit(f"catalog_check: Agents.all lists .{case}, which no adapter file declares")
+        chunk = path.read_text(encoding="utf-8")
 
         def field(name: str) -> str:
-            m = re.search(rf"\n            {name}: ([^\n]*)", chunk)
+            m = re.search(rf"\n        {name}: ([^\n]*)", chunk)
             if not m:
-                raise SystemExit(f"catalog_check: spec field {name} missing near {chunk[:80]!r}")
+                raise SystemExit(f"catalog_check: {path.name}: spec field {name} missing")
             return m.group(1).rstrip(",").strip()
 
-        case = field("id").lstrip(".")
-        fmt = re.search(r"hooks: HookContract\(format: \.(\w+)", chunk)
+        fmt = re.search(r"\n            format: \.(\w+)", chunk)
         out.append(Agent(
             case=case,
-            raw=raw_of[case],
+            raw=raw_of.get(case, case),
             display=field("displayName").strip('"'),
             waiting=field("waiting").lstrip("."),
             hook_format=fmt.group(1) if fmt else "",
             hook_events=re.findall(r'HookEvent\("([^"]+)"', chunk),
+            file=path.name,
         ))
+    missing = sorted(set(files) - set(order))
+    if missing:
+        raise SystemExit(f"catalog_check: adapters {missing} are not in Agents.all")
     return out
 
 
@@ -113,18 +138,30 @@ def check_roster(text: str, roster: list[Agent], problems: list[str]) -> None:
         extra = sorted(set(specs) - set(names))
         problems.append(f"catalog specs ≠ AgentID cases (missing {missing}, extra {extra})")
     if specs != names:
-        problems.append("AgentCatalog.all must follow AgentID declaration order (process-rule precedence)")
+        problems.append("Agents.all must follow AgentID declaration order (process-rule precedence)")
+    # One adapter per agent: a vendor event is spelled only in its adapter
+    # (and the shared gating / activity sets beside them in Agents.swift).
+    events = {event for agent in roster for event in agent.hook_events}
+    for path in sorted(SOURCES.rglob("*.swift")):
+        if AGENTS in path.parents:
+            continue
+        code = re.sub(r"/\*.*?\*/", "", path.read_text(encoding="utf-8"), flags=re.S)
+        code = re.sub(r"//[^\n]*", "", code)
+        for literal in sorted(set(re.findall(r'"([A-Za-z_.]+)"', code)) & events):
+            problems.append(f"{path.name}: spells the vendor event {literal!r} — an event is read only by its "
+                            "agent's adapter in PulseKit/Agents/")
 
 
 # 2 · processes --------------------------------------------------------------
 
 def check_processes(text: str, problems: list[str]) -> None:
-    if '"worker start"' not in text or '"--worker-dir"' not in text:
+    cursor = (AGENTS / "Cursor.swift").read_text(encoding="utf-8") if (AGENTS / "Cursor.swift").exists() else ""
+    if '"worker start"' not in cursor or '"--worker-dir"' not in cursor:
         problems.append("Cursor's private worker daemon must be denied — it is infrastructure, not a session")
     scan = swift_file("AgentProcesses.swift").read_text(encoding="utf-8")
     if "proc_listallpids" not in scan or "KERN_PROCARGS2" not in scan:
         problems.append("AgentProcesses must read the process table through libproc and KERN_PROCARGS2")
-    for path in sorted(SOURCES.glob("*/*.swift")):
+    for path in sorted(SOURCES.rglob("*.swift")):
         source = re.sub(r"//[^\n]*", "", path.read_text(encoding="utf-8"))
         if re.search(r'"/(usr/)?s?bin/(ps|lsof)"', source):
             problems.append(f"{path.name}: no ps or lsof subprocess — the process table is libproc")
@@ -137,7 +174,7 @@ def check_privacy(problems: list[str]) -> None:
     scripts = "/usr/bin/osascript" in focus or "tell application" in focus
     if scripts and "focusTTY" not in focus:
         problems.append("AppleScript is allowed only inside the Terminal/iTerm tab focus")
-    for path in sorted(SOURCES.glob("*/*.swift")):
+    for path in sorted(SOURCES.rglob("*.swift")):
         source = re.sub(r"//[^\n]*", "", path.read_text(encoding="utf-8"))
         if path.name != "TerminalFocus.swift" and ("/usr/bin/osascript" in source or "NSAppleScript" in source):
             problems.append(f"{path.name}: AppleScript lives only in TerminalFocus")
@@ -168,7 +205,7 @@ USAGE_MEMBER = re.compile(r"\.(" + "|".join(re.escape(k) for k in USAGE_KEYS) + 
 
 
 def check_no_tokens(problems: list[str]) -> None:
-    for path in sorted(SOURCES.glob("*/*.swift")):
+    for path in sorted(SOURCES.rglob("*.swift")):
         code = re.sub(r"/\*.*?\*/", "", path.read_text(encoding="utf-8"), flags=re.S)
         code = re.sub(r"(?m)^\s*//.*$", "", code)
         code = re.sub(r"\s//[^\n\"]*$", "", code, flags=re.M)
@@ -205,14 +242,14 @@ def check_hooks(text: str, roster: list[Agent], problems: list[str]) -> None:
     answer_block = re.search(r"answerEvents: Set<String> = toolActivityEvents\.union\(\[(.*?)\]\)", text, re.S)
     answer_events = tool_events | (set(re.findall(r'"([^"]+)"', answer_block.group(1))) if answer_block else set())
     if not tool_events or not answer_block:
-        problems.append("HookContract.toolActivityEvents / answerEvents not found in AgentCatalog.swift")
+        problems.append("HookContract.toolActivityEvents / answerEvents not found in Agents.swift")
     for event in sorted(tool_events & listed):
         problems.append(f"HookContract.toolActivityEvents lists {event}, a gating event")
     for agent in roster:
         if agent.waiting == "hooks" and not set(agent.hook_events) & answer_events:
             problems.append(f"hooks — {agent.raw}: can raise a block but installs no event that answers it "
                             f"(one of {sorted(answer_events)})")
-    for raw, needed in (("gemini", "AfterTool"), ("copilot", "postToolUse"), ("codex", "PostToolUse"), ("claude", "PostToolUse")):
+    for raw, needed in (("copilot", "postToolUse"), ("codex", "PostToolUse"), ("claude", "PostToolUse"), ("pi", "tool_execution_end")):
         agent = next((a for a in roster if a.raw == raw), None)
         if agent and needed not in agent.hook_events:
             problems.append(f"hooks — {raw}: {needed} is its per-tool activity (the answer to a block, the stall rule)")
@@ -230,7 +267,7 @@ def check_hooks(text: str, roster: list[Agent], problems: list[str]) -> None:
             problems.append(f"vendor sources — {agent.raw}: only a hooks block is kept (Pulse reads no vendor file); "
                             f"found {sorted(set(entry) - {'hooks'})}")
         if not agent.hook_format or not agent.hook_events:
-            problems.append(f"hooks — {agent.raw}: no HookContract with events in the catalog")
+            problems.append(f"hooks — {agent.raw}: no HookContract with events in {agent.file}")
             continue
         for event in agent.hook_events:
             if event in listed:
@@ -282,7 +319,7 @@ def main() -> int:
         for problem in problems:
             print(f"::error::{problem}")
         return 1
-    print(f"catalog OK — {len(roster)} agents, one spec and one hook contract each; "
+    print(f"catalog OK — {len(roster)} agents, one adapter file and one hook contract each; "
           "every hook contract has a source")
     return 0
 

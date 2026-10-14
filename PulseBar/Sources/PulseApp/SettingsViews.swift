@@ -24,7 +24,7 @@ struct SettingsView: View {
             store.performSettings(action)
         }
         .onAppear {
-            store.land(\.hooksStatus, HooksSupport.probeStatus())
+            store.probeHooks()
             store.refreshPresentAgents()
             store.refreshLoginItem()
             PulseNotify.refreshAuthorization()
@@ -46,27 +46,22 @@ extension StatusStore {
         }
         let build = PulseVersion.buildLine
         let login = SettingsModel.loginLine(asked: settings.launchAtLogin, state: loginItem)
+        let connections = self.connections
         return SettingsModel(
             lang: lang,
             launchAtLogin: login.isOn,
             loginNote: login.note,
             notifications: SettingsModel.notifications(notifyAuthorized),
             hooksStatus: hooksStatus.label(lang: lang),
-            hooksInstalled: !hooksStatus.installedAgents.isEmpty,
+            hooksInstalled: !hooksStatus.installedAgents.isEmpty || connections.contains { $0.install.carriesHook },
             hooksBusy: hooksStatus.isWorking,
             hookAgents: SettingsModel.hookAgents(
-                installed: hooksStatus.installedAgents,
+                connections: connections,
                 present: presentAgents,
-                lastEventMs: engine.latestHookEventMs,
                 nowMs: Int64(Date().timeIntervalSince1970 * 1000),
-                lang: lang,
-                failed: hooksStatus.failures
+                lang: lang
             ),
-            absentAgents: SettingsModel.absentAgents(
-                installed: hooksStatus.installedAgents,
-                present: presentAgents,
-                failed: hooksStatus.failures
-            ),
+            absentAgents: SettingsModel.absentAgents(connections: connections, present: presentAgents),
             version: build.isEmpty ? PulseVersion.about : "\(PulseVersion.about) · \(build)",
             buildWarning: warning,
             focus: settingsFocus.target.map(SettingsModel.section(for:))
@@ -94,15 +89,13 @@ extension StatusStore {
         return SettingsModel.report(SettingsModel.ReportInput(
             version: "\(PulseVersion.fingerprint) · \(PulseVersion.distributionChannel)",
             macOS: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
-            installed: hooksStatus.installedAgents,
+            connections: connections,
             present: presentAgents,
-            failed: hooksStatus.failures,
-            lastEventMs: engine.latestHookEventMs,
             nowMs: Int64(Date().timeIntervalSince1970 * 1000),
             notifyAuthorized: notifyAuthorized,
             launchAtLogin: settings.launchAtLogin,
             loginItem: loginItem,
-            sessions: cachedAll.map(SettingsModel.ReportSession.init)
+            sessions: rows.map { SettingsModel.ReportSession($0, facts: facts(for: $0.key)) }
         ))
     }
 
@@ -217,21 +210,24 @@ struct SettingsFace: View {
                 Text(model.hooksStatus)
                     .foregroundStyle(model.hooksInstalled ? AnyShapeStyle(.secondary) : AnyShapeStyle(PulseTheme.warning))
             }
+            if model.hooksNeedUpdate {
+                Text(t(.settingsHookUpdateHint))
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(PulseTheme.warning)
+            }
+            // One line per agent: its name and state, then — quietly — what
+            // was heard, whether it reports a wait, and the last event not
+            // used.
             ForEach(model.hookAgents) { line in
                 LabeledContent {
                     Text(line.state)
-                        .foregroundStyle(
-                            line.failed ? AnyShapeStyle(PulseTheme.warning)
-                                : line.installed ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary)
-                        )
+                        .foregroundStyle(Self.style(line.tone))
                 } label: {
                     Label {
                         Text(line.agent.displayName)
-                        if !line.lastEvent.isEmpty {
-                            Text(line.lastEvent)
-                        }
-                        if let note = line.note {
-                            Text(note)
+                        Text(line.detail)
+                        if let ignored = line.ignored {
+                            Text(ignored)
                         }
                     } icon: {
                         AgentIconView(id: line.agent)
@@ -248,6 +244,14 @@ struct SettingsFace: View {
                 Text(t(.settingsReportHint))
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private static func style(_ tone: SettingsModel.HookAgent.Tone) -> AnyShapeStyle {
+        switch tone {
+        case .ok: return AnyShapeStyle(.secondary)
+        case .warning: return AnyShapeStyle(PulseTheme.warning)
+        case .quiet: return AnyShapeStyle(.tertiary)
         }
     }
 
