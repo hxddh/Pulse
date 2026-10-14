@@ -58,7 +58,6 @@ extension StatusStore {
                 installed: hooksStatus.installedAgents,
                 present: presentAgents,
                 lastEventMs: engine.latestHookEventMs,
-            ignored: engine.latestIgnored,
                 nowMs: Int64(Date().timeIntervalSince1970 * 1000),
                 lang: lang,
                 failed: hooksStatus.failures
