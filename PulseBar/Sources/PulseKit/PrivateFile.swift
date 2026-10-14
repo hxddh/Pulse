@@ -1,0 +1,113 @@
+import Darwin
+import Foundation
+
+/// Every file Pulse writes that carries something the user typed, ran or named.
+///
+/// The rule is one sentence: **0600 from the first byte, never 0644 with a
+/// `chmod` afterwards.** `write(to:options:.atomic)` cannot honour it — the
+/// temporary file it creates takes the process umask, 0644 on a stock Mac,
+/// and stays readable by every other local account for the whole write plus
+/// the rename. Creating the file with the mode we want, before a byte goes
+/// into it, closes the window instead of narrowing it.
+///
+/// `events.tsv` keeps the command an agent asked to run, the prompt the
+/// person typed and the directory it came from; `settings.json` and the
+/// hook-install ledger are written through here too.
+package enum PrivateFile {
+    package static let mode: mode_t = 0o600
+
+    /// Test seam: handed the temporary file's path after it is created and
+    /// filled, before it is renamed into place — so a test can prove the
+    /// bytes were never readable by anyone else, rather than only that they
+    /// ended up private.
+    /// Tests set it before exercising a write and clear it after; nothing
+    /// else touches it, so it is exempt from isolation checking by contract.
+    nonisolated(unsafe) package static var inspectTemporaryFileForTesting: ((String) -> Void)?
+
+    /// Write `data` privately, then publish it atomically.
+    ///
+    /// `rename(2)` carries the mode across whether or not a file was already
+    /// there.
+    @discardableResult
+    package static func write(_ data: Data, to url: URL) -> Bool {
+        let fm = FileManager.default
+        let directory = url.deletingLastPathComponent()
+        try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        let temporary = directory.appendingPathComponent(".tmp-\(UUID().uuidString)")
+        guard fm.createFile(
+            atPath: temporary.path,
+            contents: data,
+            attributes: [.posixPermissions: 0o600]
+        ) else { return false }
+        inspectTemporaryFileForTesting?(temporary.path)
+        guard rename(temporary.path, url.path) == 0 else {
+            try? fm.removeItem(at: temporary)
+            return false
+        }
+        return true
+    }
+
+    /// Bring a file written before this rule down to 0600.
+    ///
+    /// A creation mode only applies to files that do not exist yet, so every
+    /// install that already has an `events.tsv` would keep its 0644 for
+    /// ever. Doing it through the descriptor we already hold costs one
+    /// `fchmod`, cannot race a swapped path, and needs no migration step that
+    /// somebody has to remember to run.
+    ///
+    /// A file owned by somebody else is left exactly as it is: Pulse has no
+    /// business changing another account's modes, and failing quietly here is
+    /// better than refusing to record a wait.
+    package static func tighten(fileDescriptor fd: Int32) {
+        var info = stat()
+        guard fstat(fd, &info) == 0 else { return }
+        guard info.st_uid == getuid() else { return }
+        guard (info.st_mode & 0o777) != mode else { return }
+        _ = fchmod(fd, mode)
+    }
+}
+
+/// Reading files that someone else's sync tool may have put there.
+///
+/// A settings file may be fed by rsync / Syncthing / a shared folder, and
+/// those copy symlinks and (with `rsync -D`) FIFOs as faithfully as regular
+/// files. A size check through `attributesOfItem` describes the *link*, and
+/// `Data(contentsOf:)` then follows it — so a link to `/dev/zero` passed the
+/// bound, and a FIFO blocked the scan forever. Every read here opens without
+/// following links and without blocking, confirms a regular file on the
+/// descriptor it already holds, and never reads past the limit.
+package enum SafeRead {
+    /// The whole file, or nil when it is not a regular file, is larger than
+    /// `limit`, or cannot be read.
+    package static func regularFile(atPath path: String, limit: Int) -> Data? {
+        guard let opened = open(path) else { return nil }
+        let (handle, size) = opened
+        defer { try? handle.close() }
+        guard size <= limit else { return nil }
+        return read(handle, upTo: limit)
+    }
+
+    private static func open(_ path: String) -> (FileHandle, Int)? {
+        let fd = Darwin.open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else { return nil }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        var info = stat()
+        guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG, info.st_size >= 0 else {
+            try? handle.close()
+            return nil
+        }
+        return (handle, Int(info.st_size))
+    }
+
+    private static func read(_ handle: FileHandle, upTo limit: Int) -> Data? {
+        var data = Data()
+        while data.count < limit {
+            let chunk: Data?
+            do { chunk = try handle.read(upToCount: min(64 * 1024, limit - data.count)) }
+            catch { return nil }
+            guard let chunk, !chunk.isEmpty else { break }
+            data.append(chunk)
+        }
+        return data
+    }
+}

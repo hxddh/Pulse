@@ -12,7 +12,7 @@ stale. It never edits anything: it reads public repositories and prints.
 A changed file is not proof the contract changed. The fix is to read the
 commits, update the receiver and its test if needed, and move the pin.
 
-Run: python3 scripts/vendor_drift.py [--only gemini,codex] [--workdir DIR]
+Run: python3 scripts/vendor_drift.py [--only pi,codex] [--workdir DIR]
 """
 from __future__ import annotations
 

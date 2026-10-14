@@ -17,19 +17,19 @@ Pulse 是**菜单栏状态灯**：扫一眼知道编码 Agent 要不要你；点
 提示里；派活、受管会话、worktree、替你跑检查或往终端里打字 —— 状态灯看着编排器，不成为编排器；
 自己的历史记录；任何网络连接。
 
-### 七个 Agent
+### 六个 Agent
 
-Claude Code、Codex、Gemini CLI、Copilot CLI、OpenCode、Cursor（编辑器与 `cursor-agent` 算同一个）、Pi。
+Claude Code、Codex、Copilot CLI、OpenCode、Cursor（编辑器与 `cursor-agent` 算同一个）、Pi。
 每个只走厂商文档里的 hook / 插件 / 扩展，只装不能改变 Agent 决定的观察型事件，移除时逐字节还原。
 
 | 会变红（厂商报告阻塞） | 只会「运行中 / 轮到你」 |
 | --- | --- |
-| Claude（PermissionRequest、权限 / 提问通知）· Gemini（`ToolPermission`）· Copilot（`permission_prompt` / `elicitation_dialog`）· OpenCode（`permission.asked` / `question.asked`）· Pi（`ui_prompt_start`） | Codex（它的 PermissionRequest 在自动审查之前触发，装了就是假等待）· Cursor（没有不拦截的等待事件） |
+| Claude（PermissionRequest、权限 / 提问通知）· Copilot（`permission_prompt` / `elicitation_dialog`）· OpenCode（`permission.asked` / `question.asked`）· Pi（`ui_prompt_start`） | Codex（它的 PermissionRequest 在自动审查之前触发，装了就是假等待）· Cursor（没有不拦截的等待事件） |
 
 后两者在设置里明说「不会报告它在等你」，不伪造红灯，也没有任何让它们报告等待的设置。
 
-**红灯怎么熄。** 在厂商提示里回答后，同一个工具开始运行（Claude / Codex `PostToolUse`、Gemini `AfterTool`、
-Copilot `postToolUse`）就熄灭；并行的别的工具结束不算回答。拒绝或取消时没有工具运行，回合几秒后结束 ——
+**红灯怎么熄。** 在厂商提示里回答后，同一个工具开始运行（Claude / Codex `PostToolUse`、Copilot `postToolUse`、
+Pi `tool_execution_end`）就熄灭；并行的别的工具结束不算回答。拒绝或取消时没有工具运行，回合几秒后结束 ——
 这个「轮到你」在 20 秒宽限期满时落地。同一次提问报两次（Claude 先 PermissionRequest、约 6 秒后再发通知）
 只算一次，保留第一次的时间与更具体的问题。Claude 的 `idle_prompt` 不会让已经看过的回合重新变成「轮到你」。
 
@@ -99,7 +99,7 @@ Copilot `postToolUse`）就熄灭；并行的别的工具结束不算回答。�
 2. **设置卡**：这台 Mac 上有（厂商目录在）支持的 Agent 而 hook 没装 →「在这台 Mac 上找到 Claude、Codex——
    连接后，它们需要你时 Pulse 就会知道」[连接]。一次点击装上 hook，再请 macOS 允许通知（只在从没问过时）。
    用户移除过 hooks 就不再提。
-3. **安装失败**：说出原因（「Gemini：它的设置文件不是合法 JSON——修好后再安装」）[打开设置]，不再放进「连接」。
+3. **安装失败**：说出原因（「Cursor：它的 hooks 文件不是合法 JSON——修好后再安装」）[打开设置]，不再放进「连接」。
 4. 通知被关闭 →「打开系统设置」；还没授权 →「启用通知」。
 5. 上一条横幅被 macOS 拒绝 →「打开系统设置」。
 

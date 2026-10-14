@@ -1,8 +1,7 @@
 import Foundation
 import Testing
 @testable import PulseApp
-@testable import PulseCore
-@testable import PulseHarvest
+@testable import PulseKit
 
 // Vendor formats: each agent's hook contract, read from the vendor's own
 // source (docs/vendor-formats.json). Pulse reads no vendor file, so there

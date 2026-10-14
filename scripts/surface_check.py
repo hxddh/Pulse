@@ -8,6 +8,7 @@ models they render are pure. This gate fails if either grows a store
 reference back, if a surface fixture is missing from the capture list, if
 a QA file (fixtures, captures, the preview window) moves back into the app
 library — the shipping app links `PulseApp`, the QA driver is `PulseQA` — if
+a pure model leaves the kernel (`PulseKit`, Foundation only), if
 a row's why (`L10n` `explain*` and `step*`, either language) says "hook": the
 tray speaks plain words ("Claude asked for permission · 4m ago"), or if a
 step string says it is still going: a step is what a hook reported, a past
@@ -20,6 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "PulseBar/Sources/PulseApp"
+KIT = ROOT / "PulseBar/Sources/PulseKit"
 QA = ROOT / "PulseBar/Sources/PulseQA"
 # The QA driver's files. None of them may live in the app library.
 QA_FILES = [
@@ -40,11 +42,13 @@ VIEWS = [
     # Settings (its Hooks section is the diagnostics).
     ("SettingsViews.swift", "SettingsFace"),
 ]
-# Pure models: no store, no UI framework. Paths are relative to APP, except
-# the fixtures, which live in the QA driver.
+# Pure models: no store, no UI framework. They live in the kernel
+# (`PulseKit`, which cannot import AppKit or the store); the fixtures live in
+# the QA driver.
 PURE_FILES = [
-    "Models.swift", "TrayRowModel.swift", "TrayModels.swift", "SettingsModel.swift",
-    "TrayState.swift", "WaitLedger.swift", "WaitingDelivery.swift",
+    "AgentRow.swift", "TrayRowModel.swift", "TrayModels.swift", "SettingsModel.swift",
+    "TrayState.swift", "WaitLedger.swift", "WaitingDelivery.swift", "SessionBook.swift",
+    "L10n.swift",
 ]
 QA_PURE_FILES = ["SurfaceFixtures.swift"]
 STORE = re.compile(r"\b(StatusStore|store|AppServices)\b")
@@ -85,8 +89,15 @@ def main() -> int:
             errors.append(f"{file}: struct {name} not found")
         elif STORE.search(code_only(body)):
             errors.append(f"{file}: {name} references the store — render a value and send intents")
-    for path in [APP / f for f in PURE_FILES] + [QA / f for f in QA_PURE_FILES]:
+    for path in sorted(KIT.rglob("*.swift")):
+        if re.search(r"^\s*import\s+(SwiftUI|AppKit|UserNotifications|ServiceManagement)\b",
+                     path.read_text(), re.M):
+            errors.append(f"{path.name}: the kernel is Foundation only — UI and system services are PulseApp's")
+    for path in [KIT / f for f in PURE_FILES] + [QA / f for f in QA_PURE_FILES]:
         file = path.name
+        if not path.exists():
+            errors.append(f"{file}: missing from {path.parent.name} — a pure model lives in the kernel")
+            continue
         source = code_only(path.read_text())
         if STORE.search(source):
             errors.append(f"{file}: surface models must not reach the store")
@@ -100,7 +111,7 @@ def main() -> int:
             errors.append(f"{file}: QA code is in the app library — it belongs to PulseQA")
         if not (QA / file).exists():
             errors.append(f"{file}: missing from PulseQA")
-    copy = (APP / "L10n.swift").read_text()
+    copy = (KIT / "L10n.swift").read_text()
     whys = re.findall(r'case \.((?:explain|step)\w+):\s*return "((?:[^"\\]|\\.)*)"', copy)
     if not whys:
         errors.append("L10n.swift: no explain* strings found")
@@ -110,7 +121,7 @@ def main() -> int:
     steps = [(key, value) for key, value in whys if key.startswith("step")]
     if not steps:
         errors.append("L10n.swift: no step* strings found")
-    words = code_only((APP / "TrayRowModel.swift").read_text())
+    words = code_only((KIT / "TrayRowModel.swift").read_text())
     for name in ("stepText", "stepLine"):
         body = re.search(r"static func " + name + r"\b.*?\n    \}\n", words, re.S)
         if body is None:

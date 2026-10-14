@@ -9,6 +9,7 @@ cd "$ROOT"
 python3 scripts/version_check.py            # PulseVersion.semver == CHANGELOG == README
 python3 scripts/catalog_check.py            # roster, hook contracts, processes, privacy, no network
 python3 scripts/make_agent_icons.py --check # every agent has its icon
+python3 scripts/make_brand.py --check       # app icon + tray mark match their generator
 python3 scripts/surface_check.py            # surfaces render values; QA code stays out of the app
 python3 -m py_compile scripts/*.py
 

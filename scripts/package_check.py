@@ -14,10 +14,19 @@ Run against a built app:
 from __future__ import annotations
 
 import plistlib
+import re
 import sys
 from pathlib import Path
 
 BUNDLE_NAME = "PulseBar_PulseApp.bundle"
+MODELS = Path(__file__).resolve().parent.parent / "PulseBar" / "Sources" / "PulseApp" / "Models.swift"
+
+
+def bundle_id() -> str:
+    """`PulseVersion.bundleID` — the one place the identifier is spelled."""
+    match = re.search(r'static let bundleID = "([^"]+)"', MODELS.read_text(encoding="utf-8"))
+    return match.group(1) if match else ""
+
 
 # The QA driver (`PulseQA`) is a separate executable and never ships. These
 # strings exist only in its code — the flags that swap this Mac's sessions for
@@ -86,6 +95,9 @@ def main(argv: list[str]) -> int:
             problems.append("Contents/Info.plist has no CFBundleShortVersionString")
         if info.get("CFBundleExecutable") != "PulseBar":
             problems.append("Contents/Info.plist CFBundleExecutable is not PulseBar")
+        if info.get("CFBundleIdentifier") != bundle_id():
+            problems.append(f"Contents/Info.plist CFBundleIdentifier is {info.get('CFBundleIdentifier')!r}, "
+                            f"not PulseVersion.bundleID {bundle_id()!r}")
 
     # Two locations are defensible, and which one works depends on how the
     # resource bundle is resolved:

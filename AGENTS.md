@@ -19,12 +19,15 @@ CHANGELOG.
 The tests are the spec's proof: a behaviour is pinned by a test in the file of
 its component, not by a document.
 
-**The roster is seven agents**, an owner decision: Claude, Codex, Cursor (IDE
-+ `cursor-agent` CLI), Pi, Gemini CLI, Copilot CLI, OpenCode. Adding one is a
-product decision; mechanically it is one `case` and one `AgentSpec` (with its
-`HookContract`) in `PulseCore/AgentCatalog.swift`, its receiver adapter in
-`PulseHookReceiver`, its icon, README row, a truth table in
-`SessionBookTests` and a `hooks` entry in `docs/vendor-formats.json`.
+**The roster is six agents**, an owner decision: Claude Code, Codex, Cursor
+(IDE + `cursor-agent` CLI), Pi, Copilot CLI, OpenCode. Adding one is a
+product decision; mechanically it is one `case` in
+`PulseKit/Agents/Agents.swift`, one adapter file beside it (its `AgentSpec`:
+identity, process rule, waiting source, `HookContract` with each event's
+action, and a `read` for payload-dependent events), its icon, README row, a
+truth table in `SessionBookTests` and a `hooks` entry in
+`docs/vendor-formats.json`. Nothing outside `Agents/` switches on an agent
+or spells a vendor event (`catalog_check`).
 
 ## Invariants
 
@@ -89,18 +92,19 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
 
 ## Architecture
 
-Swift under `PulseBar/`, five targets, dependencies pointing down only:
+Swift under `PulseBar/`, four targets (and the tests), dependencies
+pointing down only:
 
 | Target | Kind | What it holds |
 | --- | --- | --- |
-| `PulseCore` | library | the agent catalog, the protocol, bounded and private IO, process supervision, the cadence, the debug log (members `public`) |
-| `PulseHarvest` | library | `EventLog` (append, read from a cursor, compact, match a rewrite), libproc `AgentProcesses`, `RowIdentity`, `TitleHeuristics` (members `package`) |
-| `PulseApp` | library | `SessionBook` → `TrayState` → `StatusStore`, `ScanEngine`, `WaitNotifier` + `WaitLedger`, the hook receiver and installer, every view; owns the resources (`PulseResources`, never `Bundle.module`) |
+| `PulseKit` | library, Foundation only | the agent adapters (`Agents/`), the protocol, `EventLog`, the hook receiver and installer (`JSONSplice`, the ledger), libproc `AgentProcesses`, `SessionBook` → `TrayState`, `WaitLedger`, `WaitingDelivery`, `LandingPlan`, every surface model (`TrayRowModel`, `DetailModel`, `SettingsModel`, `TrayKeys`…), `L10n`, bounded and private IO, the cadence, the debug log (members `package`) |
+| `PulseApp` | library | `ScanEngine` and the watchers, `StatusStore`, `WaitNotifier` + `PulseNotify`, `TerminalFocus`, `StatusItemController`, every view, the login item; owns the resources (`PulseResources`, never `Bundle.module`) |
 | `PulseBar` | executable | `PulseBarMain.main()` — the shipping app |
-| `PulseQA` | executable | fixtures, captures, the preview window, `QADriver` (`@testable import PulseApp`) |
+| `PulseQA` | executable | fixtures, captures, the preview window, `QADriver` (`@testable import PulseApp`, `PulseKit`) |
 
-No library below `PulseApp` imports AppKit or SwiftUI, and none reaches
-`StatusStore`.
+`PulseKit` imports no AppKit, SwiftUI, UserNotifications or
+ServiceManagement (`surface_check`) and never reaches `StatusStore`; the
+`--hook` path runs in it without starting AppKit.
 
 Data flow: a hook appends a line to `events.tsv` → `AttentionWatcher` wakes
 `ScanEngine`, which applies the new lines to `SessionBook` →
@@ -126,7 +130,7 @@ prefer `Sendable` types and `Guarded`.
 
 Tests live in `PulseBar/Tests/PulseBarTests/`, one file per component:
 `CoreTests`, `VendorFormatTests`, `AttentionTests` (protocol, event log,
-receiver, installer), `SessionTests` (the seven agents' truth tables,
+receiver, installer), `SessionTests` (the six agents' truth tables,
 `TrayState`, identity), `NotifierTests`, `TrayTests`, `SettingsTests`,
 `DiagnosticsTests`, `EngineTests`. A new test goes in its component's file.
 A wrong tray state is fixed with a failing test — `SessionBookTests`,
@@ -146,11 +150,13 @@ python3 scripts/package_check.py      # the built .app: flat resource bundle, no
 ./scripts/qa_captures.sh              # surface + status fixture PNGs (PulseQA)
 ```
 
-`gates.sh` runs `version_check` (one semver), `catalog_check` (roster, hook
+`gates.sh` runs `version_check` (one semver), `catalog_check` (roster, one
+adapter file per agent and no vendor event spelled outside `Agents/`, hook
 contracts and their sources, no gating event, libproc only, AppleScript only
 in `TerminalFocus`, no network API, no token / usage / cost reads),
-`make_agent_icons --check`, `surface_check` (views render values, QA files
-stay in `PulseQA`, a why never says "hook", a step never says "running") and
+`make_agent_icons --check`, `surface_check` (views render values, the pure
+models stay in `PulseKit` and it imports no UI framework, QA files stay in
+`PulseQA`, a why never says "hook", a step never says "running") and
 a `Bundle.module` grep. `vendor_drift.py` runs weekly
 (`vendor-drift.yml`). A gate earns its place by guarding a real fact.
 

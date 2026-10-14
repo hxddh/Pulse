@@ -1,5 +1,6 @@
 import Foundation
 @testable import PulseApp
+@testable import PulseKit
 
 /// Named worlds for the surfaces that are values.
 ///
@@ -133,7 +134,7 @@ enum SurfaceFixtures {
     }
 
     static func rowStalled() -> AgentRow {
-        var row = baseRow(.gemini, key: "fx-stalled", task: "Port the parser to Swift")
+        var row = baseRow(.copilot, key: "fx-stalled", task: "Port the parser to Swift")
         row.isStalled = true
         row.lastEventMs = nowMs - 25 * minute
         row.activityMs = nowMs - 25 * minute
@@ -225,7 +226,7 @@ enum SurfaceFixtures {
     static func noticeSetupFailed(lang: ResolvedLanguage) -> TrayNoticeModel {
         TrayNoticeModel.pick(TrayNoticeModel.Input(
             lang: lang, notifyAuthorized: true, bannerFailed: false,
-            installFailure: HooksSupport.Status.failureText([.gemini: .invalidJSON], lang: lang)
+            installFailure: HooksSupport.Status.failureText([.cursor: .invalidJSON], lang: lang)
         )) ?? TrayNoticeModel(
             kind: .setupFailed, text: "", actionTitle: "", action: .openHooksSettings,
             systemImage: "exclamationmark.triangle", tone: .stalled
@@ -265,18 +266,18 @@ enum SurfaceFixtures {
             lang: lang,
             launchAtLogin: true,
             notifications: .allowed,
-            hooksStatus: HooksSupport.Status.installed([.claude, .codex, .gemini]).label(lang: lang),
+            hooksStatus: HooksSupport.Status.installed([.claude, .codex, .copilot]).label(lang: lang),
             hooksInstalled: true,
             hookAgents: SettingsModel.hookAgents(
-                installed: [.claude, .codex, .gemini],
-                present: [.claude, .codex, .cursor, .gemini],
+                installed: [.claude, .codex, .copilot],
+                present: [.claude, .codex, .cursor, .copilot],
                 lastEventMs: [.claude: nowMs - 12_000, .codex: nowMs - 3 * minute],
                 nowMs: nowMs,
                 lang: lang
             ),
             absentAgents: SettingsModel.absentAgents(
-                installed: [.claude, .codex, .gemini],
-                present: [.claude, .codex, .cursor, .gemini]
+                installed: [.claude, .codex, .copilot],
+                present: [.claude, .codex, .cursor, .copilot]
             ),
             version: "Pulse \(PulseVersion.semver) · a1b2c3d · 2026-09-29",
             buildWarning: L10n.t(.buildPreview, lang),

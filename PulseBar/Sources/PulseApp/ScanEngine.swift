@@ -44,7 +44,7 @@ final class ScanEngine {
     let powerMonitor = PowerMonitor()
     let attentionWatcher = AttentionWatcher()
     let exitWatch = ProcessExitWatch()
-    private let ioQueue = DispatchQueue(label: "com.pulse.events", qos: .userInitiated)
+    private let ioQueue = DispatchQueue(label: PulseVersion.bundleID + ".events", qos: .userInitiated)
 
     // MARK: The world, as the events said it
 
@@ -383,7 +383,7 @@ final class ScanEngine {
             book.apply(record, nowMs: nowMs)
             // A `done` may be Pulse's own (a dismissal): not the agent's hook
             // speaking, so not its "last event".
-            if let agent = AgentCatalog.agent(named: record.agent), record.ms > 0,
+            if let agent = Agents.agent(named: record.agent), record.ms > 0,
                AttentionProtocol.kind(record.kind) != .done {
                 noteHookEvent(agent, atMs: min(record.ms, nowMs))
             }

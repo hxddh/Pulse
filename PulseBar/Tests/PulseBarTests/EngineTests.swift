@@ -4,8 +4,7 @@ import Observation
 import Testing
 import XCTest
 @testable import PulseApp
-@testable import PulseCore
-@testable import PulseHarvest
+@testable import PulseKit
 
 // Engine: ScanEngine (the event feed and the projection), the tick and the
 // process-scan cadence, scan quiet.
@@ -392,13 +391,13 @@ struct EventFeedTests {
 
     @Test func theLastEventPerAgentIsKept() {
         let store = StatusStore()
-        let early = AttentionRecord(agent: "gemini", kind: "turn", ms: t0 - 60_000, session: "g1")
+        let early = AttentionRecord(agent: "copilot", kind: "turn", ms: t0 - 60_000, session: "g1")
         store.engine.landLog(chunk([early]), nowMs: t0)
         store.engine.landLog(chunk([], header: "# g2"), nowMs: t0 + 1_000)
-        #expect(store.engine.latestHookEventMs[.gemini] == t0 - 60_000)
+        #expect(store.engine.latestHookEventMs[.copilot] == t0 - 60_000)
         // A dismissal's own `done` is not the agent speaking.
-        store.engine.apply(records: [AttentionRecord(agent: "gemini", kind: "done", ms: t0, session: "g1")], nowMs: t0)
-        #expect(store.engine.latestHookEventMs[.gemini] == t0 - 60_000)
+        store.engine.apply(records: [AttentionRecord(agent: "copilot", kind: "done", ms: t0, session: "g1")], nowMs: t0)
+        #expect(store.engine.latestHookEventMs[.copilot] == t0 - 60_000)
     }
 
     /// Settings' "last event" counts tool lines too.
@@ -412,8 +411,8 @@ struct EventFeedTests {
     /// after it (a denied prompt).
     @Test func aHeldTurnLandsOnTheTick() {
         let store = StatusStore()
-        let raise = AttentionRecord(agent: "gemini", kind: "permission", ms: t0 - 10_000, message: "Allow?", session: "g1", cwd: "/w/app")
-        let turn = AttentionRecord(agent: "gemini", kind: "turn", ms: t0 - 7_000, session: "g1", cwd: "/w/app")
+        let raise = AttentionRecord(agent: "copilot", kind: "permission", ms: t0 - 10_000, message: "Allow?", session: "g1", cwd: "/w/app")
+        let turn = AttentionRecord(agent: "copilot", kind: "turn", ms: t0 - 7_000, session: "g1", cwd: "/w/app")
         store.engine.landLog(chunk([raise, turn]), nowMs: t0)
         #expect(store.cachedAll.first?.isBlocked == true, "inside the grace")
         store.engine.project(nowMs: t0 + 15_000)
@@ -565,7 +564,7 @@ struct EventFeedTests {
     }
 }
 
-/// End to end, for each of the seven agents: the vendor's own hook payload
+/// End to end, for each of the six agents: the vendor's own hook payload
 /// → `pulse-hook` writes its line to an event log (a file of the test's
 /// own) → the engine reads it after its cursor and applies it → the lamp →
 /// the banner owed → the vendor's answer → the lamp goes out and the banner
@@ -601,12 +600,6 @@ struct HookToBannerTests {
             answer: ("PostToolUse", #"{"session_id":"c1","cwd":"/w/app","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"npm test"}}"#)
         ),
         Case(
-            agent: .gemini, session: "g1",
-            before: [("BeforeAgent", #"{"session_id":"g1","cwd":"/w/app","hook_event_name":"BeforeAgent","prompt":"Fix it"}"#)],
-            ask: [("Notification", #"{"session_id":"g1","cwd":"/w/app","hook_event_name":"Notification","notification_type":"ToolPermission","message":"Allow run_shell_command: npm test?","details":{"tool_name":"run_shell_command"}}"#)],
-            answer: ("AfterTool", #"{"session_id":"g1","cwd":"/w/app","hook_event_name":"AfterTool","tool_name":"run_shell_command","tool_input":{"command":"npm test"}}"#)
-        ),
-        Case(
             agent: .copilot, session: "cp1",
             before: [("userPromptSubmitted", #"{"sessionId":"cp1","cwd":"/w/app","prompt":"Run the tests"}"#)],
             ask: [("notification", #"{"sessionId":"cp1","cwd":"/w/app","hook_event_name":"Notification","message":"Allow bash?","notification_type":"permission_prompt"}"#)],
@@ -625,6 +618,7 @@ struct HookToBannerTests {
             before: [
                 ("session_start", #"{"session_id":"p1","cwd":"/w/app"}"#),
                 ("agent_start", #"{"session_id":"p1","cwd":"/w/app"}"#),
+                ("message_start", #"{"session_id":"p1","cwd":"/w/app","prompt":"Clean the build"}"#),
             ],
             ask: [("ui_prompt_start", #"{"session_id":"p1","cwd":"/w/app","kind":"confirm","title":"Allow rm -rf build?"}"#)],
             answer: ("ui_prompt_end", #"{"session_id":"p1","cwd":"/w/app","kind":"confirm","title":"Allow rm -rf build?"}"#)

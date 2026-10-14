@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 @testable import PulseApp
+@testable import PulseKit
 
 /// Preview fixtures — the QA driver's visual contract, not in the shipping app.
 @MainActor
@@ -148,8 +149,8 @@ extension StatusStore {
         var rows = [waiting, active, stalled, recent]
         if name != "compact" {
             let quiet = row(
-                "gemini-preview",
-                .gemini,
+                "opencode-preview",
+                .opencode,
                 task: "Audit settings copy",
                 cwd: "/Users/me/code/Docs",
                 live: false,

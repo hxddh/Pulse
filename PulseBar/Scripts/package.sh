@@ -8,6 +8,11 @@ cd "$ROOT/PulseBar"
 
 VERSION="$(sed -n 's/.*static let semver = "\([^"]*\)".*/\1/p' Sources/PulseApp/Models.swift | head -1)"
 VERSION="${VERSION:-0.0.0}"
+BUNDLE_ID="$(sed -n 's/.*static let bundleID = "\([^"]*\)".*/\1/p' Sources/PulseApp/Models.swift | head -1)"
+if [[ -z "$BUNDLE_ID" ]]; then
+  echo "error: PulseVersion.bundleID not found in Sources/PulseApp/Models.swift" >&2
+  exit 1
+fi
 
 if [[ "$(uname -m)" != "arm64" ]]; then
   echo "error: Pulse is built for Apple silicon (arm64); found $(uname -m)" >&2
@@ -84,7 +89,7 @@ if [[ ! -f "$BUNDLE_PLIST" ]]; then
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleIdentifier</key><string>com.pulse.app.resources</string>
+  <key>CFBundleIdentifier</key><string>${BUNDLE_ID}.resources</string>
   <key>CFBundleName</key><string>PulseBar_PulseApp</string>
   <key>CFBundlePackageType</key><string>BNDL</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
@@ -100,7 +105,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key><string>PulseBar</string>
-  <key>CFBundleIdentifier</key><string>com.pulse.app</string>
+  <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
   <key>CFBundleName</key><string>Pulse</string>
   <key>CFBundleDisplayName</key><string>Pulse</string>
   <key>CFBundlePackageType</key><string>APPL</string>

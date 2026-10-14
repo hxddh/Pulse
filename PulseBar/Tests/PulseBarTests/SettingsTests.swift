@@ -2,8 +2,7 @@ import Foundation
 import Testing
 @testable import PulseApp
 @testable import PulseQA
-@testable import PulseCore
-@testable import PulseHarvest
+@testable import PulseKit
 
 // Settings: the persisted settings and the Settings page model.
 
@@ -153,11 +152,11 @@ struct SettingsModelTests {
     /// install failed.
     @Test func aJobKeepsTheFailuresOfAgentsItDidNotTouch() {
         let results = [HooksInstaller.AgentResult(agent: .claude, report: "", failure: nil)]
-        let kept = HooksSupport.failures(after: results, keeping: [.gemini: .invalidJSON, .claude: .unwritable])
-        #expect(kept == [.gemini: .invalidJSON], "Claude was done again; Gemini's reason stays")
-        let failedAgain = [HooksInstaller.AgentResult(agent: .gemini, report: "", failure: .hasComments)]
-        let replaced = HooksSupport.failures(after: failedAgain, keeping: [.gemini: .invalidJSON])
-        #expect(replaced == [.gemini: .hasComments], "this run's reason wins")
+        let kept = HooksSupport.failures(after: results, keeping: [.opencode: .invalidJSON, .claude: .unwritable])
+        #expect(kept == [.opencode: .invalidJSON], "Claude was done again; OpenCode's reason stays")
+        let failedAgain = [HooksInstaller.AgentResult(agent: .opencode, report: "", failure: .hasComments)]
+        let replaced = HooksSupport.failures(after: failedAgain, keeping: [.opencode: .invalidJSON])
+        #expect(replaced == [.opencode: .hasComments], "this run's reason wins")
     }
 
     /// The login toggle shows what macOS says: on while approval is

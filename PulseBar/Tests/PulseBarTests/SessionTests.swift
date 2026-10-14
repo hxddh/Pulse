@@ -2,8 +2,7 @@ import Foundation
 import Testing
 import XCTest
 @testable import PulseApp
-@testable import PulseCore
-@testable import PulseHarvest
+@testable import PulseKit
 
 // Sessions: the event reducer (SessionBook), its projection into the tray
 // (TrayState), row identity, and what a row carries.
@@ -117,7 +116,9 @@ struct SessionBookTests {
         #expect(block.sinceMs == t0)
     }
 
-    @Test func codexIsNeverBlocked() {
+    /// Codex never says it waits: a PermissionRequest is not installed and
+    /// is not read.
+    @Test func codex() {
         let run = play(.codex, [
             ("SessionStart", [:]),
             ("UserPromptSubmit", ["prompt": "Add a queue"]),
@@ -128,7 +129,9 @@ struct SessionBookTests {
         #expect(run.states == ["idle", "working", "working", "turn", "ended"])
     }
 
-    @Test func cursorIsNeverBlocked() {
+    /// Cursor never says it waits: its `before*` hooks gate, and are not
+    /// installed.
+    @Test func cursor() {
         let run = play(.cursor, [
             ("sessionStart", [:]),
             ("afterAgentResponse", [:]),
@@ -139,34 +142,38 @@ struct SessionBookTests {
         #expect(run.states == ["idle", "working", "working", "turn", "ended"])
     }
 
+    /// Pi, with payloads shaped like the current extension API
+    /// (earendil-works/pi `extensions/types.ts`) as Pulse's extension
+    /// forwards them: the person's message is the prompt, a tool's one
+    /// argument came from its `tool_execution_start`, `agent_settled`
+    /// carries the run's last words, and a run that stopped on an error is
+    /// a failed turn.
     @Test func pi() {
         let run = play(.pi, [
             ("session_start", [:]),
             ("agent_start", [:]),
-            ("ui_prompt_start", ["kind": "confirm", "title": "Delete build/?"]),
-            ("ui_prompt_end", [:]),
-            ("tool_execution_end", [:]),
-            ("ui_prompt_start", ["kind": "select", "title": "Which branch?"]),
-            ("ui_prompt_end", [:]),
-            ("agent_settled", [:]),
-            ("session_shutdown", [:]),
+            ("message_start", ["prompt": "Clean the build folder"]),
+            ("tool_execution_end", ["tool_name": "bash", "tool_input": ["command": "ls build"]]),
+            ("ui_prompt_start", ["kind": "confirm", "title": "Delete build/?", "reason": "ui_prompt"]),
+            ("ui_prompt_end", ["kind": "confirm", "title": "Delete build/?", "reason": "ui_prompt"]),
+            ("tool_execution_end", ["tool_name": "bash"]),
+            ("ui_prompt_start", ["kind": "select", "title": "Which branch?", "reason": "ui_prompt"]),
+            ("ui_prompt_end", ["kind": "select", "title": "Which branch?", "reason": "ui_prompt"]),
+            ("agent_settled", ["last_assistant_message": "Removed build/."]),
+            ("agent_start", [:]),
+            ("agent_settled", ["error": "429 rate limited"]),
+            ("session_shutdown", ["reason": "quit"]),
         ])
         #expect(run.states == [
-            "idle", "working", "blocked:permission", "working", "working",
-            "blocked:question", "working", "turn", "ended",
+            "idle", "working", "working", "working", "blocked:permission", "working", "working",
+            "blocked:question", "working", "turn", "working", "turn", "ended",
         ])
-    }
-
-    @Test func gemini() {
-        let run = play(.gemini, [
-            ("SessionStart", [:]),
-            ("BeforeAgent", [:]),
-            ("Notification", ["notification_type": "ToolPermission", "message": "Run npm test"]),
-            ("AfterAgent", [:]),
-            ("BeforeAgent", [:]),
-            ("SessionEnd", [:]),
-        ])
-        #expect(run.states == ["idle", "working", "blocked:permission", "turn", "working", "ended"])
+        let session = run.book.sessions["pi|s1"]
+        #expect(session?.title == "Clean the build folder")
+        #expect(session?.steps.first == SessionBook.Step(tool: "bash", target: "ls build", ms: t0 + 3 * minute))
+        #expect(session?.lastError == "429 rate limited")
+        let ask = HookFeed.write(.pi, "ui_prompt_start", ["kind": "confirm", "title": "Delete build/?", "reason": "ui_prompt"], at: t0).lines.first?.message
+        #expect(ask == "Delete build/?", "the title, never the reason")
     }
 
     @Test func copilot() {
@@ -210,7 +217,6 @@ struct SessionBookTests {
         let cases: [(AgentID, String, [String: Any], String, String)] = [
             (.claude, "PostToolUse", ["tool_name": "Bash", "tool_input": ["command": "swift test"]], "Bash", "swift test"),
             (.codex, "PostToolUse", ["tool_name": "shell", "tool_input": ["command": "cargo build"]], "shell", "cargo build"),
-            (.gemini, "AfterTool", ["tool_name": "read_file", "tool_input": ["file_path": "/w/a.ts"]], "read_file", "/w/a.ts"),
             (.copilot, "postToolUse", ["toolName": "bash", "toolArgs": #"{"command":"npm test"}"#], "bash", "npm test"),
             (.pi, "tool_execution_end", ["tool_name": "edit", "tool_input": ["path": "src/x.ts"]], "edit", "src/x.ts"),
         ]
@@ -227,7 +233,7 @@ struct SessionBookTests {
             let steps = book.sessions["\(agent.rawValue)|s1"]?.steps ?? []
             #expect(steps.isEmpty, "\(agent.rawValue)")
         }
-        let prompts: [(AgentID, String)] = [(.claude, "UserPromptSubmit"), (.codex, "UserPromptSubmit"), (.gemini, "BeforeAgent"), (.copilot, "userPromptSubmitted")]
+        let prompts: [(AgentID, String)] = [(.claude, "UserPromptSubmit"), (.codex, "UserPromptSubmit"), (.copilot, "userPromptSubmitted"), (.pi, "message_start")]
         for (agent, event) in prompts {
             var book = SessionBook()
             for line in HookFeed.write(agent, event, ["prompt": "Fix the flaky login test"], at: t0).lines { book.apply(line, nowMs: t0) }
@@ -238,30 +244,19 @@ struct SessionBookTests {
 
     // MARK: - Answers, denials and held turns (realistic spacing)
 
-    /// Gemini asks, the tool runs (AfterTool): the answer is the tool.
-    @Test func geminiAnsweredByItsTool() {
-        let run = playAt(.gemini, [
-            (0, "BeforeAgent", [:]),
-            (4 * second, "Notification", ["notification_type": "ToolPermission", "message": "Allow run_shell_command?"]),
-            (7 * second, "AfterTool", ["tool_name": "run_shell_command"]),
-            (12 * second, "AfterAgent", [:]),
-        ])
-        #expect(run.states == ["working", "blocked:permission", "working", "turn"])
-    }
-
-    /// Gemini asks, the person denies: no tool runs, the turn ends 3 s
+    /// Copilot asks, the person denies: no tool runs, the turn ends 3 s
     /// later — inside the grace. The turn is held, never dropped: the lamp
     /// goes out when the grace ends.
-    @Test func geminiDeniedTurnLandsAfterTheGrace() {
-        let run = playAt(.gemini, [
-            (0, "BeforeAgent", [:]),
-            (4 * second, "Notification", ["notification_type": "ToolPermission", "message": "Allow run_shell_command?"]),
-            (7 * second, "AfterAgent", [:]),
+    @Test func copilotDeniedTurnLandsAfterTheGrace() {
+        let run = playAt(.copilot, [
+            (0, "userPromptSubmitted", [:]),
+            (4 * second, "notification", ["notification_type": "permission_prompt", "message": "Allow bash?"]),
+            (7 * second, "agentStop", [:]),
             (15 * second, "tick", [:]),
             (25 * second, "tick", [:]),
         ])
         #expect(run.states == ["working", "blocked:permission", "blocked:permission", "blocked:permission", "turn"])
-        guard case .yourTurn(let since) = run.book.sessions["gemini|s1"]?.state else {
+        guard case .yourTurn(let since) = run.book.sessions["copilot|s1"]?.state else {
             Issue.record("not your turn")
             return
         }
@@ -421,12 +416,12 @@ struct SessionBookTests {
 
     @Test func anEmptyDoneClearsOnlyTheSessionlessEntries() {
         var book = SessionBook()
-        book.apply(AttentionRecord(agent: "gemini", kind: "permission", ms: t0, session: "", cwd: "/w/a"), nowMs: t0)
-        book.apply(AttentionRecord(agent: "gemini", kind: "permission", ms: t0, session: "g1", cwd: "/w/a"), nowMs: t0)
-        book.apply(AttentionRecord(agent: "gemini", kind: "done", ms: t0 + 1_000, session: ""), nowMs: t0 + 1_000)
-        let folder = RowIdentity.session(agent: .gemini, session: "", cwd: "/w/a")
+        book.apply(AttentionRecord(agent: "copilot", kind: "permission", ms: t0, session: "", cwd: "/w/a"), nowMs: t0)
+        book.apply(AttentionRecord(agent: "copilot", kind: "permission", ms: t0, session: "g1", cwd: "/w/a"), nowMs: t0)
+        book.apply(AttentionRecord(agent: "copilot", kind: "done", ms: t0 + 1_000, session: ""), nowMs: t0 + 1_000)
+        let folder = RowIdentity.session(agent: .copilot, session: "", cwd: "/w/a")
         #expect(HookFeed.word(book.sessions[folder]?.state) == "working")
-        #expect(HookFeed.word(book.sessions["gemini|g1"]?.state) == "blocked:permission", "a session with an id is never cleared by an empty done")
+        #expect(HookFeed.word(book.sessions["copilot|g1"]?.state) == "blocked:permission", "a session with an id is never cleared by an empty done")
     }
 
     @Test func aDoneAfterATurnMeansItWasSeen() {
@@ -827,10 +822,10 @@ struct TrayStateTests {
     }
 
     @Test func aSessionWithNoPidClaimsTheProcessInItsFolder() {
-        let b = book([AttentionRecord(agent: "gemini", kind: "working", ms: t0, session: "g1", cwd: "/w/app")])
-        let same = AgentProcesses.Hit(agent: .gemini, pid: 20, cwd: "/w/app")
-        let other = AgentProcesses.Hit(agent: .gemini, pid: 21, cwd: "/w/other")
-        #expect(rows(b, processes: [same, other]).map(\.rowKey).sorted() == ["gemini|g1", "gemini|pid:21"])
+        let b = book([AttentionRecord(agent: "copilot", kind: "working", ms: t0, session: "g1", cwd: "/w/app")])
+        let same = AgentProcesses.Hit(agent: .copilot, pid: 20, cwd: "/w/app")
+        let other = AgentProcesses.Hit(agent: .copilot, pid: 21, cwd: "/w/other")
+        #expect(rows(b, processes: [same, other]).map(\.rowKey).sorted() == ["copilot|g1", "copilot|pid:21"])
     }
 
     @Test func anEndedSessionClaimsNothing() {
@@ -980,7 +975,6 @@ struct TrayStateTests {
     @Test func aLongTurnIsNotAStallForAnAgentWithoutToolEvents() throws {
         #expect(AgentID.claude.reportsToolActivity)
         #expect(AgentID.codex.reportsToolActivity)
-        #expect(AgentID.gemini.reportsToolActivity)
         #expect(AgentID.copilot.reportsToolActivity)
         #expect(AgentID.pi.reportsToolActivity)
         #expect(!AgentID.cursor.reportsToolActivity)
@@ -1171,7 +1165,7 @@ final class AgentRowTests: XCTestCase {
         for junk in [
             "-", "—", "Running", "running", "Active", "none", "Agent session", "Chat",
             "New Session", "Untitled", "  Untitled  ", "New Chat", "new chat",
-            "COPILOT SESSION", "Cursor session", "OpenCode session", "Gemini session", "Pi session",
+            "COPILOT SESSION", "Cursor session", "OpenCode session", "Pi session",
         ] {
             XCTAssertNil(row { $0.task = junk }.usefulTask, "\(junk) is not a real session title")
         }

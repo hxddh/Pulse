@@ -6,6 +6,30 @@ The targets, the data flow and the invariants are in
 [`vendor-formats.md`](vendor-formats.md). This page keeps only what those do
 not say.
 
+## The kernel and the adapters
+
+`PulseKit` is everything that can be said without a screen: the agent
+adapters, the protocol and the event log, the hook receiver and the
+installer, the process table, the session book, the tray projection, every
+surface model and the copy. It imports Foundation (and Darwin, CryptoKit,
+CoreGraphics for the cadence) and nothing that draws, notifies or registers
+with the system; `surface_check.py` fails an import of SwiftUI, AppKit,
+UserNotifications or ServiceManagement there. Its members are `package`: the
+app, the QA driver and the tests are its only clients. `PulseApp` keeps
+what needs AppKit or the main actor — the engine, the store, the notifier,
+terminal focus, the status item, the views, the login item and the
+frontmost-app question (`PromptVisibility.promptIsFrontmost`, which the
+`--hook` path passes to the receiver without starting NSApplication).
+
+An agent is one file in `PulseKit/Agents/`: an `AgentSpec` (identity,
+process rule, waiting source, `HookContract` — path, format, each event
+with its action — and a `read` for the events whose meaning is in the
+payload). `AgentSpec.reading(_:payload:)` is the whole dispatch: an event
+not in the contract writes nothing, otherwise `read` decides or the event's
+own action stands. The installer has one writer per `HookFormat`
+(`nested`, `versioned`, `ownedJSON`, `module`), parameterized by the
+format's flavor — never by the agent.
+
 ## Who owns what
 
 - **`ScanEngine`** (`@MainActor`, not observed): the `SessionBook`, the
@@ -89,7 +113,11 @@ are never enumerated at scan time.
 ## Version identity
 
 `PulseVersion.semver` is the truth; `package.sh` stamps the git sha, the
-build date and the distribution channel into `Info.plist`.
+build date and the distribution channel into `Info.plist`, and the bundle
+identifier from `PulseVersion.bundleID` (`io.github.hxddh.pulse`;
+`package_check.py` holds the built app to it). Every other reverse-DNS name
+— the queues, the reopen notification — derives from it. Nothing is carried
+over from an earlier identifier.
 
 | `PulseVersion.channel` | When | About shows |
 | --- | --- | --- |

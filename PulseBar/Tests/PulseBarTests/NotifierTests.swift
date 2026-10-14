@@ -4,8 +4,7 @@ import Testing
 import XCTest
 @testable import PulseApp
 @testable import PulseQA
-@testable import PulseCore
-@testable import PulseHarvest
+@testable import PulseKit
 
 // Notifier: the in-memory wait ledger, banner planning, copy, routing and
 // reveals.

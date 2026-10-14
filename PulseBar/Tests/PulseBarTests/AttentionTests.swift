@@ -2,8 +2,7 @@ import Foundation
 import Testing
 import XCTest
 @testable import PulseApp
-@testable import PulseCore
-@testable import PulseHarvest
+@testable import PulseKit
 
 // Attention: the protocol read into the session book, the hook receiver,
 // the event log, the hooks installer.
@@ -75,12 +74,12 @@ final class AttentionBookTests: XCTestCase {
     /// wait in another folder red.
     func testASessionlessDoneWithAFolderClearsOnlyThatFolder() {
         let b = book(tsv([
-            ["gemini", "permission", "\(now - 5000)", "a", "", "/r"],
-            ["gemini", "permission", "\(now - 4000)", "b", "", "/q"],
-            ["gemini", "done", "\(now - 1000)", "", "", "/r"],
+            ["copilot", "permission", "\(now - 5000)", "a", "", "/r"],
+            ["copilot", "permission", "\(now - 4000)", "b", "", "/q"],
+            ["copilot", "done", "\(now - 1000)", "", "", "/r"],
         ]))
-        XCTAssertEqual(state(b, RowIdentity.session(agent: .gemini, session: "", cwd: "/r")), "working")
-        XCTAssertEqual(state(b, RowIdentity.session(agent: .gemini, session: "", cwd: "/q")), "blocked:permission")
+        XCTAssertEqual(state(b, RowIdentity.session(agent: .copilot, session: "", cwd: "/r")), "working")
+        XCTAssertEqual(state(b, RowIdentity.session(agent: .copilot, session: "", cwd: "/q")), "blocked:permission")
     }
 
     /// The steps: the last five tool lines that name a tool, oldest first,
@@ -166,16 +165,16 @@ final class AttentionBookTests: XCTestCase {
 
     func testUnknownKindNeverRaisesWaiting() {
         XCTAssertTrue(book(tsv([["claude", "subagent_start", "\(now)", "", "s1", "/p"]])).sessions.isEmpty)
-        let b = book(tsv([["gemini", "totally_fake_kind", "\(now)", "nope", "s1", "/p"]]))
+        let b = book(tsv([["copilot", "totally_fake_kind", "\(now)", "nope", "s1", "/p"]]))
         XCTAssertTrue(b.sessions.isEmpty, "free-text kinds must never light Waiting")
     }
 
     func testProtocolHeaderIsIgnoredAsComment() {
         let b = book(AttentionProtocol.header(generation: "g1") + tsv([
-            ["gemini", "waiting", "\(now - 1000)", "Need choice", "j1", "/w"],
+            ["copilot", "waiting", "\(now - 1000)", "Need choice", "j1", "/w"],
         ]))
-        XCTAssertEqual(Array(b.sessions.keys), ["gemini|j1"])
-        XCTAssertEqual(state(b, "gemini|j1"), "blocked:waiting")
+        XCTAssertEqual(Array(b.sessions.keys), ["copilot|j1"])
+        XCTAssertEqual(state(b, "copilot|j1"), "blocked:waiting")
     }
 
     func testCommentsAndShortRowsAreSkipped() {
@@ -363,7 +362,7 @@ final class PulseHookReceiverTests: XCTestCase {
         let plan = try XCTUnwrap(records().first { $0.session == "c3" })
         XCTAssertEqual(plan.kind, "permission")
         XCTAssertEqual(plan.message, "Move the cache to Redis")
-        XCTAssertEqual(PulseHookReceiver.planSummary("\n## Move the cache\n- step"), "Move the cache")
+        XCTAssertEqual(Claude.planSummary("\n## Move the cache\n- step"), "Move the cache")
     }
 
     func testClaudeNotificationTypesMapByMeaning() {
@@ -453,19 +452,6 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(records().last?.message, "Done.")
     }
 
-    // MARK: - Gemini CLI (docs/hooks/reference.md)
-
-    func testGeminiToolPermissionNotificationIsABlock() throws {
-        deliver("gemini", "BeforeAgent", #"{"session_id":"g1","transcript_path":"/Users/me/.gemini/tmp/h/chats/g1.json","cwd":"/w","hook_event_name":"BeforeAgent","timestamp":"2026-09-29T10:00:00Z","prompt":"Fix it"}"#)
-        deliver("gemini", "Notification", #"{"session_id":"g1","transcript_path":"/Users/me/.gemini/tmp/h/chats/g1.json","cwd":"/w","hook_event_name":"Notification","timestamp":"2026-09-29T10:00:05Z","notification_type":"ToolPermission","message":"Allow run_shell_command: npm test?","details":{"tool_name":"run_shell_command"}}"#)
-        deliver("gemini", "AfterAgent", #"{"session_id":"g1","cwd":"/w","hook_event_name":"AfterAgent","prompt":"Fix it","prompt_response":"Fixed.","stop_hook_active":false}"#)
-        XCTAssertEqual(kinds(), ["working", "permission", "turn"])
-        let block = try XCTUnwrap(records().first { $0.kind == "permission" })
-        XCTAssertEqual(block.message, "Allow run_shell_command: npm test?")
-        XCTAssertEqual(records().first?.message, "Fix it", "BeforeAgent's prompt")
-        XCTAssertEqual(records().last?.message, "Fixed.", "AfterAgent's prompt_response")
-    }
-
     // MARK: - Copilot CLI (github/docs hooks-reference.md)
 
     func testCopilotNotificationsAndStop() {
@@ -536,6 +522,7 @@ final class PulseHookReceiverTests: XCTestCase {
         deliver("cursor", "afterShellExecution", #"{"conversation_id":"cu2","command":"ls"}"#)
         deliver("cursor", "afterFileEdit", #"{"conversation_id":"cu2","file_path":"/w/a"}"#)
         deliver("pi", "tool_execution_start", #"{"session_id":"p2","cwd":"/w"}"#)
+        deliver("pi", "agent_end", #"{"session_id":"p2","cwd":"/w"}"#)
         deliver("pi", "turn_end", #"{"session_id":"p2","cwd":"/w"}"#)
         deliver("claude", "PreToolUse", #"{"session_id":"c2","cwd":"/w","tool_name":"Bash"}"#)
         XCTAssertTrue(records().isEmpty, "\(records().map(\.kind))")
@@ -552,7 +539,7 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(line.message, "", "not the literal ui_prompt")
         XCTAssertEqual(PulseHookReceiver.genericMessage(from: ["reason": "ui_prompt"], blocked: true), "")
         XCTAssertEqual(PulseHookReceiver.genericMessage(from: ["reason": "rate_limit"]), "rate_limit", "a turn may still say why it ended")
-        let module = HookModules.piExtension(launcher: "/x/pulse-hook", events: ["ui_prompt_start", "session_shutdown"])
+        let module = Pi.module(launcher: "/x/pulse-hook", events: ["ui_prompt_start", "session_shutdown"])
         XCTAssertTrue(module.contains(#"if (name === "session_shutdown" && event && typeof event.reason === "string") payload.reason = event.reason"#))
     }
 
@@ -566,16 +553,45 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(records()[1].message, "Allow rm -rf build?")
     }
 
-    /// The Pi extension forwards the tool's name and one short argument.
+    /// The Pi extension forwards the tool's name and one short argument —
+    /// kept from `tool_execution_start` by the call's id, since
+    /// `tool_execution_end` carries no arguments in the current API.
     func testPiToolEventsNameTheirStep() throws {
         deliver("pi", "tool_execution_end", #"{"session_id":"p3","cwd":"/w","tool_name":"bash","tool_input":{"command":"ls -la"}}"#)
         let line = try XCTUnwrap(records().first)
         XCTAssertEqual(line.kind, "tool")
         XCTAssertEqual(line.tool, "bash")
         XCTAssertEqual(line.message, "ls -la")
-        let module = HookModules.piExtension(launcher: "/x/pulse-hook", events: ["tool_execution_end"])
-        XCTAssertTrue(module.contains("Object.assign(payload, toolSummary(event))"))
-        XCTAssertTrue(module.contains("out.tool_input = { [key]: args[key].slice(0, 2000) }"))
+        let module = Pi.module(launcher: "/x/pulse-hook", events: ["tool_execution_end"])
+        XCTAssertTrue(module.contains(#"pi.on("tool_execution_start", (event) => {"#))
+        XCTAssertTrue(module.contains("ARGS.set(event.toolCallId, input)"))
+        XCTAssertTrue(module.contains("const input = ARGS.get(event.toolCallId)"))
+        XCTAssertTrue(module.contains("return { [key]: args[key].slice(0, 2000) }"))
+        XCTAssertFalse(module.contains("event.args || event.input"), "the end event has no args any more")
+    }
+
+    /// The person's own message is the prompt (the title); the run's last
+    /// assistant words ride on `agent_settled`, and a run that stopped on an
+    /// error ends a failed turn with Pi's `errorMessage`.
+    func testPiPromptLastWordsAndErrorComeFromTheCurrentEvents() throws {
+        deliver("pi", "agent_start", #"{"session_id":"p4","cwd":"/w"}"#)
+        deliver("pi", "message_start", #"{"session_id":"p4","cwd":"/w","prompt":"Review this repository"}"#)
+        deliver("pi", "agent_settled", #"{"session_id":"p4","cwd":"/w","last_assistant_message":"The build is green."}"#)
+        deliver("pi", "agent_settled", #"{"session_id":"p4","cwd":"/w","error":"429 rate limited"}"#)
+        let lines = records()
+        XCTAssertEqual(lines.map(\.kind), ["working", "working", "turn", "turn"])
+        XCTAssertEqual(lines[1].message, "Review this repository")
+        XCTAssertEqual(lines[2].message, "The build is green.")
+        XCTAssertEqual(lines[2].tool, "")
+        XCTAssertEqual(lines[3].tool, AttentionRecord.errorTool)
+        XCTAssertEqual(lines[3].message, "429 rate limited")
+        let module = Pi.module(launcher: "/x/pulse-hook", events: ["message_start", "agent_settled"])
+        XCTAssertTrue(module.contains(#"if (name === "message_start" && !(event && event.message && event.message.role === "user")) return"#))
+        XCTAssertTrue(module.contains(#"pi.on("agent_end", (event) => {"#))
+        XCTAssertTrue(module.contains(#"if (m.stopReason === "error""#))
+        XCTAssertTrue(module.contains(#"if (name === "agent_settled") Object.assign(payload, lastRun)"#))
+        XCTAssertTrue(module.contains(#"(name === "session_start" || name === "session_shutdown") && event && event.reason === "reload""#))
+        XCTAssertFalse(module.contains("usage"), "tokens and cost are never read")
     }
 
     // MARK: - Payloads that do not parse, and credentials at the cut
@@ -588,7 +604,6 @@ final class PulseHookReceiverTests: XCTestCase {
         let cut = String(whole.prefix(60))
         deliver("claude", "PermissionRequest", cut)
         deliver("claude", "", cut)
-        deliver("gemini", "Notification", cut)
         deliver("copilot", "notification", cut)
         PulseHookReceiver.run(
             arguments: ["PulseBar", "--hook", "opencode", "permission.asked", #"{"sessionID":"o1","directory":"/w","permis"#],
@@ -599,7 +614,7 @@ final class PulseHookReceiverTests: XCTestCase {
         // Plain text on stdin writes nothing, whatever the event says.
         deliver("claude", "Stop", "all done")
         deliver("cursor", "stop", "all done")
-        deliver("gemini", "permission", "Approve the deploy?")
+        deliver("copilot", "notification", "Approve the deploy?")
         XCTAssertTrue(records().isEmpty)
         XCTAssertNil(PulseHookReceiver.parsePayload(stdin: "Approve the deploy?", trailingArg: nil))
         XCTAssertEqual(PulseHookReceiver.parsePayload(stdin: "", trailingArg: nil)?.isEmpty, true, "no payload is an empty one")
@@ -638,7 +653,7 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(deliver("claude", "made_up_vendor_event", #"{"message":"x","session_id":"x"}"#), 0)
         for word in AttentionKind.allCases.map(\.rawValue) {
             XCTAssertEqual(deliver("claude", word, #"{"message":"x","session_id":"x"}"#), 0)
-            XCTAssertEqual(deliver("gemini", word, #"{"message":"x","session_id":"x"}"#), 0)
+            XCTAssertEqual(deliver("copilot", word, #"{"message":"x","session_id":"x"}"#), 0)
         }
         XCTAssertEqual(deliver("goose", "permission", #"{"message":"x","session_id":"x"}"#), 0, "not a supported agent")
         XCTAssertEqual(deliver("claude", "", #"{"message":"says nothing about what it is","session_id":"x"}"#), 0)
@@ -652,7 +667,7 @@ final class PulseHookReceiverTests: XCTestCase {
             ["pulse-hook", "--hook", "pi", "agent_settled", #"{"session_id":"p1"}"#]
         ))
         XCTAssertFalse(PulseHookReceiver.payloadInArguments(["pulse-hook", "--hook", "claude"]))
-        XCTAssertFalse(PulseHookReceiver.payloadInArguments(["pulse-hook", "--hook", "gemini", "Notification"]))
+        XCTAssertFalse(PulseHookReceiver.payloadInArguments(["pulse-hook", "--hook", "copilot", "notification"]))
     }
 
     /// The OpenCode plugin and the Pi extension pass their payload as
@@ -671,8 +686,8 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(record?.cwd, "/w")
         XCTAssertEqual(record?.message, "bash: npm test")
         let modules = [
-            HookModules.openCodePlugin(launcher: "/x/pulse-hook", events: ["session.idle"]),
-            HookModules.piExtension(launcher: "/x/pulse-hook", events: ["agent_settled"]),
+            OpenCode.plugin(launcher: "/x/pulse-hook", events: ["session.idle"]),
+            Pi.module(launcher: "/x/pulse-hook", events: ["agent_settled"]),
         ]
         for module in modules {
             XCTAssertTrue(module.contains("event, JSON.stringify(payload)]"), module)
@@ -807,9 +822,9 @@ final class HookLandingTests: XCTestCase {
             HookLanding.agentPID(agent: .claude, start: 300, parentOf: { parents[$0] }, argumentsOf: { argv[$0] }),
             200
         )
-        let node: [Int32: String] = [300: "sh -c hook", 200: "node /opt/homebrew/bin/gemini", 100: "zsh"]
+        let node: [Int32: String] = [300: "sh -c hook", 200: "node /opt/homebrew/bin/copilot", 100: "zsh"]
         XCTAssertEqual(
-            HookLanding.agentPID(agent: .gemini, start: 300, parentOf: { parents[$0] }, argumentsOf: { node[$0] }),
+            HookLanding.agentPID(agent: .copilot, start: 300, parentOf: { parents[$0] }, argumentsOf: { node[$0] }),
             200
         )
         XCTAssertEqual(
@@ -823,9 +838,9 @@ final class HookLandingTests: XCTestCase {
         var bytes: [UInt8] = [2, 0, 0, 0]
         bytes += Array("/usr/local/bin/node".utf8) + [0, 0, 0]
         bytes += Array("node".utf8) + [0]
-        bytes += Array("/opt/homebrew/bin/gemini".utf8) + [0]
+        bytes += Array("/opt/homebrew/bin/copilot".utf8) + [0]
         bytes += Array("SECRET=env".utf8) + [0]
-        XCTAssertEqual(AgentProcesses.parseProcArgv(bytes), ["node", "/opt/homebrew/bin/gemini"], "argc bounds the read: no environment")
+        XCTAssertEqual(AgentProcesses.parseProcArgv(bytes), ["node", "/opt/homebrew/bin/copilot"], "argc bounds the read: no environment")
         XCTAssertNil(AgentProcesses.parseProcArgv([0, 0]))
     }
 }
@@ -878,7 +893,7 @@ final class HooksInstallerTests: XCTestCase {
 
     /// A Mac with every vendor present, some with configs of their own.
     private func seedVendors() throws {
-        for spec in AgentCatalog.all {
+        for spec in Agents.all {
             try FileManager.default.createDirectory(
                 at: tempHome.appendingPathComponent(spec.hooks.home), withIntermediateDirectories: true
             )
@@ -890,7 +905,7 @@ final class HooksInstallerTests: XCTestCase {
         }
         """)
         try write(".codex/config.toml", "model = \"gpt-5\"\n\n[profiles.fast]\nmodel = \"o4-mini\"\n")
-        try write(".gemini/settings.json", "{\"theme\":\"Dracula\",\"hooks\":{\"AfterTool\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"lint.sh\"}]}]}}")
+        try write(".codex/hooks.json", "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"notify.sh\"}]}]}}")
         try write(".cursor/hooks.json", "{\n  \"version\": 1,\n  \"hooks\": {\"afterFileEdit\": [{\"command\": \"./format.sh\"}]}\n}\n")
     }
 
@@ -972,7 +987,7 @@ final class HooksInstallerTests: XCTestCase {
         try FileManager.default.createDirectory(at: tempHome.appendingPathComponent(".claude"), withIntermediateDirectories: true)
         let report = try HooksInstaller.install()
         XCTAssertEqual(report.count, 1)
-        XCTAssertNil(read(".gemini/settings.json"))
+        XCTAssertNil(read(".codex/hooks.json"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: tempHome.appendingPathComponent(".copilot").path))
         XCTAssertEqual(HooksSupport.probeStatus(), .installed([.claude]))
     }
@@ -1025,7 +1040,7 @@ final class HooksInstallerTests: XCTestCase {
     /// never reaches Pulse (its idle is not the person's turn, and it is not
     /// a row); its asks block the parent's work and land on the parent.
     func testOpenCodeSubagentsFoldIntoTheirParent() {
-        let plugin = HookModules.openCodePlugin(
+        let plugin = OpenCode.plugin(
             launcher: "/x/pulse-hook", events: AgentID.opencode.spec.hooks.events.map(\.name)
         )
         XCTAssertTrue(plugin.contains("if (event.type === \"session.created\" && info.parentID && info.id) {"))
@@ -1079,21 +1094,21 @@ final class HooksInstallerTests: XCTestCase {
     /// failed and why, without a path.
     func testOneBrokenConfigDoesNotStopTheOtherAgents() throws {
         try seedVendors()
-        try write(".gemini/settings.json", "{ \"theme\": ")
+        try write(".codex/hooks.json", "{ \"theme\": ")
         let results = try HooksInstaller.install()
         XCTAssertEqual(results.count, AgentID.allCases.count)
-        XCTAssertEqual(results.filter { $0.failure != nil }.map(\.agent), [.gemini])
-        XCTAssertEqual(results.first { $0.agent == .gemini }?.failure, .invalidJSON)
-        for agent in AgentID.priority where agent != .gemini {
-            XCTAssertTrue(HooksSupport.isWired(agent), "\(agent.rawValue) is installed although Gemini failed first in line")
+        XCTAssertEqual(results.filter { $0.failure != nil }.map(\.agent), [.codex])
+        XCTAssertEqual(results.first { $0.agent == .codex }?.failure, .invalidJSON)
+        for agent in AgentID.priority where agent != .codex {
+            XCTAssertTrue(HooksSupport.isWired(agent), "\(agent.rawValue) is installed although Codex failed early in line")
         }
-        XCTAssertEqual(read(".gemini/settings.json"), "{ \"theme\": ")
+        XCTAssertEqual(read(".codex/hooks.json"), "{ \"theme\": ")
 
         let status = HooksSupport.status(after: results)
-        XCTAssertEqual(status.failures, [.gemini: .invalidJSON])
+        XCTAssertEqual(status.failures, [.codex: .invalidJSON])
         XCTAssertTrue(status.isInstalled(for: .claude))
         let label = status.label(lang: .zh)
-        XCTAssertTrue(label.contains("Gemini"), label)
+        XCTAssertTrue(label.contains("Codex"), label)
         XCTAssertTrue(label.contains(L10n.t(.hooksFailureInvalidJSON, .zh)), label)
         XCTAssertFalse(label.contains(tempHome.path) || label.contains(".json"), "no path in the UI: \(label)")
         XCTAssertFalse(label.contains("refusing"), "no English installer error in the zh UI: \(label)")
@@ -1250,8 +1265,8 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertEqual(read(".claude/settings.json"), jsonc)
         XCTAssertEqual(HooksSupport.Status.reason(.hasComments, lang: .en), L10n.t(.hooksFailureHasComments, .en))
         XCTAssertNotEqual(L10n.t(.hooksFailureHasComments, .zh), L10n.t(.hooksFailureHasComments, .en))
-        try write(".gemini/settings.json", #"{"hooks": {"AfterTool": {"command": "x"}}}"#)
-        let shape = try HooksInstaller.install(agents: [.gemini])
+        try write(".codex/hooks.json", #"{"hooks": {"Stop": {"command": "x"}}}"#)
+        let shape = try HooksInstaller.install(agents: [.codex])
         XCTAssertEqual(shape.map(\.failure), [.unexpectedShape])
         // A byte-order mark is no reason to refuse.
         try write(".cursor/hooks.json", "\u{FEFF}{\"version\": 1}\n")
@@ -1266,10 +1281,10 @@ final class HooksInstallerTests: XCTestCase {
     func testSettingsSaysEachAgentsHook() {
         let now: Int64 = 1_800_000_000_000
         let lines = SettingsModel.hookAgents(
-            installed: [.claude, .codex], present: [.claude, .codex, .cursor, .gemini],
+            installed: [.claude, .codex], present: [.claude, .codex, .cursor, .copilot],
             lastEventMs: [.claude: now - 12 * 60_000], nowMs: now, lang: .en
         )
-        XCTAssertEqual(lines.map(\.agent), [.claude, .codex, .cursor, .gemini])
+        XCTAssertEqual(lines.map(\.agent), [.claude, .codex, .cursor, .copilot])
         let claude = lines[0]
         XCTAssertTrue(claude.installed)
         XCTAssertEqual(claude.lastEvent, String(format: L10n.t(.settingsHookLastEvent, .en), L10n.duration(12 * 60, .en)))
@@ -1278,12 +1293,12 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertEqual(codex?.lastEvent, L10n.t(.settingsHookNoEvent, .en))
         XCTAssertEqual(codex?.note, L10n.t(.settingsHookNoWait, .en))
         XCTAssertEqual(lines.first { $0.agent == .cursor }?.note, L10n.t(.settingsHookNoWait, .en))
-        let gemini = lines.first { $0.agent == .gemini }
-        XCTAssertEqual(gemini?.state, L10n.t(.hooksMissing, .en))
-        XCTAssertEqual(gemini?.lastEvent, "")
-        XCTAssertEqual(gemini?.installed, false, "an agent here without its hook says so; Install all fixes it")
-        let absent = SettingsModel.absentAgents(installed: [.claude, .codex], present: [.claude, .codex, .cursor, .gemini])
-        XCTAssertEqual(absent, [.copilot, .opencode, .pi], "in roster order")
+        let copilot = lines.first { $0.agent == .copilot }
+        XCTAssertEqual(copilot?.state, L10n.t(.hooksMissing, .en))
+        XCTAssertEqual(copilot?.lastEvent, "")
+        XCTAssertEqual(copilot?.installed, false, "an agent here without its hook says so; Install all fixes it")
+        let absent = SettingsModel.absentAgents(installed: [.claude, .codex], present: [.claude, .codex, .cursor, .copilot])
+        XCTAssertEqual(absent, [.opencode, .pi], "in roster order")
         let line = SettingsModel.absentLine(absent, lang: .en)
         XCTAssertNotNil(line)
         for agent in absent { XCTAssertTrue(line?.contains(agent.displayName) == true, agent.rawValue) }
@@ -1294,9 +1309,9 @@ final class HooksInstallerTests: XCTestCase {
     func testAFailedInstallIsItsOwnLine() {
         let lines = SettingsModel.hookAgents(
             installed: [], present: [], lastEventMs: [:], nowMs: 0, lang: .en,
-            failed: [.gemini: .invalidJSON]
+            failed: [.opencode: .invalidJSON]
         )
-        XCTAssertEqual(lines.map(\.agent), [.gemini])
+        XCTAssertEqual(lines.map(\.agent), [.opencode])
         XCTAssertTrue(lines[0].failed)
         XCTAssertTrue(lines[0].state.contains(L10n.t(.hooksFailureInvalidJSON, .en)), lines[0].state)
     }
@@ -1451,9 +1466,9 @@ struct TurnTruthTests {
             expect: quiet
         ),
         Case(
-            name: "gemini · ToolPermission → red",
-            lines: [line("gemini", "permission", ago: 3 * second, message: "Allow run_shell_command?")],
-            agent: .gemini,
+            name: "copilot · permission_prompt → red",
+            lines: [line("copilot", "permission", ago: 3 * second, message: "Allow bash?")],
+            agent: .copilot,
             expect: Expect(waiting: true, yourTurn: false, red: true, banner: true, waitKind: "Permission")
         ),
         Case(
@@ -1890,8 +1905,8 @@ struct EventLogTests {
         lines.append(line("permission", base + 10_000, session: "b", message: "Bash: make", tool: "Bash"))
         for index in 0..<100 { lines.append(line("tool", base + 11_000 + Int64(index), session: "b", tool: "Read")) }
         // Two session-less folders of one agent.
-        lines.append(line("permission", base + 20_000, session: "", message: "Allow?", cwd: "/one", agent: "gemini"))
-        for index in 0..<100 { lines.append(line("start", base + 21_000 + Int64(index), session: "", cwd: "/two", agent: "gemini")) }
+        lines.append(line("permission", base + 20_000, session: "", message: "Allow?", cwd: "/one", agent: "copilot"))
+        for index in 0..<100 { lines.append(line("start", base + 21_000 + Int64(index), session: "", cwd: "/two", agent: "copilot")) }
         // A session nobody has heard from for two days.
         lines.append(line("turn", now - 2 * EventLog.retentionMs, session: "gone"))
 
@@ -1902,7 +1917,7 @@ struct EventLogTests {
         let b = records.filter { $0.session == "b" }
         #expect(b.first?.kind == "permission", "an open block is kept, with every line after it")
         #expect(b.count == 101)
-        let folder = records.contains { $0.agent == "gemini" && $0.cwd == "/one" }
+        let folder = records.contains { $0.agent == "copilot" && $0.cwd == "/one" }
         #expect(folder, "a session-less wait is not pushed out by another folder's lines")
         let gone = records.contains { $0.session == "gone" }
         #expect(!gone)
@@ -1915,7 +1930,7 @@ struct EventLogTests {
         #expect(openOne)
         // A dismissal's session-less `done` names its folder: it answers
         // that folder's block only, so another folder's open block stays.
-        let dismissed = lines + [line("done", base + 30_000, session: "", cwd: "/two", agent: "gemini")]
+        let dismissed = lines + [line("done", base + 30_000, session: "", cwd: "/two", agent: "copilot")]
         let afterDone = EventLog.compact(dismissed, nowMs: now, budget: 1_000).compactMap { AttentionRecord(line: $0) }
         let stillOpen = afterDone.contains { $0.cwd == "/one" && $0.kind == "permission" }
         #expect(stillOpen, "a done for /two is not an answer in /one")

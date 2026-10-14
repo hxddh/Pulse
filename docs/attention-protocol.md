@@ -10,10 +10,11 @@ installer.
 **Writers:** `pulse-hook <agent> <event>` (the app's native `--hook`), and
 the app's own `done` for a dismissal (`tool` = `:dismiss`). Nothing else
 writes it.
-**Swift source of truth:** `AttentionProtocol` / `AttentionRecord` (PulseCore),
-`EventLog` (PulseHarvest: append, read from a cursor, compact),
-`PulseHookReceiver` (the per-agent adapters), `HookContract` in
-`AgentCatalog.swift` (what is installed).
+**Swift source of truth** (all in `PulseKit`): `AttentionProtocol` /
+`AttentionRecord`, `EventLog` (append, read from a cursor, compact),
+`PulseHookReceiver` (reads through each agent's adapter), and the adapters
+in `Agents/` — one file per agent, whose `HookContract` is what is installed
+and what each event means.
 
 What is installed, how it is removed, and what each vendor event becomes:
 [`vendor-formats.md`](vendor-formats.md).
@@ -87,7 +88,7 @@ the trailing tabs are part of the record.
 
 | Column | Rules |
 | --- | --- |
-| `agent` | One of the seven `AgentID` raw values: `claude`, `codex`, `cursor`, `pi`, `gemini`, `copilot`, `opencode` (`cursor-agent` / `cursor_agent` read as `cursor`) |
+| `agent` | One of the six `AgentID` raw values: `claude`, `codex`, `cursor`, `pi`, `copilot`, `opencode` (`cursor-agent` / `cursor_agent` read as `cursor`) |
 | `kind` | One of the kinds below, spelled exactly as listed |
 | `unix_ms` | Integer milliseconds since epoch, stamped by the writer |
 | `message` | What is asked, the turn's last words (or its error, when `tool` is `error`), the prompt's text on a `working` line, or a tool line's target; tabs and every kind of line break (`\n`, `\r`, VT, FF, NEL, U+2028, U+2029) made spaces; ≤200 chars; credentials redacted from the whole value before it is shortened |

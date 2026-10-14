@@ -134,7 +134,7 @@ final class StatusStore {
         }
     }
 
-    /// Which agents are on this Mac: seven directory checks.
+    /// Which agents are on this Mac: six directory checks.
     func refreshPresentAgents() {
         land(\.presentAgents, Set(AgentID.priority.filter(HooksInstaller.vendorPresent)))
     }
@@ -361,7 +361,7 @@ final class StatusStore {
 
     /// File writes for `done` lines, one at a time, off the main thread:
     /// the event log is locked, and a click must not wait on it.
-    private static let doneWrites = DispatchQueue(label: "com.pulse.attention-done", qos: .userInitiated)
+    private static let doneWrites = DispatchQueue(label: PulseVersion.bundleID + ".attention-done", qos: .userInitiated)
 
     /// A `done` line: applied to the book at once (the row moves under the
     /// click), appended to the event log off the main thread. The watch
@@ -420,17 +420,4 @@ final class StatusStore {
             if !connected.isEmpty { self?.land(\.setupConnected, connected) }
         }
     }
-}
-
-/// Where Settings scrolls when a deep link opens it. The token moves on
-/// every deep link, so a second link to the same place still scrolls there.
-struct SettingsFocus: Equatable {
-    enum Target: Equatable {
-        /// The hooks: how an agent gets a "needs you" signal.
-        case waitingSignals
-        case notifications
-    }
-
-    var target: Target?
-    var token = 0
 }

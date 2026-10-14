@@ -4,8 +4,7 @@ import Testing
 import XCTest
 @testable import PulseApp
 @testable import PulseQA
-@testable import PulseCore
-@testable import PulseHarvest
+@testable import PulseKit
 
 // Tray: the row face, header, keys, order, lamp, detail page and copy.
 
@@ -314,7 +313,7 @@ struct TrayInteractionTests {
         let all = notice(authorized: false, banner: true, unconnected: [.claude])
         #expect(all?.kind == .setup, "connecting comes before notifications")
         #expect(all?.action == .connect)
-        let followUp = notice(authorized: false, unconnected: [.gemini], connected: [.claude])
+        let followUp = notice(authorized: false, unconnected: [.opencode], connected: [.claude])
         #expect(followUp?.kind == .setupDone)
         #expect(followUp?.action == .dismissSetup)
         let denied = notice(authorized: false, banner: true)
@@ -323,11 +322,11 @@ struct TrayInteractionTests {
         let notAsked = notice(authorized: nil)
         #expect(notAsked?.kind == .notificationsOff)
         #expect(notAsked?.action == .enableNotifications)
-        let failed = notice(authorized: false, failure: "Gemini: broken")
+        let failed = notice(authorized: false, failure: "OpenCode: broken")
         #expect(failed?.kind == .setupFailed, "a failed install comes before notifications")
         #expect(failed?.action == .openHooksSettings)
-        #expect(failed?.text == "Gemini: broken")
-        let unconnectedFirst = notice(unconnected: [.claude], failure: "Gemini: broken")
+        #expect(failed?.text == "OpenCode: broken")
+        let unconnectedFirst = notice(unconnected: [.claude], failure: "OpenCode: broken")
         #expect(unconnectedFirst?.kind == .setup, "agents that can still connect are offered first")
         let banner = notice(banner: true)
         #expect(banner?.kind == .bannerFailed)
@@ -1520,9 +1519,9 @@ struct WaitAnnouncementTests {
 
     @Test func onlyARisingBlockedCountIsAnnounced() {
         let old = waiting("claude|a", .claude, ask: "Bash: npm test", since: now - 600_000)
-        let new = waiting("gemini|b", .gemini, ask: "Edit: src/main.swift", since: now - 5_000)
+        let new = waiting("copilot|b", .copilot, ask: "Edit: src/main.swift", since: now - 5_000)
         let rose = WaitAnnouncement.text(previousBlocked: 1, rows: [old, new], lang: .en)
-        #expect(rose == "Gemini needs you: Edit: src/main.swift", "the newest wait, in its own words")
+        #expect(rose == "Copilot needs you: Edit: src/main.swift", "the newest wait, in its own words")
         let held = WaitAnnouncement.text(previousBlocked: 2, rows: [old, new], lang: .en)
         #expect(held == nil)
         let fell = WaitAnnouncement.text(previousBlocked: 2, rows: [old], lang: .en)

@@ -3,8 +3,7 @@ import Testing
 import XCTest
 @testable import PulseApp
 @testable import PulseQA
-@testable import PulseCore
-@testable import PulseHarvest
+@testable import PulseKit
 
 // Diagnostics: Settings → Hooks (one line per agent, "Copy report"), the
 // tray's one notice, the version.
@@ -20,8 +19,8 @@ struct ReportTests {
         SettingsModel.ReportInput(
             version: "Pulse 25.0.0 · preview",
             macOS: "26.0.0",
-            installed: [.claude, .gemini],
-            present: [.claude, .codex, .gemini],
+            installed: [.claude, .opencode],
+            present: [.claude, .codex, .opencode],
             failed: [.copilot: .unwritable],
             lastEventMs: [.claude: now - 42_000],
             nowMs: now,
@@ -36,7 +35,7 @@ struct ReportTests {
         #expect(text.hasPrefix("Pulse report"))
         #expect(text.contains("Pulse 25.0.0 · preview"))
         #expect(text.contains("  claude: installed, last event 42s ago"), "\(text)")
-        #expect(text.contains("  gemini: installed, no event yet"), "\(text)")
+        #expect(text.contains("  opencode: installed, no event yet"), "\(text)")
         #expect(text.contains("  codex: not installed"), "\(text)")
         #expect(text.contains("  copilot: install failed (unwritable)"), "\(text)")
         #expect(text.contains("  pi: not on this Mac"), "\(text)")
@@ -198,8 +197,8 @@ final class TrayNoticeTests: XCTestCase {
         store.presentAgents = []
         XCTAssertTrue(store.cachedAll.contains { $0.liveProcess })
         XCTAssertTrue(store.trayNoticeInput.unconnected.isEmpty, "running is not being on this Mac")
-        store.presentAgents = [.gemini]
-        XCTAssertEqual(store.trayNoticeInput.unconnected, [.gemini])
+        store.presentAgents = [.opencode]
+        XCTAssertEqual(store.trayNoticeInput.unconnected, [.opencode])
     }
 
     /// An agent whose install failed is never offered "Connect" again —
@@ -209,16 +208,16 @@ final class TrayNoticeTests: XCTestCase {
     func testAFailedInstallIsSaidNotOfferedAgain() {
         let store = StatusStore()
         store.notifyAuthorized = true
-        store.presentAgents = [.claude, .codex, .gemini]
-        store.hooksStatus = .installed([.claude], failed: [.gemini: .invalidJSON])
-        XCTAssertEqual(store.trayNoticeInput.unconnected, [.codex], "Gemini failed: not offered again")
+        store.presentAgents = [.claude, .codex, .opencode]
+        store.hooksStatus = .installed([.claude], failed: [.opencode: .invalidJSON])
+        XCTAssertEqual(store.trayNoticeInput.unconnected, [.codex], "OpenCode failed: not offered again")
         XCTAssertEqual(store.trayNotice?.kind, .setup)
-        store.hooksStatus = .installed([.claude, .codex], failed: [.gemini: .invalidJSON])
+        store.hooksStatus = .installed([.claude, .codex], failed: [.opencode: .invalidJSON])
         XCTAssertTrue(store.trayNoticeInput.unconnected.isEmpty)
         let card = store.trayNotice
         XCTAssertEqual(card?.kind, .setupFailed)
         XCTAssertEqual(card?.action, .openHooksSettings)
-        XCTAssertEqual(card?.text, HooksSupport.Status.failureText([.gemini: .invalidJSON], lang: store.lang))
+        XCTAssertEqual(card?.text, HooksSupport.Status.failureText([.opencode: .invalidJSON], lang: store.lang))
         store.settings.hooksNudgeOff = true
         XCTAssertNil(store.trayNotice, "hooks removed on purpose: nothing to say")
     }
@@ -291,7 +290,7 @@ final class PulseVersionTests: XCTestCase {
         XCTAssertFalse(HooksSupport.Status.installed([.claude]).isInstalled(for: .codex))
         XCTAssertFalse(HooksSupport.Status.missing.isInstalled(for: .claude))
         XCTAssertEqual(
-            HooksSupport.Status.installed([.claude, .gemini]).label(lang: .en),
+            HooksSupport.Status.installed([.claude, .opencode]).label(lang: .en),
             String(format: L10n.t(.hooksInstalledCount, .en), 2, AgentID.allCases.count)
         )
     }

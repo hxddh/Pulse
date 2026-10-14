@@ -40,13 +40,12 @@ Pulse **只做灯**：不在托盘里回答授权，不派活、不跑检查、�
 
 ## 支持的 Agent
 
-只支持七个。每个都走厂商自己文档里的 hook / 插件 / 扩展，**只装不能改变 Agent 决定的观察型事件**
+只支持六个。每个都走厂商自己文档里的 hook / 插件 / 扩展，**只装不能改变 Agent 决定的观察型事件**
 （从不装 PreToolUse 这类能拦截的 hook，也从不返回任何决定），移除时每个文件逐字节还原。
 
 | Agent | 上一步 | 会不会报告「需要你」 |
 | --- | --- | --- |
 | Claude Code | `PostToolUse` | 会（PermissionRequest、权限 / 提问通知） |
-| Gemini CLI | `AfterTool` | 会（`ToolPermission` 通知） |
 | Copilot CLI | `postToolUse` | 会（`permission_prompt` / `elicitation_dialog`） |
 | OpenCode | — | 会（插件：`permission.asked` / `question.asked`） |
 | Pi | `tool_execution_end` | 会（扩展：`ui_prompt_start`） |

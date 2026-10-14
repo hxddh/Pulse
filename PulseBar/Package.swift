@@ -20,34 +20,27 @@ let package = Package(
         .executable(name: "PulseQA", targets: ["PulseQA"]),
     ],
     targets: [
-        // The kernel. Foundation only — no AppKit, no SwiftUI, no store — so
-        // the compiler, not a review, keeps the catalog, bounded and
-        // link-safe IO, process supervision and the cadence free of UI and
-        // app state.
+        // The kernel. Foundation only — no AppKit, no SwiftUI, no
+        // UserNotifications, no store — so the compiler, not a review, keeps
+        // it free of UI and app state: the agent adapters (`Agents/`), the
+        // protocol and the event log, the hook receiver and installer, the
+        // process table (libproc), the session book and the tray projection,
+        // every surface model, the copy. Its members are `package`: the app,
+        // the QA driver and the tests are its only clients.
         .target(
-            name: "PulseCore",
-            path: "Sources/PulseCore",
+            name: "PulseKit",
+            path: "Sources/PulseKit",
             swiftSettings: strict
         ),
-        // The event sources: the one event log the hooks append to
-        // (`EventLog`), the process table (libproc), row identity and title
-        // heuristics. No vendor file is read. It sees the kernel, never the
-        // store or the UI.
-        .target(
-            name: "PulseHarvest",
-            dependencies: ["PulseCore"],
-            path: "Sources/PulseHarvest",
-            swiftSettings: strict
-        ),
-        // The app: the session book, the tray projection, the store, the
-        // notifier, the hook receiver and installer, every view. A library,
-        // so the shipping executable and the QA driver link the same code.
+        // The app: the engine (scan, watchers), the store, the notifier,
+        // terminal focus, the status item, every view. A library, so the
+        // shipping executable and the QA driver link the same code.
         // It owns the resources, found through `PulseResources` (it resolves
         // `PulseBar_PulseApp.bundle` without trapping; the generated accessor
         // is never used — `gates.sh` greps for it).
         .target(
             name: "PulseApp",
-            dependencies: ["PulseCore", "PulseHarvest"],
+            dependencies: ["PulseKit"],
             path: "Sources/PulseApp",
             resources: [
                 .copy("Resources/AgentIcons"),
@@ -63,12 +56,12 @@ let package = Package(
             swiftSettings: strict
         ),
         // The QA driver: surface fixtures, tray fixtures and captures. It
-        // reaches the app's internals through `@testable import PulseApp`,
-        // so it builds in the debug configuration only; release builds name
-        // `--product PulseBar`.
+        // reaches the app's internals through `@testable import PulseApp`
+        // (and `PulseKit`), so it builds in the debug configuration only;
+        // release builds name `--product PulseBar`.
         .executableTarget(
             name: "PulseQA",
-            dependencies: ["PulseApp", "PulseCore", "PulseHarvest"],
+            dependencies: ["PulseApp", "PulseKit"],
             path: "Sources/PulseQA",
             swiftSettings: strict
         ),
@@ -82,7 +75,7 @@ let package = Package(
         // `PulseQA` as a testable executable.
         .testTarget(
             name: "PulseBarTests",
-            dependencies: ["PulseApp", "PulseQA", "PulseCore", "PulseHarvest"],
+            dependencies: ["PulseApp", "PulseQA", "PulseKit"],
             path: "Tests/PulseBarTests"
         ),
     ]

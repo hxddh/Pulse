@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 @testable import PulseApp
+@testable import PulseKit
 
 /// Render every surface fixture to a PNG, then quit.
 ///
