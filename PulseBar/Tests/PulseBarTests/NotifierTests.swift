@@ -12,15 +12,15 @@ import XCTest
 /// The Waiting notification decision is a value. No store, no
 /// Notification Center, no ledger file: facts in, a plan out.
 final class WaitingDeliveryTests: XCTestCase {
-    private func waiting(_ key: String, agent: AgentID = .claude) -> AgentRow {
-        var row = AgentRow(rowKey: key, agent: agent)
-        row.state = .blocked(RowWait(kind: "Permission"))
+    private func waiting(_ key: SessionKey) -> AgentRow {
+        var row = AgentRow(key: key)
+        row.status = .needsYou(Block(kind: .permission))
         return row
     }
 
     private func planner(
-        acknowledged: Set<String> = [],
-        inFlight: Set<String> = [],
+        acknowledged: Set<SessionKey> = [],
+        inFlight: Set<SessionKey> = [],
         canDeliverNow: Bool = true,
         sinceLast: Int64 = 60_000
     ) -> WaitingDelivery {
@@ -34,12 +34,12 @@ final class WaitingDeliveryTests: XCTestCase {
     }
 
     func testOnlyUnignoredWaitingRowsNotInFlightQualify() {
-        var idle = AgentRow(rowKey: "idle", agent: .claude)
-        idle.state = .running
+        var idle = AgentRow(key: "idle")
+        idle.status = .running(stalled: false)
         let rows = [waiting("a"), waiting("ack"), waiting("flying"), idle]
         let plan = planner(acknowledged: ["ack"], inFlight: ["flying"]).plan(rows)
         guard case .post(let first, let later) = plan else { return XCTFail("\(plan)") }
-        XCTAssertEqual(([first] + later).map(\.rowKey), ["a"])
+        XCTAssertEqual(([first] + later).map(\.key), ["a"])
     }
 
     func testNothingQualifiesMeansNothing() {
@@ -50,7 +50,7 @@ final class WaitingDeliveryTests: XCTestCase {
     func testRateLimitHoldsAndRetriesWhenTheIntervalHasPassed() {
         let plan = planner(canDeliverNow: false, sinceLast: 4_000).plan([waiting("a")])
         guard case .hold(let held, let retry) = plan else { return XCTFail("\(plan)") }
-        XCTAssertEqual(held.map(\.rowKey), ["a"])
+        XCTAssertEqual(held.map(\.key), ["a"])
         XCTAssertEqual(retry, 6_000)
         // Never a busy loop, even when the clock says the interval is over.
         guard case .hold(_, let floor) = planner(canDeliverNow: false, sinceLast: 60_000).plan([waiting("a")])
@@ -63,8 +63,8 @@ final class WaitingDeliveryTests: XCTestCase {
     func testABurstIsOneBannerPerWaitOneAtATime() {
         let five = (1...5).map { waiting("k\($0)") }
         guard case .post(let first, let later) = planner().plan(five) else { return XCTFail() }
-        XCTAssertEqual(first.rowKey, "k1")
-        XCTAssertEqual(later.map(\.rowKey), ["k2", "k3", "k4", "k5"])
+        XCTAssertEqual(first.key, "k1")
+        XCTAssertEqual(later.map(\.key), ["k2", "k3", "k4", "k5"])
     }
 
     func testADuplicateRowKeyNeverTraps() {
@@ -82,26 +82,25 @@ struct WaitLedgerTests {
     let now: Int64 = 1_800_000_000_000
     let minute: Int64 = 60_000
 
-    private func running(_ key: String, _ agent: AgentID = .claude) -> AgentRow {
-        var row = AgentRow(rowKey: key, agent: agent)
-        row.sessionID = key
+    private func running(_ key: SessionKey) -> AgentRow {
+        var row = AgentRow(key: key)
+        row.session = key.description
         row.task = "Fix the login test"
         row.liveProcess = true
-        row.state = .running
-        row.lastEventMs = now - minute
+        row.status = .running(stalled: false)
         return row
     }
 
-    private func waiting(_ key: String, _ agent: AgentID = .claude, since: Int64? = nil, ask: String = "") -> AgentRow {
-        var row = running(key, agent)
-        row.state = .blocked(RowWait(kind: "Permission", ask: ask, sinceMs: since ?? now - minute))
+    private func waiting(_ key: SessionKey, since: Int64? = nil, ask: String = "") -> AgentRow {
+        var row = running(key)
+        row.status = .needsYou(Block(kind: .permission, ask: ask, sinceMs: since ?? now - minute))
         return row
     }
 
     /// The projection's edges against the waits it had before.
-    private func edges(_ rows: [AgentRow], previous: [String: Int64]) -> Set<String> {
+    private func edges(_ rows: [AgentRow], previous: [SessionKey: Int64]) -> Set<SessionKey> {
         let state = TrayState.assemble(rows: rows, context: TrayState.Context(nowMs: now, previousWaits: previous))
-        return Set(state.newlyBlocked.map(\.rowKey))
+        return Set(state.newlyBlocked.map(\.key))
     }
 
     @Test func aWaitThatResolvedLeavesTheQueue() {
@@ -116,12 +115,12 @@ struct WaitLedgerTests {
 
     @Test func owedBannersAreRebuiltFromThisScansRows() {
         let fresh = waiting("claude|a", ask: "Bash: npm test")
-        let rows = [fresh, running("codex|b", .codex), waiting("cursor|c", .cursor)]
+        let rows = [fresh, running("codex|b"), waiting("cursor|c")]
         let owed = WaitNotifier.queuedDeliveryRows(
             queued: ["claude|a", "codex|b", "gone|x"],
             rows: rows
         )
-        let keys = owed.map { $0.rowKey }
+        let keys = owed.map { $0.key }
         #expect(keys == ["claude|a"], "only a queued key waiting now, in a current row")
         #expect(owed.first?.wait?.ask == "Bash: npm test", "the current row, not a frozen copy")
     }
@@ -135,8 +134,7 @@ struct WaitLedgerTests {
         ledger.dismiss("claude|a")
         #expect(ledger.dismissedKeys == ["claude|a"])
 
-        var second = waiting("claude|a", since: now + minute)
-        second.activityMs = now + 50_000 // the next tool call began the second ask
+        let second = waiting("claude|a", since: now + minute)
         let edge = edges([second], previous: ["claude|a": now - minute])
         #expect(edge == ["claude|a"])
         ledger.reconcile(rows: [second], edges: edge)
@@ -152,7 +150,7 @@ struct WaitLedgerTests {
         ledger.reconcile(rows: [raise], edges: ["claude|a"])
         ledger.markNotified("claude|a", nowMs: now)
         let echo = waiting("claude|a", since: now - minute + 1_000)
-        #expect(!TrayState.isNewRaise(echo, previousSinceMs: now - minute))
+        #expect(!TrayState.isNewRaise(sinceMs: now - minute + 1_000, previousSinceMs: now - minute, activityMs: 0))
         let edge = edges([echo], previous: ["claude|a": now - minute])
         #expect(edge.isEmpty)
         ledger.reconcile(rows: [echo], edges: edge)
@@ -207,22 +205,22 @@ struct BannerWithdrawalTests {
     let now: Int64 = 1_800_000_000_000
     let minute: Int64 = 60_000
 
-    private func running(_ key: String) -> AgentRow {
-        var row = AgentRow(rowKey: key, agent: .claude)
-        row.state = .running
+    private func running(_ key: SessionKey) -> AgentRow {
+        var row = AgentRow(key: key)
+        row.status = .running(stalled: false)
         return row
     }
 
-    private func waiting(_ key: String, since: Int64? = nil, inFront: Bool = false) -> AgentRow {
-        var row = AgentRow(rowKey: key, agent: .claude)
-        row.state = .blocked(RowWait(kind: "Permission", ask: "Bash: make", sinceMs: since ?? now - minute, inFront: inFront))
+    private func waiting(_ key: SessionKey, since: Int64? = nil, inFront: Bool = false) -> AgentRow {
+        var row = AgentRow(key: key)
+        row.status = .needsYou(Block(kind: .permission, ask: "Bash: make", sinceMs: since ?? now - minute, inFront: inFront))
         return row
     }
 
     @Test func anAnsweredWaitWithdrawsItsBanner() {
         var ledger = WaitLedger()
         ledger.reconcile(rows: [waiting("claude|a")], edges: ["claude|a"], nowMs: now)
-        let id = WaitLedger.bannerID(rowKey: "claude|a")
+        let id = WaitLedger.bannerID("claude|a")
         let stale = ledger.markNotified("claude|a", nowMs: now, bannerID: id)
         #expect(stale.isEmpty, "the wait is open: its banner stays")
         let still = ledger.reconcile(rows: [waiting("claude|a")], edges: [], nowMs: now + 1_000)
@@ -234,18 +232,18 @@ struct BannerWithdrawalTests {
     @Test func aSessionThatEndedWithdrawsItsBanner() {
         var ledger = WaitLedger()
         ledger.reconcile(rows: [waiting("claude|a")], edges: ["claude|a"], nowMs: now)
-        ledger.markNotified("claude|a", nowMs: now, bannerID: WaitLedger.bannerID(rowKey: "claude|a"))
+        ledger.markNotified("claude|a", nowMs: now, bannerID: WaitLedger.bannerID("claude|a"))
         let gone = ledger.reconcile(rows: [], edges: [], nowMs: now + 1_000)
-        #expect(gone == [WaitLedger.bannerID(rowKey: "claude|a")])
+        #expect(gone == [WaitLedger.bannerID("claude|a")])
     }
 
     @Test func aDismissalWithdrawsItsBanner() {
         var ledger = WaitLedger()
         ledger.reconcile(rows: [waiting("claude|a")], edges: ["claude|a"], nowMs: now)
-        ledger.markNotified("claude|a", nowMs: now, bannerID: WaitLedger.bannerID(rowKey: "claude|a"))
+        ledger.markNotified("claude|a", nowMs: now, bannerID: WaitLedger.bannerID("claude|a"))
         let first = ledger.dismiss("claude|a")
         let second = ledger.dismiss("claude|a")
-        #expect(first == [WaitLedger.bannerID(rowKey: "claude|a")])
+        #expect(first == [WaitLedger.bannerID("claude|a")])
         #expect(second.isEmpty, "withdrawn once")
     }
 
@@ -255,7 +253,7 @@ struct BannerWithdrawalTests {
         var ledger = WaitLedger()
         ledger.reconcile(rows: [waiting("claude|a")], edges: ["claude|a"], nowMs: now)
         ledger.reconcile(rows: [running("claude|a")], edges: [], nowMs: now + 500)
-        let id = WaitLedger.bannerID(rowKey: "claude|a")
+        let id = WaitLedger.bannerID("claude|a")
         let stale = ledger.markNotified("claude|a", nowMs: now + 900, bannerID: id)
         #expect(stale == [id])
         #expect(ledger.lastNotificationMs == now + 900, "it was shown: the rate limit counts it")
@@ -264,13 +262,13 @@ struct BannerWithdrawalTests {
     @Test func aClickOnABannerWhoseWaitIsGoneOpensTheTray() {
         var ledger = WaitLedger()
         ledger.reconcile(rows: [waiting("claude|a"), waiting("codex|b")], edges: ["claude|a", "codex|b"], nowMs: now)
-        #expect(ledger.isOpen("claude|a"))
+        #expect(ledger.isOpen(rowKey: "claude|a"))
         ledger.dismiss("claude|a")
-        #expect(!ledger.isOpen("claude|a"), "ignored: the tray, not the prompt")
-        #expect(ledger.isOpen("codex|b"))
+        #expect(!ledger.isOpen(rowKey: "claude|a"), "ignored: the tray, not the prompt")
+        #expect(ledger.isOpen(rowKey: "codex|b"))
         ledger.reconcile(rows: [], edges: [], nowMs: now + 1_000)
-        #expect(!ledger.isOpen("codex|b"))
-        #expect(!ledger.isOpen(""))
+        #expect(!ledger.isOpen(rowKey: "codex|b"))
+        #expect(!ledger.isOpen(rowKey: ""))
     }
 
     @MainActor
@@ -279,7 +277,7 @@ struct BannerWithdrawalTests {
         store.installPreviewFixture("status-waiting")
         _ = store.takePendingReveal()
         store.notifier.handleBannerClick(agent: "claude", session: "gone", rowKey: "claude|gone")
-        #expect(store.pendingReveal?.rowKey == nil, "no stale routing: the tray opens on its own selection")
+        #expect(store.pendingReveal?.key == nil, "no stale routing: the tray opens on its own selection")
     }
 
     // MARK: - The deferred banner
@@ -291,11 +289,13 @@ struct BannerWithdrawalTests {
         let early = WaitingDelivery.deferred(rows: [row], ledger: ledger, nowMs: now + 29_000)
         #expect(early.isEmpty)
         let due = WaitingDelivery.deferred(rows: [row], ledger: ledger, nowMs: now + 30_000)
-        #expect(due.map(\.rowKey) == ["claude|a"])
+        let dueKeys = due.map { $0.key }
+        #expect(dueKeys == ["claude|a"])
         let notInFront = waiting("claude|b", since: now)
         ledger.reconcile(rows: [row, notInFront], edges: ["claude|b"], nowMs: now)
         let onlyFront = WaitingDelivery.deferred(rows: [row, notInFront], ledger: ledger, nowMs: now + 60_000)
-        #expect(onlyFront.map(\.rowKey) == ["claude|a"], "a wait not raised in front had its banner at once")
+        let frontKeys = onlyFront.map { $0.key }
+        #expect(frontKeys == ["claude|a"], "a wait not raised in front had its banner at once")
     }
 
     @Test func aDeferredBannerIsPostedOnce() {
@@ -314,9 +314,9 @@ struct BannerWithdrawalTests {
             Issue.record("\(plan)")
             return
         }
-        #expect(first.rowKey == "claude|a")
+        #expect(first.key == "claude|a")
         #expect(later.isEmpty)
-        ledger.markNotified("claude|a", nowMs: now + 40_000, bannerID: WaitLedger.bannerID(rowKey: "claude|a"))
+        ledger.markNotified("claude|a", nowMs: now + 40_000, bannerID: WaitLedger.bannerID("claude|a"))
         var answeredLedger = ledger
         answeredLedger.reconcile(rows: [running("claude|a")], edges: [], nowMs: now + 50_000)
         #expect(answeredLedger.waits.isEmpty)
@@ -366,9 +366,9 @@ final class NotificationCopyTests: XCTestCase {
     @MainActor
     func testBodyCarriesReasonAndMessageNotJustNeedsYou() {
         let store = StatusStore()
-        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
-        row.state = .blocked(RowWait(kind: "Permission", ask: "Approve shell command"))
-        row.project = "/Users/me/code/Pulse"
+        var row = AgentRow(key: "claude|s1")
+        row.status = .needsYou(Block(kind: .permission, ask: "Approve shell command"))
+        row.cwd = "/Users/me/code/Pulse"
 
         let body = store.notifier.notificationBody(row)
         XCTAssertTrue(body.contains("Approve shell command"))
@@ -379,38 +379,38 @@ final class NotificationCopyTests: XCTestCase {
     @MainActor
     func testLongMessagesAreTruncated() {
         let store = StatusStore()
-        var row = AgentRow(rowKey: "k", agent: .codex)
-        row.state = .blocked(RowWait(kind: "", ask: String(repeating: "x", count: 400)))
+        var row = AgentRow(key: "codex|k")
+        row.status = .needsYou(Block(kind: .waiting, ask: String(repeating: "x", count: 400)))
         XCTAssertLessThanOrEqual(store.notifier.notificationBody(row).count, 160)
     }
 
     @MainActor
     func testTitleFallsBackToAgentWhenNoProject() {
         let store = StatusStore()
-        var row = AgentRow(rowKey: "k", agent: .codex)
-        row.state = .blocked(RowWait(kind: "Input"))
+        var row = AgentRow(key: "codex|k")
+        row.status = .needsYou(Block(kind: .question))
         XCTAssertEqual(store.notifier.notificationTitle(row), "Codex")
     }
 
     /// Who and where in the title, the task in the subtitle, the ask in
     /// the body — and each session its own Notification Center thread.
     func testTheBannerPutsTheTaskInTheSubtitleAndEachSessionInItsOwnThread() {
-        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
+        var row = AgentRow(key: "claude|s1")
         row.task = "Fix the flaky login test"
-        row.project = "/Users/me/code/app"
-        row.state = .blocked(RowWait(kind: "Permission", ask: "Bash: npm run build"))
+        row.cwd = "/Users/me/code/app"
+        row.status = .needsYou(Block(kind: .permission, ask: "Bash: npm run build"))
         let banner = WaitingBanner.make(row, lang: .en)
         XCTAssertEqual(banner.title, "Claude · app")
         XCTAssertEqual(banner.subtitle, "Fix the flaky login test")
         XCTAssertEqual(banner.body, "Permission · Bash: npm run build")
         XCTAssertEqual(banner.threadID, "pulse.waiting.claude|s1")
         var other = row
-        other.rowKey = "claude|s2"
+        other.key = "claude|s2"
         XCTAssertNotEqual(WaitingBanner.make(other, lang: .en).threadID, banner.threadID,
                           "two sessions never share a thread")
         // No task: no subtitle, and the body says only what it asks.
-        var bare = AgentRow(rowKey: "codex|s3", agent: .codex)
-        bare.state = .blocked(RowWait(kind: "Input"))
+        var bare = AgentRow(key: "codex|s3")
+        bare.status = .needsYou(Block(kind: .question))
         let plain = WaitingBanner.make(bare, lang: .en)
         XCTAssertEqual(plain.subtitle, "")
         XCTAssertEqual(plain.body, L10n.t(.kindInput, .en))
@@ -430,27 +430,27 @@ final class BannerRevealTests: XCTestCase {
     @MainActor
     func testFocusAgentSeedsPendingRevealForWaitingRow() {
         let store = makeStore()
-        let row = try! XCTUnwrap(store.cachedAll.first(where: \.isBlocked))
+        let row = try! XCTUnwrap(store.rows.first(where: \.isBlocked))
         _ = store.takePendingReveal()
-        store.focusAgent(idRaw: row.agent.rawValue, session: row.sessionID, rowKey: row.rowKey)
-        XCTAssertEqual(store.pendingReveal?.rowKey, row.rowKey)
+        store.focusAgent(idRaw: row.agent.rawValue, session: row.session, rowKey: row.key.description)
+        XCTAssertEqual(store.pendingReveal?.key, row.key)
     }
 
     @MainActor
     func testFocusAgentPrefersExactRowKey() {
         let store = makeStore()
         store.installPreviewFixture("waiting")
-        let rows = store.cachedAll.filter(\.isBlocked)
+        let rows = store.rows.filter(\.isBlocked)
         guard rows.count >= 2 else {
             // Fixture may be single-wait; still prove exact key wins.
-            let row = try! XCTUnwrap(rows.first ?? store.cachedAll.first)
-            store.focusAgent(idRaw: "other", session: "nope", rowKey: row.rowKey)
-            XCTAssertEqual(store.pendingReveal?.rowKey, row.rowKey)
+            let row = try! XCTUnwrap(rows.first ?? store.rows.first)
+            store.focusAgent(idRaw: "other", session: "nope", rowKey: row.key.description)
+            XCTAssertEqual(store.pendingReveal?.key, row.key)
             return
         }
         let target = rows[1]
-        store.focusAgent(idRaw: rows[0].agent.rawValue, session: rows[0].sessionID, rowKey: target.rowKey)
-        XCTAssertEqual(store.pendingReveal?.rowKey, target.rowKey, "exact rowKey must not smear onto another wait")
+        store.focusAgent(idRaw: rows[0].agent.rawValue, session: rows[0].session, rowKey: target.key.description)
+        XCTAssertEqual(store.pendingReveal?.key, target.key, "exact rowKey must not smear onto another wait")
     }
 
     /// A banner whose row is gone opens the tray on the first (the
@@ -460,18 +460,18 @@ final class BannerRevealTests: XCTestCase {
         let store = makeStore()
         _ = store.takePendingReveal()
         store.focusAgent(idRaw: "")
-        let expected = store.cachedAll.first(where: \.isBlocked)?.rowKey
+        let expected = store.rows.first(where: \.isBlocked)?.key
         XCTAssertNotNil(expected)
-        XCTAssertEqual(store.pendingReveal?.rowKey, expected)
+        XCTAssertEqual(store.pendingReveal?.key, expected)
     }
 
     @MainActor
     func testARevealIsTakenOnce() {
         let store = makeStore()
-        store.requestTrayReveal(rowKey: "demo-key")
-        XCTAssertEqual(store.pendingReveal?.rowKey, "demo-key")
-        XCTAssertEqual(store.takePendingReveal()?.rowKey, "demo-key")
-        XCTAssertNil(store.pendingReveal?.rowKey)
+        store.requestTrayReveal(key: "demo-key")
+        XCTAssertEqual(store.pendingReveal?.key, "demo-key")
+        XCTAssertEqual(store.takePendingReveal()?.key, "demo-key")
+        XCTAssertNil(store.pendingReveal?.key)
     }
 
     @MainActor
@@ -480,7 +480,7 @@ final class BannerRevealTests: XCTestCase {
         _ = store.takePendingReveal()
         store.focusAgent(idRaw: "claude", session: "", rowKey: "missing|session")
         // May resolve to a waiting claude from fixture, or the first wait.
-        XCTAssertNotNil(store.pendingReveal?.rowKey)
+        XCTAssertNotNil(store.pendingReveal?.key)
     }
 }
 
@@ -495,12 +495,12 @@ final class DeliveryPlanningTests: XCTestCase {
     /// A queued edge and a fresh edge for the same session never trap.
     @MainActor
     func testAQueuedRowAndAFreshEdgeForTheSameSessionDoNotCrash() {
-        var queued = AgentRow(rowKey: "codex|abc", agent: .codex)
-        queued.state = .blocked(RowWait(kind: "Permission", sinceMs: 1_000))
+        var queued = AgentRow(key: "codex|abc")
+        queued.status = .needsYou(Block(kind: .permission, sinceMs: 1_000))
         queued.task = "the queued copy"
 
         var fresh = queued
-        fresh.state = .blocked(RowWait(kind: "Permission", sinceMs: 9_000))
+        fresh.status = .needsYou(Block(kind: .permission, sinceMs: 9_000))
         fresh.task = "the newer wait"
 
         let rows = WaitNotifier.waitingDeliveryRows(edges: [fresh], queued: [queued])
@@ -510,15 +510,15 @@ final class DeliveryPlanningTests: XCTestCase {
 
     @MainActor
     func testDistinctSessionsAreAllDelivered() {
-        var a = AgentRow(rowKey: "codex|a", agent: .codex)
-        a.state = .blocked(RowWait(kind: "Permission"))
-        var b = AgentRow(rowKey: "claude|b", agent: .claude)
-        b.state = .blocked(RowWait(kind: "Permission"))
-        var c = AgentRow(rowKey: "cursor|c", agent: .cursor)
-        c.state = .blocked(RowWait(kind: "Permission"))
+        var a = AgentRow(key: "codex|a")
+        a.status = .needsYou(Block(kind: .permission))
+        var b = AgentRow(key: "claude|b")
+        b.status = .needsYou(Block(kind: .permission))
+        var c = AgentRow(key: "cursor|c")
+        c.status = .needsYou(Block(kind: .permission))
 
         let rows = WaitNotifier.waitingDeliveryRows(edges: [a, b], queued: [c])
-        XCTAssertEqual(Set(rows.map(\.rowKey)), ["codex|a", "claude|b", "cursor|c"])
+        XCTAssertEqual(Set(rows.map(\.key)), ["codex|a", "claude|b", "cursor|c"] as Set<SessionKey>)
     }
 
     @MainActor
@@ -536,10 +536,10 @@ struct BannerRoutingTests {
 
     // MARK: - Jumping to a wait
 
-    func waitingRow(_ key: String, _ agent: AgentID, session: String = "", since: Int64) -> AgentRow {
-        var row = AgentRow(rowKey: key, agent: agent)
-        row.sessionID = session
-        row.state = .blocked(RowWait(kind: "Permission", sinceMs: since))
+    func waitingRow(_ key: SessionKey, session: String = "", since: Int64) -> AgentRow {
+        var row = AgentRow(key: key)
+        row.session = session
+        row.status = .needsYou(Block(kind: .permission, sinceMs: since))
         return row
     }
 
@@ -548,33 +548,33 @@ struct BannerRoutingTests {
     @Test func theJumpGoesToTheFirstListedWait() {
         let store = StatusStore()
         store.showTray = {}
-        store.cachedAll = [
-            waitingRow("a", .claude, since: now - 10 * Self.minute),
-            waitingRow("b", .codex, since: now - Self.minute),
+        store.rows = [
+            waitingRow("a", since: now - 10 * Self.minute),
+            waitingRow("codex|b", since: now - Self.minute),
         ]
         store.focusAgent(idRaw: "")
-        #expect(store.pendingReveal?.rowKey == "a")
-        store.cachedAll = []
+        #expect(store.pendingReveal?.key == "a")
+        store.rows = []
         store.focusAgent(idRaw: "")
-        #expect(store.pendingReveal?.rowKey == nil)
+        #expect(store.pendingReveal?.key == nil)
     }
 
     @Test func aBannerClickStaysInsideItsAgentAndNeedsAUniquePrefix() {
-        let codex = waitingRow("codex|s1", .codex, session: "s1-abc", since: now)
-        let claudeA = waitingRow("claude|a", .claude, session: "sess-1", since: now)
-        let claudeB = waitingRow("claude|b", .claude, session: "sess-12", since: now)
-        #expect(BannerRoute.target(in: [codex, claudeA], idRaw: "claude", session: "s1-abc", rowKey: "")?.rowKey == "claude|a",
+        let codex = waitingRow("codex|s1", session: "s1-abc", since: now)
+        let claudeA = waitingRow("claude|a", session: "sess-1", since: now)
+        let claudeB = waitingRow("claude|b", session: "sess-12", since: now)
+        #expect(BannerRoute.target(in: [codex, claudeA], idRaw: "claude", session: "s1-abc", rowKey: "")?.key == "claude|a",
                 "another agent's session is not a match; the agent's own waiting row is")
-        #expect(BannerRoute.target(in: [claudeA, claudeB], idRaw: "claude", session: "sess-1", rowKey: "")?.rowKey == "claude|a",
+        #expect(BannerRoute.target(in: [claudeA, claudeB], idRaw: "claude", session: "sess-1", rowKey: "")?.key == "claude|a",
                 "exact wins")
-        #expect(BannerRoute.target(in: [claudeB], idRaw: "claude", session: "sess-123", rowKey: "")?.rowKey == "claude|b")
+        #expect(BannerRoute.target(in: [claudeB], idRaw: "claude", session: "sess-123", rowKey: "")?.key == "claude|b")
         let ambiguous = BannerRoute.target(in: [claudeA, claudeB], idRaw: "claude", session: "sess-1234", rowKey: "")
-        #expect(ambiguous?.rowKey == "claude|a", "two prefixes: no session match, fall back to the agent's first wait")
+        #expect(ambiguous?.key == "claude|a", "two prefixes: no session match, fall back to the agent's first wait")
     }
 }
 
 /// The banner's two buttons: "Go" goes, "Ignore" sets its wait aside
-/// exactly as the tray's ⌘D does — Pulse's own `done`, never an
+/// exactly as the tray's ⌘D does — Pulse's own `dismiss`, never an
 /// answer to the agent — and macOS's own dismissal does nothing.
 @Suite("Banner intent")
 struct BannerIntentTests {
@@ -582,15 +582,15 @@ struct BannerIntentTests {
     let dismissID = "com.apple.UNNotificationDismissActionIdentifier"
     let defaultID = "com.apple.UNNotificationDefaultActionIdentifier"
 
-    private func waiting(_ key: String) -> AgentRow {
-        var row = AgentRow(rowKey: key, agent: .claude)
-        row.state = .blocked(RowWait(kind: "Permission", ask: "Bash: make", sinceMs: now - 60_000))
+    private func waiting(_ key: SessionKey) -> AgentRow {
+        var row = AgentRow(key: key)
+        row.status = .needsYou(Block(kind: .permission, ask: "Bash: make", sinceMs: now - 60_000))
         return row
     }
 
-    private func running(_ key: String) -> AgentRow {
-        var row = AgentRow(rowKey: key, agent: .claude)
-        row.state = .running
+    private func running(_ key: SessionKey) -> AgentRow {
+        var row = AgentRow(key: key)
+        row.status = .running(stalled: false)
         return row
     }
 
@@ -609,7 +609,7 @@ struct BannerIntentTests {
     @Test func ignoreDismissesOnlyTheOpenWaitItNames() {
         let rows = [waiting("claude|a"), running("claude|b"), waiting("claude|c")]
         let one = BannerIntent.ignoreTarget(rowKey: "claude|a", rows: rows)
-        #expect(one?.rowKey == "claude|a")
+        #expect(one?.key == "claude|a")
         let answered = BannerIntent.ignoreTarget(rowKey: "claude|b", rows: rows)
         #expect(answered == nil, "a wait answered meanwhile is not ignored")
         let gone = BannerIntent.ignoreTarget(rowKey: "gone|x", rows: rows)
@@ -618,11 +618,11 @@ struct BannerIntentTests {
         #expect(unnamed == nil)
     }
 
-    /// The dismissal is the tray's own: the same `done` record with
-    /// Pulse's `:dismiss` marker that ⌘D writes — never a vendor answer.
+    /// The dismissal is the tray's own: the same `dismiss` record ⌘D
+    /// writes — never a vendor answer.
     @Test func ignoreWritesTheSameDismissalAsTheTray() {
-        let record = AttentionRecord.dismissal(agent: "claude", session: "s1", cwd: "/w", ms: now)
-        #expect(record.kind == AttentionKind.done.rawValue)
-        #expect(record.tool == AttentionRecord.dismissTool)
+        let record = AttentionRecord.dismissal(agent: .claude, session: "s1", cwd: "/w", ms: now)
+        #expect(record.kind == .dismiss)
+        #expect(record.event == AttentionRecord.dismissEvent)
     }
 }

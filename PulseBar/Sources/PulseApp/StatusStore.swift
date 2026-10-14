@@ -24,10 +24,12 @@ import Observation
 final class StatusStore {
     // MARK: Observed — what views draw
 
+    /// The glance: the lamp, the menu-bar title, the counts.
     var snapshot = PulseSnapshot()
-    /// Every row the last scan produced (the same list as
-    /// `snapshot.rows`); the open tray and focus read this.
-    var cachedAll: [AgentRow] = []
+    /// Every row the last projection produced, in its order — state only;
+    /// what a session said lately is read from the book when a row is drawn
+    /// (`facts(for:)`).
+    var rows: [AgentRow] = []
     /// The person's settings, persisted as `settings.json`. Change them
     /// through `set(_:_:)` so the change is saved and applied.
     var settings = PulseSettings()
@@ -48,7 +50,7 @@ final class StatusStore {
     /// What happened the last time the user pressed a button on this row —
     /// a click that reached nothing says so, briefly (and, once, what would
     /// make it land exactly).
-    var rowActionNotices: [String: RowNotice] = [:]
+    var rowActionNotices: [SessionKey: RowNotice] = [:]
     /// Where Settings should scroll when it opens from a deep link.
     private(set) var settingsFocus = SettingsFocus()
 
@@ -57,10 +59,12 @@ final class StatusStore {
     /// One-shot tray identity for Go-Look Closure: a banner or a jump seeds
     /// a row (and whether to open its detail); the tray takes it when it
     /// opens — or at once, when it is already open. No view draws it.
-    @ObservationIgnored private(set) var pendingReveal: (rowKey: String, detail: Bool)?
+    @ObservationIgnored private(set) var pendingReveal: (key: SessionKey, detail: Bool)?
     /// A QA fixture's rows are on screen (`PulseQA`): no live scan, login
     /// item or version check replaces them before the capture.
     @ObservationIgnored var previewFixtureActive = false
+    /// A QA fixture's session facts, in place of the book's.
+    @ObservationIgnored var fixtureFacts: [SessionKey: SessionFacts] = [:]
     /// Last value handed to `SMAppService` — a settings write that did not
     /// change it does not register again.
     @ObservationIgnored private var appliedLaunchAtLogin: Bool?
@@ -121,17 +125,21 @@ final class StatusStore {
 
     /// One projection. Each observed property is assigned only when its
     /// value changed; a projection that finds the same world announces
-    /// nothing. `baseline`: the event log has not been read yet (or
-    /// this is the projection of its first read) — a wait already there is
-    /// not a new one.
+    /// nothing — it carries state only, so plain equality says so.
+    /// `baseline`: the event log has not been read yet (or this is the
+    /// projection of its first read) — a wait already there is not a new
+    /// one.
     func land(_ state: TrayState, nowMs: Int64, baseline: Bool = false) {
-        land(\.cachedAll, state.rows)
+        land(\.rows, state.rows)
         notifier.scanLanded(state, nowMs: nowMs, baseline: baseline)
-        // A scan that found the same world leaves `snapshot` alone — except
-        // when a relative-time label on screen is due to move.
-        if PulseSnapshot.needsPublish(next: state.snapshot, current: snapshot) {
-            snapshot = state.snapshot
-        }
+        land(\.snapshot, state.snapshot)
+    }
+
+    /// What a session said lately — its steps, last words, error and
+    /// clocks — read from the book when a row or the detail page is drawn.
+    /// Not observed: the views redraw it on their clock (`TimelineView`).
+    func facts(for key: SessionKey) -> SessionFacts {
+        previewFixtureActive ? fixtureFacts[key] ?? SessionFacts() : engine.book.facts(for: key)
     }
 
     /// Which agents are on this Mac: six directory checks.
@@ -223,29 +231,35 @@ final class StatusStore {
     /// Open the tray — Pulse opened again (Finder, Spotlight, a second
     /// copy), a banner, a jump — optionally selecting a row, and opening
     /// its detail, once it is on screen. Never a window of its own.
-    func requestTrayReveal(rowKey: String = "", detail: Bool = false) {
-        pendingReveal = rowKey.isEmpty ? nil : (rowKey: rowKey, detail: detail)
+    func requestTrayReveal(key: SessionKey? = nil, detail: Bool = false) {
+        pendingReveal = key.map { (key: $0, detail: detail) }
         showTray()
     }
 
     /// The pending reveal, once: the tray takes it and it is gone.
-    func takePendingReveal() -> (rowKey: String, detail: Bool)? {
+    func takePendingReveal() -> (key: SessionKey, detail: Bool)? {
         defer { pendingReveal = nil }
         return pendingReveal
     }
 
-    /// The tray row's face, as a value — the store contributes the clock and
-    /// the row's notice.
-    func trayRowModel(_ row: AgentRow) -> TrayRowModel {
+    /// The tray row's face, as a value, at `date` — the store contributes
+    /// the session's facts and the row's notice.
+    func trayRowModel(_ row: AgentRow, at date: Date = Date()) -> TrayRowModel {
         TrayRowModel.make(TrayRowModel.Input(
-            row: row, lang: lang, nowMs: ScanEngine.nowMs(), notice: rowActionNotices[row.rowKey]
+            row: row, facts: facts(for: row.key), lang: lang,
+            nowMs: Self.ms(date), notice: rowActionNotices[row.key]
         ))
     }
 
-    /// One session in full — the detail page's value.
-    func detailModel(_ row: AgentRow) -> DetailModel {
-        DetailModel.make(row: row, lang: lang, nowMs: ScanEngine.nowMs(), notice: rowActionNotices[row.rowKey])
+    /// One session in full — the detail page's value, at `date`.
+    func detailModel(_ row: AgentRow, at date: Date = Date()) -> DetailModel {
+        DetailModel.make(
+            row: row, facts: facts(for: row.key), lang: lang,
+            nowMs: Self.ms(date), notice: rowActionNotices[row.key]
+        )
     }
+
+    private static func ms(_ date: Date) -> Int64 { Int64(date.timeIntervalSince1970 * 1000) }
 
     /// The tray header — the why, in counts.
     var trayHeaderModel: TrayHeaderModel {
@@ -257,7 +271,7 @@ final class StatusStore {
         TrayNoticeModel.Input(
             lang: lang,
             notifyAuthorized: notifyAuthorized,
-            bannerFailed: waitingBannerFailed && cachedAll.contains(where: \.isBlocked),
+            bannerFailed: waitingBannerFailed && rows.contains(where: \.isBlocked),
             unconnected: TrayNoticeModel.unconnected(
                 present: presentAgents, hooks: hooksStatus, nudgeOff: settings.hooksNudgeOff
             ),
@@ -285,12 +299,12 @@ final class StatusStore {
 
     /// Say what happened, briefly. Long enough to read, short enough that it
     /// never settles in and becomes row furniture.
-    func noteRowAction(_ rowKey: String, _ notice: RowNotice) {
-        rowActionNotices[rowKey] = notice
+    func noteRowAction(_ key: SessionKey, _ notice: RowNotice) {
+        rowActionNotices[key] = notice
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 8 * 1_000_000_000)
-            guard let self, self.rowActionNotices[rowKey] == notice else { return }
-            self.rowActionNotices.removeValue(forKey: rowKey)
+            guard let self, self.rowActionNotices[key] == notice else { return }
+            self.rowActionNotices.removeValue(forKey: key)
         }
     }
 
@@ -308,10 +322,10 @@ final class StatusStore {
         case .exact:
             return true
         case .appOnly:
-            noteRowAction(row.rowKey, RowNotice.appOnly(row: row, lang: lang))
+            noteRowAction(row.key, RowNotice.appOnly(row: row, lang: lang))
             return true
         case .failed:
-            noteRowAction(row.rowKey, RowNotice(text: tr(.focusFailed)))
+            noteRowAction(row.key, RowNotice(text: tr(.focusFailed)))
             engine.refresh(reason: "focus-failed")
             return false
         }
@@ -323,7 +337,7 @@ final class StatusStore {
     /// row that is gone opens the tray on the oldest wait. `BannerRoute`
     /// decides.
     func focusAgent(idRaw: String, session: String = "", rowKey: String = "") {
-        let row = BannerRoute.target(in: cachedAll, idRaw: idRaw, session: session, rowKey: rowKey)
+        let row = BannerRoute.target(in: rows, idRaw: idRaw, session: session, rowKey: rowKey)
         var focused = false
         if let row {
             if row.canFocusTerminal {
@@ -332,51 +346,50 @@ final class StatusStore {
                 markTurnSeen(row)
             }
         }
-        switch BannerRoute.decide(target: row?.rowKey, focused: focused) {
+        switch BannerRoute.decide(target: row?.key, focused: focused) {
         case .terminal:
             return
         case .detail(let key):
-            requestTrayReveal(rowKey: key, detail: true)
+            requestTrayReveal(key: key, detail: true)
         case .tray:
-            requestTrayReveal(rowKey: cachedAll.first(where: \.isBlocked)?.rowKey ?? "")
+            requestTrayReveal(key: rows.first(where: \.isBlocked)?.key)
         }
     }
 
     /// Looking at a finished session is what "your turn" was asking for. A
-    /// session-scoped `done` in the event log is the record — it survives a
-    /// restart, and it is the same line a new prompt would write.
+    /// session-scoped `dismiss` (`pulse.seen`) in the event log is the
+    /// record — it survives a restart.
     private func markTurnSeen(_ row: AgentRow) {
-        guard row.isYourTurn, !row.attentionSession.isEmpty else { return }
-        writeDone(row)
+        guard row.isYourTurn, !row.session.isEmpty else { return }
+        writeDismissal(row, event: AttentionRecord.seenEvent)
     }
 
-    /// The person dismissed a wait: a `done` in the event log under exactly
-    /// the session its entry carried (`AttentionRecord.dismissal`) — and no
-    /// banner for it.
+    /// The person dismissed a wait: a `dismiss` in the event log under
+    /// exactly the session its entry carried (`AttentionRecord.dismissal`)
+    /// — and no banner for it.
     func dismissWaiting(_ row: AgentRow) {
         guard row.isBlocked else { return }
-        notifier.dismissed(row.rowKey)
-        writeDone(row)
+        notifier.dismissed(row.key)
+        writeDismissal(row, event: AttentionRecord.dismissEvent)
     }
 
-    /// File writes for `done` lines, one at a time, off the main thread:
-    /// the event log is locked, and a click must not wait on it.
-    private static let doneWrites = DispatchQueue(label: PulseVersion.bundleID + ".attention-done", qos: .userInitiated)
+    /// The app's own lines, one at a time, off the main thread: the event
+    /// log is locked, and a click must not wait on it.
+    private static let dismissWrites = DispatchQueue(label: PulseVersion.bundleID + ".attention-dismiss", qos: .userInitiated)
 
-    /// A `done` line: applied to the book at once (the row moves under the
-    /// click), appended to the event log off the main thread. The watch
-    /// reads the line back; the book has already applied it, so it changes
-    /// nothing.
-    private func writeDone(_ row: AgentRow) {
+    /// A `dismiss` line: applied to the book at once (the row moves under
+    /// the click), appended to the event log off the main thread. The watch
+    /// reads it back under its `seq`; the book has already applied it, and a
+    /// second clear changes nothing.
+    private func writeDismissal(_ row: AgentRow, event: String) {
         let nowMs = ScanEngine.nowMs()
         let record = AttentionRecord.dismissal(
-            agent: row.agent.rawValue, session: row.attentionSession, cwd: row.cwd, ms: nowMs
+            agent: row.agent, session: row.session, cwd: row.cwd, ms: nowMs, event: event
         )
         // A preview fixture's rows are not the book's; leave them on screen.
         if !previewFixtureActive { engine.apply(records: [record], nowMs: nowMs) }
-        let line = record.line
-        Self.doneWrites.async {
-            EventLog.append(line, nowMs: nowMs)
+        Self.dismissWrites.async {
+            EventLog.append(record, nowMs: nowMs)
         }
     }
 

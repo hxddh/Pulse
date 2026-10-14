@@ -194,38 +194,31 @@ package struct TrayNoticeModel: Equatable {
 package enum TrayOrder {
     /// `rows` in the frozen order; rows it does not know follow, in the
     /// order they came.
-    package static func arrange(_ rows: [AgentRow], frozen: [String]) -> [AgentRow] {
-        var position: [String: Int] = [:]
+    package static func arrange(_ rows: [AgentRow], frozen: [SessionKey]) -> [AgentRow] {
+        var position: [SessionKey: Int] = [:]
         for (index, key) in frozen.enumerated() where position[key] == nil { position[key] = index }
-        let known = rows.filter { position[$0.rowKey] != nil }
-            .sorted { (position[$0.rowKey] ?? 0) < (position[$1.rowKey] ?? 0) }
-        let newcomers = rows.filter { position[$0.rowKey] == nil }
+        let known = rows.filter { position[$0.key] != nil }
+            .sorted { (position[$0.key] ?? 0) < (position[$1.key] ?? 0) }
+        let newcomers = rows.filter { position[$0.key] == nil }
         return known + newcomers
     }
 
     /// What the open tray lists: every row already on screen this glance
     /// (`pinned`) that still exists, in the frozen order, then rows that
-    /// entered the projection's `window` since, in the order they came. A
-    /// new wait is appended; it never pushes a row the person is looking at
-    /// out of the list, nor moves one. Pure.
-    package static func openWindow(
-        all: [AgentRow], window: [AgentRow], pinned: Set<String>, frozen: [String]
-    ) -> [AgentRow] {
-        let windowKeys = Set(window.map(\.rowKey))
-        let kept = arrange(all.filter { pinned.contains($0.rowKey) }, frozen: frozen)
-        let newcomers = arrange(
-            all.filter { !pinned.contains($0.rowKey) && windowKeys.contains($0.rowKey) },
-            frozen: frozen
-        )
-        return kept + newcomers
+    /// came since, in the order they came. A new wait is appended; it never
+    /// pushes a row the person is looking at out of the list, nor moves one.
+    /// Pure.
+    package static func openList(all: [AgentRow], pinned: Set<SessionKey>, frozen: [SessionKey]) -> [AgentRow] {
+        arrange(all.filter { pinned.contains($0.key) }, frozen: frozen)
+            + arrange(all.filter { !pinned.contains($0.key) }, frozen: frozen)
     }
 
     /// The frozen order with newcomers appended, so a row keeps the place it
     /// was given when it first appeared.
-    package static func extend(_ frozen: [String], with rows: [AgentRow]) -> [String] {
+    package static func extend(_ frozen: [SessionKey], with rows: [AgentRow]) -> [SessionKey] {
         var seen = Set(frozen)
         var out = frozen
-        for row in rows where seen.insert(row.rowKey).inserted { out.append(row.rowKey) }
+        for row in rows where seen.insert(row.key).inserted { out.append(row.key) }
         return out
     }
 }
@@ -268,11 +261,11 @@ package enum TrayKeys {
     }
 
     package struct State: Equatable {
-        package var selected: String?
+        package var selected: SessionKey?
         /// The row whose detail page is open.
-        package var detail: String?
+        package var detail: SessionKey?
 
-        package init(selected: String? = nil, detail: String? = nil) {
+        package init(selected: SessionKey? = nil, detail: SessionKey? = nil) {
             self.selected = selected
             self.detail = detail
         }
@@ -280,24 +273,24 @@ package enum TrayKeys {
 
     /// What the reducer needs to know about a row on screen.
     package struct Row: Equatable {
-        package var key: String
+        package var key: SessionKey
         package var blocked: Bool
         package var canFocus: Bool
 
-        package init(key: String, blocked: Bool = false, canFocus: Bool = false) {
+        package init(key: SessionKey, blocked: Bool = false, canFocus: Bool = false) {
             self.key = key
             self.blocked = blocked
             self.canFocus = canFocus
         }
 
         package init(_ row: AgentRow) {
-            self.init(key: row.rowKey, blocked: row.isBlocked, canFocus: row.canFocusTerminal)
+            self.init(key: row.key, blocked: row.isBlocked, canFocus: row.canFocusTerminal)
         }
     }
 
     package enum Effect: Equatable {
-        case focus(String)
-        case dismiss(String)
+        case focus(SessionKey)
+        case dismiss(SessionKey)
         case refresh
         case openSettings
         case closeTray
@@ -382,7 +375,7 @@ package enum TrayKeys {
         return next
     }
 
-    private static func step(from key: String?, by delta: Int, in rows: [Row]) -> String? {
+    private static func step(from key: SessionKey?, by delta: Int, in rows: [Row]) -> SessionKey? {
         guard !rows.isEmpty else { return key }
         guard let key, let index = rows.firstIndex(where: { $0.key == key }) else {
             return delta > 0 ? rows.first?.key : rows.last?.key
@@ -419,8 +412,8 @@ package enum TrayKeys {
 }
 
 /// What a response to a "needs you" banner asks for: its "Ignore" button
-/// dismisses the waits it names — the tray's ⌘D, the same `done` line with
-/// Pulse's `:dismiss` marker, never an answer to the vendor; macOS's own
+/// dismisses the waits it names — the tray's ⌘D, the same `dismiss` line,
+/// never an answer to the vendor; macOS's own
 /// dismissal (the ✕, a swipe) is nothing; a click on the banner or its
 /// "Go" goes (`BannerRoute`). Pure.
 package enum BannerIntent: Equatable {
@@ -445,10 +438,10 @@ package enum BannerIntent: Equatable {
 
     /// The row an "Ignore" dismisses: the banner's wait, when it is still
     /// open now. A wait answered, ended or already ignored meanwhile is
-    /// left alone.
+    /// left alone. `rowKey` is the banner's `SessionKey.description`.
     package static func ignoreTarget(rowKey: String, rows: [AgentRow]) -> AgentRow? {
         guard !rowKey.isEmpty else { return nil }
-        return rows.first { $0.rowKey == rowKey && $0.isBlocked }
+        return rows.first { $0.key.description == rowKey && $0.isBlocked }
     }
 }
 
@@ -458,23 +451,24 @@ package enum BannerIntent: Equatable {
 /// the row is gone. Pure.
 package enum BannerRoute: Equatable {
     case terminal
-    case detail(String)
+    case detail(SessionKey)
     case tray
 
-    /// The row a banner names: its exact `rowKey`, else its session — inside
-    /// the named agent, and a prefix only when exactly one row fits, so a
-    /// truncated id cannot send a click to the wrong row — else the agent's
-    /// first wait, else its first row.
+    /// The row a banner names: its exact key (`rowKey`, the banner's
+    /// `SessionKey.description`), else its session — inside the named agent,
+    /// and a prefix only when exactly one row fits, so a truncated id cannot
+    /// send a click to the wrong row — else the agent's first wait, else its
+    /// first row.
     package static func target(in rows: [AgentRow], idRaw: String, session: String, rowKey: String) -> AgentRow? {
-        if !rowKey.isEmpty, let row = rows.first(where: { $0.rowKey == rowKey }) {
+        if !rowKey.isEmpty, let row = rows.first(where: { $0.key.description == rowKey }) {
             return row
         }
         let agent = Agents.agent(named: idRaw)
         if !session.isEmpty {
-            let sameAgent = rows.filter { !$0.sessionID.isEmpty && (agent == nil || $0.agent == agent) }
-            if let exact = sameAgent.first(where: { $0.sessionID == session }) { return exact }
+            let sameAgent = rows.filter { !$0.session.isEmpty && (agent == nil || $0.agent == agent) }
+            if let exact = sameAgent.first(where: { $0.session == session }) { return exact }
             let prefixed = sameAgent.filter {
-                session.hasPrefix($0.sessionID) || $0.sessionID.hasPrefix(session)
+                session.hasPrefix($0.session) || $0.session.hasPrefix(session)
             }
             if prefixed.count == 1 { return prefixed[0] }
         }
@@ -483,7 +477,7 @@ package enum BannerRoute: Equatable {
         return own.first(where: \.isBlocked) ?? own.first
     }
 
-    package static func decide(target: String?, focused: Bool) -> BannerRoute {
+    package static func decide(target: SessionKey?, focused: Bool) -> BannerRoute {
         guard let target else { return .tray }
         return focused ? .terminal : .detail(target)
     }

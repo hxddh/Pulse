@@ -32,21 +32,21 @@ struct TrayInteractionTests {
     let now: Int64 = 1_800_000_000_000
     let minute: Int64 = 60_000
 
-    private func session(_ key: String, _ agent: AgentID = .claude) -> AgentRow {
-        var row = AgentRow(rowKey: key, agent: agent)
-        row.sessionID = key
+    private func session(_ key: SessionKey) -> AgentRow {
+        var row = AgentRow(key: key, status: .running(stalled: false))
+        row.session = key.description
         row.task = "Fix the login test"
-        row.project = "app"
+        row.cwd = "/Users/me/app"
         row.liveProcess = true
-        row.state = .running
-        row.lastEventMs = now - minute
-        row.source = .hooks
         return row
     }
 
-    private func blocked(_ key: String, ask: String = "Bash: npm test") -> AgentRow {
+    /// What a running session said a minute ago.
+    private var facts: SessionFacts { SessionFacts(lastEventMs: now - minute) }
+
+    private func blocked(_ key: SessionKey, ask: String = "Bash: npm test") -> AgentRow {
         var row = session(key)
-        row.state = .blocked(RowWait(kind: "Permission", ask: ask, sinceMs: now - 4 * minute))
+        row.status = .needsYou(Block(kind: .permission, ask: ask, sinceMs: now - 4 * minute))
         return row
     }
 
@@ -215,65 +215,60 @@ struct TrayInteractionTests {
 
     @Test func theOrderHoldsWhileTheTrayIsOpen() {
         let a = session("a"), b = session("b"), c = session("c")
-        let frozen = ["a", "b", "c"]
+        let frozen: [SessionKey] = ["a", "b", "c"]
         // The builder now wants c first (it became blocked): the open tray
         // keeps the order it opened with.
         let arranged = TrayOrder.arrange([c, a, b], frozen: frozen)
-        let keys = arranged.map { $0.rowKey }
+        let keys = arranged.map { $0.key }
         #expect(keys == ["a", "b", "c"])
     }
 
     @Test func newcomersAppendAndLeaversDisappear() {
         let a = session("a"), c = session("c"), d = session("d"), e = session("e")
         let arranged = TrayOrder.arrange([e, c, d, a], frozen: ["a", "b", "c"])
-        let keys = arranged.map { $0.rowKey }
+        let keys = arranged.map { $0.key }
         #expect(keys == ["a", "c", "e", "d"], "b left; e and d came, in the order they came")
         let extended = TrayOrder.extend(["a", "b", "c"], with: [e, c, d, a])
         #expect(extended == ["a", "b", "c", "e", "d"])
         let again = TrayOrder.arrange([d, e, a, c], frozen: extended)
-        let stable = again.map { $0.rowKey }
+        let stable = again.map { $0.key }
         #expect(stable == ["a", "c", "e", "d"], "a newcomer keeps the place it was given")
     }
 
-    /// While the tray was open the list was the builder's top-12
-    /// window re-arranged, so a new wait sorting to the top pushed the
-    /// twelfth row — possibly the one under the pointer — out of the list.
+    /// A new wait sorting to the top while the tray is open is appended:
+    /// it never pushes a row — possibly the one under the pointer — out of
+    /// its place.
     @Test func aNewWaitWhileOpenIsAppendedAndPushesNothingOut() {
-        let shown = (0..<12).map { session("r\($0)") }
-        let frozen = shown.map { $0.rowKey }
+        let shown = (0..<12).map { session(SessionKey(.claude, "r\($0)")) }
+        let frozen = shown.map { $0.key }
         let wait = blocked("new-wait")
-        // The builder now puts the wait first and folds the old twelfth row.
-        let window = [wait] + shown.prefix(11)
+        // The projection now puts the wait first.
         let all = [wait] + shown
-        let listed = TrayOrder.openWindow(all: all, window: window, pinned: Set(frozen), frozen: frozen)
-        let keys = listed.map { $0.rowKey }
+        let listed = TrayOrder.openList(all: all, pinned: Set(frozen), frozen: frozen)
+        let keys = listed.map { $0.key }
         #expect(keys == frozen + ["new-wait"], "every row shown stays, in place; the wait is appended")
     }
 
     @Test func theOpenListDropsRowsThatLeftAndAppendsNewcomers() {
         let a = session("a"), b = session("b"), c = session("c"), d = session("d"), e = session("e")
-        let listed = TrayOrder.openWindow(
-            all: [c, a, d], window: [d, c, a], pinned: ["a", "b", "c"], frozen: ["a", "b", "c"]
-        )
-        let keys = listed.map { $0.rowKey }
+        let listed = TrayOrder.openList(all: [c, a, d], pinned: ["a", "b", "c"], frozen: ["a", "b", "c"])
+        let keys = listed.map { $0.key }
         #expect(keys == ["a", "c", "d"], "b left the scan; d is new")
-        let many = TrayOrder.openWindow(
-            all: [e, d, a, b, c], window: [e, d, a, b, c], pinned: ["a", "b", "c"], frozen: ["a", "b", "c", "e", "d"]
-        )
-        let manyKeys = many.map { $0.rowKey }
+        let many = TrayOrder.openList(all: [e, d, a, b, c], pinned: ["a", "b", "c"], frozen: ["a", "b", "c", "e", "d"])
+        let manyKeys = many.map { $0.key }
         #expect(manyKeys == ["a", "b", "c", "e", "d"], "no cap: every newcomer is listed, after the rows already shown")
-        let fresh = TrayOrder.openWindow(all: [a, b], window: [b], pinned: [], frozen: [])
-        let freshKeys = fresh.map { $0.rowKey }
-        #expect(freshKeys == ["b"], "nothing pinned: the builder's window")
+        let fresh = TrayOrder.openList(all: [a, b], pinned: [], frozen: [])
+        let freshKeys = fresh.map { $0.key }
+        #expect(freshKeys == ["a", "b"], "nothing pinned: the projection's order")
     }
 
     // MARK: - The header
 
     @Test func theHeaderCountsWhatMattersInTone() {
         var stalled = session("s")
-        stalled.isStalled = true
+        stalled.status = .running(stalled: true)
         var turn = session("t")
-        turn.state = .yourTurn(sinceMs: now - minute)
+        turn.status = .yourTurn(sinceMs: now - minute)
         let model = TrayHeaderModel.make(counts: TrayState.Counts(rows: [blocked("w1"), blocked("w2"), session("r"), stalled, turn]), lang: .en)
         let labels = model.counts.map { "\($0.count) \($0.label)" }
         #expect(labels == ["2 need you", "1 running", "1 stalled", "1 your turn"])
@@ -291,8 +286,8 @@ struct TrayInteractionTests {
         let none = TrayHeaderModel.make(counts: TrayState.Counts(rows: []), lang: .en)
         #expect(none.counts.isEmpty)
         #expect(none.title == L10n.t(.noAgents, .en))
-        var process = AgentRow(rowKey: RowIdentity.process(agent: .codex, pid: 1), agent: .codex)
-        process.state = .processOnly
+        var process = AgentRow(key: .process(.codex, pid: 1))
+        process.status = .processOnly
         let grey = TrayHeaderModel.make(counts: TrayState.Counts(rows: [process]), lang: .zh)
         #expect(grey.title == "1 " + L10n.t(.processOnlyN, .zh))
     }
@@ -346,31 +341,31 @@ struct TrayInteractionTests {
     // MARK: - The row's second line
 
     @Test func onlyABlockedOrOrangeRowHasASecondLine() {
-        let face = { (row: AgentRow) in TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now)) }
+        let said = facts
+        let face = { (row: AgentRow) in TrayRowModel.make(TrayRowModel.Input(row: row, facts: said, lang: .en, nowMs: now)) }
         let waiting = face(blocked("w", ask: "Allow npm test?"))
         #expect(waiting.secondLine == TrayRowModel.SecondLine(kind: .ask, text: "Allow npm test?"))
         let running = face(session("r"))
         #expect(running.secondLine == nil)
         var stalledRow = session("s")
-        stalledRow.isStalled = true
+        stalledRow.status = .running(stalled: true)
         let stalled = face(stalledRow)
         #expect(stalled.secondLine?.kind == .warning)
         var failingRow = session("f")
-        failingRow.state = .recent
-        failingRow.lastErrorText = "npm ERR!"
-        let failing = face(failingRow)
+        failingRow.status = .recent(.atPrompt)
+        let failing = TrayRowModel.make(TrayRowModel.Input(row: failingRow, facts: SessionFacts(lastError: "npm ERR!"), lang: .en, nowMs: now))
         #expect(failing.secondLine == nil, "an error is a detail-page fact, not an orange row")
         var turnRow = session("t")
-        turnRow.state = .yourTurn(sinceMs: now)
+        turnRow.status = .yourTurn(sinceMs: now)
         let turn = face(turnRow)
         #expect(turn.secondLine == nil)
         #expect(turn.turnLabel == L10n.t(.yourTurn, .en))
     }
 
     @Test func aWaitingRowShowsOnlyTheWaitAge() {
-        let model = TrayRowModel.make(TrayRowModel.Input(row: blocked("w"), lang: .en, nowMs: now))
+        let model = TrayRowModel.make(TrayRowModel.Input(row: blocked("w"), facts: facts, lang: .en, nowMs: now))
         #expect(model.age == "4m")
-        let running = TrayRowModel.make(TrayRowModel.Input(row: session("r"), lang: .en, nowMs: now))
+        let running = TrayRowModel.make(TrayRowModel.Input(row: session("r"), facts: facts, lang: .en, nowMs: now))
         #expect(running.age == String(format: L10n.t(.agoFormat, .en), "1m"))
     }
 
@@ -386,12 +381,12 @@ struct TrayInteractionTests {
     @Test func aBannerForARowWithNoHandleOpensItsDetail() throws {
         let store = StatusStore()
         store.installPreviewFixture("status-waiting")
-        let firstBlocked = store.cachedAll.first { $0.isBlocked }
+        let firstBlocked = store.rows.first { $0.isBlocked }
         let row = try #require(firstBlocked)
         _ = store.takePendingReveal()
-        store.focusAgent(idRaw: row.agent.rawValue, session: row.sessionID, rowKey: row.rowKey)
+        store.focusAgent(idRaw: row.agent.rawValue, session: row.session, rowKey: row.key.description)
         let reveal = store.takePendingReveal()
-        #expect(reveal?.rowKey == row.rowKey)
+        #expect(reveal?.key == row.key)
         #expect(reveal?.detail == true)
         let again = store.takePendingReveal()
         #expect(again == nil, "a reveal is taken once")
@@ -403,10 +398,10 @@ struct TrayInteractionTests {
         store.installPreviewFixture("status-waiting")
         let ui = TrayUI(store: store)
         ui.open()
-        store.requestTrayReveal(rowKey: "gone|nowhere", detail: true)
+        store.requestTrayReveal(key: "gone|nowhere", detail: true)
         ui.applyPendingReveal()
         #expect(ui.keys.detail == nil)
-        #expect(store.pendingReveal?.rowKey == nil)
+        #expect(store.pendingReveal?.key == nil)
     }
 
     @MainActor
@@ -415,13 +410,13 @@ struct TrayInteractionTests {
         store.installPreviewFixture("waiting")
         let ui = TrayUI(store: store)
         ui.open()
-        let rows = store.cachedAll
+        let rows = store.rows
         try #require(rows.count >= 2)
-        ui.showDetail(rows[0].rowKey)
-        store.requestTrayReveal(rowKey: rows[1].rowKey, detail: true)
+        ui.showDetail(rows[0].key)
+        store.requestTrayReveal(key: rows[1].key, detail: true)
         ui.applyPendingReveal()
-        #expect(ui.keys.detail == rows[1].rowKey)
-        #expect(ui.keys.selected == rows[1].rowKey)
+        #expect(ui.keys.detail == rows[1].key)
+        #expect(ui.keys.selected == rows[1].key)
     }
 
     /// One gesture — a menu-bar click and a reopen (Spotlight, Raycast)
@@ -434,24 +429,21 @@ struct TrayInteractionTests {
         ui.open()
         let oldest = ui.displayRows.filter(\.isBlocked).min { ($0.wait?.sinceMs ?? 0) < ($1.wait?.sinceMs ?? 0) }
         #expect(oldest != nil)
-        #expect(ui.keys.selected == oldest?.rowKey)
+        #expect(ui.keys.selected == oldest?.key)
     }
 
     /// A fresh glance selects the first row, so the projection's order is
     /// what makes it the oldest wait: waits first, the oldest first, an
     /// unknown clock last, then the rest.
     @Test func theProjectionListsTheOldestWaitFirst() {
-        func blocked(_ key: String, since: Int64) -> AgentRow {
-            var row = AgentRow(rowKey: key, agent: .claude)
-            row.state = .blocked(RowWait(kind: "Permission", sinceMs: since))
-            return row
+        func blocked(_ key: SessionKey, since: Int64) -> AgentRow {
+            AgentRow(key: key, status: .needsYou(Block(kind: .permission, sinceMs: since)))
         }
-        var running = AgentRow(rowKey: "run", agent: .codex)
-        running.state = .running
+        let running = AgentRow(key: "codex|run", status: .running(stalled: false))
         let rows = [running, blocked("new", since: 9_000), blocked("unknown", since: 0), blocked("old", since: 1_000)]
-        let order = TrayState.assemble(rows: rows, context: .init(nowMs: 10_000)).rows.map(\.rowKey)
-        #expect(order == ["old", "new", "unknown", "run"])
-        let onlyUnknown = TrayState.assemble(rows: [running, blocked("unknown", since: 0)], context: .init(nowMs: 10_000)).rows.first?.rowKey
+        let order = TrayState.assemble(rows: rows, context: .init(nowMs: 10_000)).rows.map(\.key)
+        #expect(order == ["old", "new", "unknown", "codex|run"])
+        let onlyUnknown = TrayState.assemble(rows: [running, blocked("unknown", since: 0)], context: .init(nowMs: 10_000)).rows.first?.key
         #expect(onlyUnknown == "unknown")
     }
 
@@ -476,7 +468,7 @@ struct TrayInteractionTests {
     @Test func goWithoutAHandleOpensTheDetail() {
         let store = StatusStore()
         let row = session("no-handle")
-        store.cachedAll = [row]
+        store.rows = [row]
         let ui = TrayUI(store: store)
         #expect(!row.canFocusTerminal)
         ui.send(TrayRowModel.Action.primary, row: row)
@@ -494,19 +486,19 @@ struct TrayInteractionTests {
         let rows = ui.displayRows
         try #require(rows.count >= 2)
         let first = ui.keys.selected
-        ui.hover(rows[1].rowKey, at: CGPoint(x: 10, y: 10))
+        ui.hover(rows[1].key, at: CGPoint(x: 10, y: 10))
         #expect(ui.keys.selected == first, "the list appeared under a still pointer: nothing moves")
-        ui.hover(rows[1].rowKey, at: CGPoint(x: 12, y: 40))
-        #expect(ui.keys.selected == rows[1].rowKey)
-        #expect(ui.pointerSelection == rows[1].rowKey, "the list does not scroll to a pointer's selection")
+        ui.hover(rows[1].key, at: CGPoint(x: 12, y: 40))
+        #expect(ui.keys.selected == rows[1].key)
+        #expect(ui.pointerSelection == rows[1].key, "the list does not scroll to a pointer's selection")
         _ = ui.handle(.up)
-        #expect(ui.keys.selected == rows[0].rowKey, "the keyboard moves the same selection")
+        #expect(ui.keys.selected == rows[0].key, "the keyboard moves the same selection")
         #expect(ui.pointerSelection == nil)
-        ui.hover(rows[1].rowKey, at: CGPoint(x: 12, y: 40))
-        #expect(ui.keys.selected == rows[0].rowKey, "rows scrolled under a still pointer do not take the selection")
-        ui.showDetail(rows[0].rowKey)
-        ui.hover(rows[1].rowKey, at: CGPoint(x: 30, y: 60))
-        #expect(ui.keys.selected == rows[0].rowKey, "no row is under the pointer on the detail page")
+        ui.hover(rows[1].key, at: CGPoint(x: 12, y: 40))
+        #expect(ui.keys.selected == rows[0].key, "rows scrolled under a still pointer do not take the selection")
+        ui.showDetail(rows[0].key)
+        ui.hover(rows[1].key, at: CGPoint(x: 30, y: 60))
+        #expect(ui.keys.selected == rows[0].key, "no row is under the pointer on the detail page")
     }
 
     /// The keys the row's click model leans on: ↩ goes, → and Space open
@@ -723,7 +715,7 @@ struct LandingPlanTests {
     }
 
     @Test func theLabelFollowsThePrecision() {
-        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
+        var row = AgentRow(key: "claude|s1")
         #expect(!row.canFocusTerminal)
         row.landingPlan = LandingPlan.make(handle: LandingHandle("term:ghostty"), cwd: "")
         #expect(TrayRowModel.focusTitle(row, lang: .en) == "Open app")
@@ -798,12 +790,9 @@ final class L10nTests: XCTestCase {
 final class LocalizedCopyTests: XCTestCase {
     /// One table for the tooltip, the chip and the banner.
     func testWaitKindTranslationIsSharedWithTheBuilder() {
-        XCTAssertEqual(L10n.waitKind("Permission", .zh), L10n.t(.kindPermission, .zh))
-        XCTAssertEqual(L10n.waitKind("", .zh), L10n.t(.needsYou, .zh))
-        XCTAssertEqual(
-            L10n.waitKind("Somethingelse", .zh), "Somethingelse",
-            "an unknown vendor kind is passed through, not invented"
-        )
+        XCTAssertEqual(L10n.waitKind(.permission, .zh), L10n.t(.kindPermission, .zh))
+        XCTAssertEqual(L10n.waitKind(.question, .zh), L10n.t(.kindInput, .zh))
+        XCTAssertEqual(L10n.waitKind(.waiting, .zh), L10n.t(.kindWaiting, .zh))
     }
 }
 
@@ -890,19 +879,14 @@ final class DetailPlanTests: XCTestCase {
         // Codex review on #74: Details showed "Current step" past the 30
         // minutes where the story line had already withdrawn it. Every
         // surface reads this one rule.
-        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
-        row.lastEventMs = now - 5 * 60 * 1000
-        XCTAssertTrue(row.selfReportFresh(at: now))
-        row.lastEventMs = now - 31 * 60 * 1000
-        XCTAssertFalse(row.selfReportFresh(at: now), "the headline and the detail page share this gate")
+        XCTAssertTrue(SessionFacts(lastEventMs: now - 5 * 60 * 1000).selfReportFresh(at: now))
+        XCTAssertFalse(SessionFacts(lastEventMs: now - 31 * 60 * 1000).selfReportFresh(at: now), "the headline and the detail page share this gate")
     }
 
     func testTheLastMessageNeverImpliesWaiting() {
-        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
-        row.lastWord = "Waiting for your review."
-        row.state = .running
-        row.lastEventMs = now
-        let detail = DetailModel.make(row: row, lang: .en, nowMs: now)
+        let row = AgentRow(key: "claude|s1", status: .running(stalled: false))
+        let said = SessionFacts(lastWords: "Waiting for your review.", lastEventMs: now)
+        let detail = DetailModel.make(row: row, facts: said, lang: .en, nowMs: now)
         XCTAssertEqual(detail.lastMessage, "Waiting for your review.")
         XCTAssertFalse(row.isBlocked, "words never write Waiting")
         XCTAssertFalse(detail.canDismiss)
@@ -944,12 +928,9 @@ final class RowActionNoticeTests: XCTestCase {
     }
 
     private func liveRow() -> AgentRow {
-        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
+        var row = AgentRow(key: "claude|s1", status: .running(stalled: false))
         row.task = "Fix the auth module"
         row.liveProcess = true
-        row.state = .running
-        row.lastEventMs = Int64(Date().timeIntervalSince1970 * 1000)
-        row.source = .hooks
         return row
     }
 
@@ -959,13 +940,13 @@ final class RowActionNoticeTests: XCTestCase {
     func testAnActionNoticeIsAttachedToItsOwnRow() {
         let s = store()
         let row = liveRow()
-        XCTAssertNil(s.rowActionNotices[row.rowKey])
-        s.noteRowAction(row.rowKey, RowNotice(text: s.tr(.focusFailed)))
-        XCTAssertEqual(s.rowActionNotices[row.rowKey]?.text, s.tr(.focusFailed))
+        XCTAssertNil(s.rowActionNotices[row.key])
+        s.noteRowAction(row.key, RowNotice(text: s.tr(.focusFailed)))
+        XCTAssertEqual(s.rowActionNotices[row.key]?.text, s.tr(.focusFailed))
 
         var other = liveRow()
-        other.rowKey = "codex|s2"
-        XCTAssertNil(s.rowActionNotices[other.rowKey], "a notice belongs to the row that was clicked")
+        other.key = "codex|s2"
+        XCTAssertNil(s.rowActionNotices[other.key], "a notice belongs to the row that was clicked")
     }
 
     @MainActor
@@ -984,33 +965,47 @@ final class RowActionNoticeTests: XCTestCase {
 // MARK: - Row words
 
 /// What a row says — the headline and the why — the lamp's one-sentence
-/// rule, and the row face and detail page built on them.
+/// rule, and the row face and detail page built on them. A row carries its
+/// status; what its session said lately (`SessionFacts`) is read beside it.
 @Suite("Row words")
 struct RowWordsTests {
     let now: Int64 = 1_800_000_000_000
     let minute: Int64 = 60_000
 
     private func session(_ agent: AgentID = .claude, task: String = "Refactor the settings panes") -> AgentRow {
-        var row = AgentRow(rowKey: RowIdentity.session(agent: agent, session: "s1"), agent: agent)
-        row.sessionID = "s1"
+        var row = AgentRow(key: SessionKey(agent, "s1"), status: .running(stalled: false))
+        row.session = "s1"
         row.task = task
-        row.project = "pulse"
         row.cwd = "/Users/me/pulse"
-        row.source = .hooks
         row.liveProcess = true
-        row.state = .running
-        row.lastEventMs = now - minute
         return row
     }
 
-    private func blocked(kind: String = "Permission", inFront: Bool = false) -> AgentRow {
+    /// What the session said a minute ago.
+    private var said: SessionFacts { SessionFacts(lastEventMs: now - minute) }
+
+    private func blocked(kind: AttentionKind = .permission, inFront: Bool = false) -> AgentRow {
         var row = session()
-        row.state = .blocked(RowWait(kind: kind, ask: "Bash: npm test", sinceMs: now - 4 * minute, inFront: inFront))
+        row.status = .needsYou(Block(kind: kind, ask: "Bash: npm test", sinceMs: now - 4 * minute, inFront: inFront))
         return row
     }
 
-    private func why(_ row: AgentRow, _ lang: ResolvedLanguage = .en) -> String {
-        TrayRowModel.why(row, lang: lang, nowMs: now)
+    private func stalled() -> AgentRow {
+        var row = session()
+        row.status = .running(stalled: true)
+        return row
+    }
+
+    private func why(_ row: AgentRow, _ lang: ResolvedLanguage = .en, facts: SessionFacts? = nil) -> String {
+        TrayRowModel.why(row, facts: facts ?? said, lang: lang, nowMs: now)
+    }
+
+    private func face(_ row: AgentRow, _ facts: SessionFacts? = nil, lang: ResolvedLanguage = .en) -> TrayRowModel {
+        TrayRowModel.make(TrayRowModel.Input(row: row, facts: facts ?? said, lang: lang, nowMs: now))
+    }
+
+    private func headline(_ row: AgentRow, facts: SessionFacts? = nil) -> String {
+        TrayRowModel.headline(row, facts: facts ?? said, lang: .en, nowMs: now)
     }
 
     // MARK: - Why: which evidence, and since when
@@ -1032,8 +1027,7 @@ struct RowWordsTests {
     @Test func aWaitIsSaidInPlainWords() {
         #expect(why(blocked()) == "Claude asked for permission · 4m ago")
         #expect(why(blocked(), .zh) == "Claude 请求权限 · " + L10n.ago(now - 4 * minute, nowMs: now, .zh))
-        var process = AgentRow(rowKey: RowIdentity.process(agent: .cursor, pid: 7), agent: .cursor)
-        process.state = .processOnly
+        let process = AgentRow(key: .process(.cursor, pid: 7), status: .processOnly)
         #expect(why(process) == "Started before Pulse — details after its next step")
         #expect(why(process, .zh) == "在 Pulse 之前启动——下一步之后显示详情")
         for lang in [ResolvedLanguage.en, .zh] {
@@ -1045,68 +1039,66 @@ struct RowWordsTests {
     }
 
     @Test func aQuestionSaysInput() {
-        let text = why(blocked(kind: "Input"))
+        let text = why(blocked(kind: .question))
         #expect(text.contains("Claude"))
         #expect(text.contains(L10n.t(.explainKindInput, .en)))
     }
 
     @Test func yourTurnSaysHowToClearItWithoutNowAgo() {
         var row = session(.codex)
-        row.state = .yourTurn(sinceMs: now - 2_000)
+        row.status = .yourTurn(sinceMs: now - 2_000)
         let text = why(row, .zh)
         #expect(text.contains("Codex"))
         #expect(!text.contains("刚刚前"), "never 'just now ago'")
     }
 
     @Test func aProcessOnlyRowSaysItIsOnlyAProcess() {
-        var row = AgentRow(rowKey: RowIdentity.process(agent: .cursor, pid: 7), agent: .cursor)
+        var row = AgentRow(key: .process(.cursor, pid: 7), status: .processOnly)
         row.liveProcess = true
-        row.state = .processOnly
-        #expect(why(row) == L10n.t(.explainProcessOnly, .en))
+        #expect(why(row, facts: SessionFacts()) == L10n.t(.explainProcessOnly, .en))
     }
 
     /// The stall rule is not a setting, so the sentence names the
     /// silence and nothing the person could not have set.
     @Test func aStalledRowNamesTheSilence() {
-        var row = session()
-        row.lastEventMs = now - 23 * minute
-        row.isStalled = true
         let quiet = L10n.duration(23 * 60, .en)
         let expected = String(format: L10n.t(.explainStalled, .en), quiet)
-        #expect(why(row) == expected)
+        #expect(why(stalled(), facts: SessionFacts(lastEventMs: now - 23 * minute)) == expected)
     }
 
     /// A stalled row's why names its last step: "Nothing new for 23m — last
     /// step: Bash · swift test".
     @Test func aStalledRowNamesItsLastStep() {
-        var row = session()
-        row.lastEventMs = now - 23 * minute
-        row.isStalled = true
-        row.lastStep = SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 23 * minute)
-        #expect(why(row) == "Nothing new for 23m — last step: Bash · swift test")
-        #expect(why(row, .zh) == String(format: L10n.t(.stepStalled, .zh), L10n.duration(23 * 60, .zh), "Bash · swift test"))
-        let face = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
-        #expect(face.secondLine == TrayRowModel.SecondLine(kind: .warning, text: why(row)))
+        let row = stalled()
+        let facts = SessionFacts(
+            steps: [SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 23 * minute)],
+            lastEventMs: now - 23 * minute
+        )
+        #expect(why(row, facts: facts) == "Nothing new for 23m — last step: Bash · swift test")
+        #expect(why(row, .zh, facts: facts) == String(format: L10n.t(.stepStalled, .zh), L10n.duration(23 * 60, .zh), "Bash · swift test"))
+        #expect(face(row, facts).secondLine == TrayRowModel.SecondLine(kind: .warning, text: why(row, facts: facts)))
     }
 
     /// A running row's quiet second line is its last step, worded as a
     /// past step; its time slot is this turn's duration.
     @Test func aRunningRowShowsItsLastStepAndItsTurn() {
-        var row = session()
-        row.turnStartMs = now - 14 * minute
-        row.lastStep = SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 12 * minute)
-        row.recentSteps = [row.lastStep].compactMap { $0 }
-        let face = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
-        #expect(face.secondLine == TrayRowModel.SecondLine(kind: .step, text: "Bash · swift test · 12m ago"))
-        #expect(face.age == "14m")
-        #expect(face.accessibilityLabel.contains("Bash · swift test"))
-        let zh = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .zh, nowMs: now))
+        let row = session()
+        var facts = SessionFacts(
+            steps: [SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 12 * minute)],
+            turnStartMs: now - 14 * minute,
+            lastEventMs: now - minute
+        )
+        let en = face(row, facts)
+        #expect(en.secondLine == TrayRowModel.SecondLine(kind: .step, text: "Bash · swift test · 12m ago"))
+        #expect(en.age == "14m")
+        #expect(en.accessibilityLabel.contains("Bash · swift test"))
+        let zh = face(row, facts, lang: .zh)
         #expect(zh.secondLine?.text == "Bash · swift test · " + L10n.ago(now - 12 * minute, nowMs: now, .zh))
         #expect(zh.age == L10n.duration(14 * 60, .zh))
         // Under a minute the turn and the step both say "now".
-        row.turnStartMs = now - 20_000
-        row.lastStep = SessionBook.Step(tool: "Read", target: "", ms: now - 10_000)
-        let young = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
+        facts.turnStartMs = now - 20_000
+        facts.steps = [SessionBook.Step(tool: "Read", target: "", ms: now - 10_000)]
+        let young = face(row, facts)
         #expect(young.age == "now")
         #expect(young.secondLine?.text == "Read · now")
     }
@@ -1114,22 +1106,20 @@ struct RowWordsTests {
     /// No step, no second line: a Cursor or OpenCode row stays one line,
     /// and a row whose turn start is unknown shows when it last moved.
     @Test func aRowWithoutStepsStaysOneLine() {
-        let face = TrayRowModel.make(TrayRowModel.Input(row: session(.cursor), lang: .en, nowMs: now))
-        #expect(face.secondLine == nil)
-        #expect(face.age == String(format: L10n.t(.agoFormat, .en), "1m"))
+        let model = face(session(.cursor))
+        #expect(model.secondLine == nil)
+        #expect(model.age == String(format: L10n.t(.agoFormat, .en), "1m"))
     }
 
     /// Step words say what was reported, never that it is still going.
     @Test func noStepWordingSaysRunning() {
-        var row = session()
-        row.isStalled = true
-        row.lastStep = SessionBook.Step(tool: "Edit", target: "a.swift", ms: now - 30 * minute)
-        row.recentSteps = [row.lastStep].compactMap { $0 }
-        row.turnStartMs = now - 40 * minute
+        let row = stalled()
+        let step = SessionBook.Step(tool: "Edit", target: "a.swift", ms: now - 30 * minute)
+        let facts = SessionFacts(steps: [step], turnStartMs: now - 40 * minute, lastEventMs: now - 30 * minute)
         for lang in [ResolvedLanguage.en, .zh] {
-            var texts = [why(row, lang), TrayRowModel.stepLine(row.recentSteps[0], nowMs: now, lang: lang)]
+            var texts = [why(row, lang, facts: facts), TrayRowModel.stepLine(step, nowMs: now, lang: lang)]
             texts += [L10n.t(.stepStalled, lang), L10n.t(.stepHeading, lang), L10n.t(.stepThisTurn, lang)]
-            let detail = DetailModel.make(row: row, lang: lang, nowMs: now)
+            let detail = DetailModel.make(row: row, facts: facts, lang: lang, nowMs: now)
             texts += detail.steps.flatMap { [$0.label, $0.value] }
             for text in texts {
                 #expect(!text.lowercased().contains("running"), "\(text)")
@@ -1150,45 +1140,38 @@ struct RowWordsTests {
     }
 
     @Test func aStalledRowWithNoClockSaysSoRatherThanGuess() {
-        var row = session()
-        row.lastEventMs = 0
-        row.isStalled = true
-        #expect(why(row) == L10n.t(.explainStalledUnknown, .en))
+        #expect(why(stalled(), facts: SessionFacts()) == L10n.t(.explainStalledUnknown, .en))
     }
 
     @Test func aRunningRowSaysItIsWorking() {
         let text = why(session())
         #expect(text.hasPrefix("Claude is working"), "\(text)")
-        var noClock = session()
-        noClock.lastEventMs = 0
-        #expect(why(noClock) == L10n.t(.explainRunningNoClock, .en))
+        #expect(why(session(), facts: SessionFacts()) == L10n.t(.explainRunningNoClock, .en))
     }
 
     /// Orange is only a stall — a turn's error is a fact in the detail page,
     /// not a lamp.
     @Test func anErrorIsNotAnOrangeLamp() {
-        var row = session()
-        row.lastErrorText = "npm ERR! missing script: test"
-        let face = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
-        #expect(face.lamp == .running)
+        let model = face(session(), SessionFacts(lastError: "npm ERR! missing script: test", lastEventMs: now - minute))
+        #expect(model.lamp == .running)
     }
 
     /// A recent row says which rule made it recent.
     @Test func aRecentRowSaysWhichRuleMadeItRecent() {
         var row = session()
         row.liveProcess = false
-        row.state = .recent
-        row.recentReason = .ended
-        row.stateSinceMs = now - 5 * minute
+        row.status = .recent(.ended(atMs: now - 5 * minute))
         #expect(why(row).hasPrefix("The session ended"))
-        row.recentReason = .atPrompt
+        row.status = .recent(.atPrompt)
         #expect(why(row).hasPrefix("At its prompt"))
-        row.recentReason = .quiet
+        row.status = .recent(.quiet)
         #expect(why(row).contains("no process to watch"))
+        row.status = .recent(.silent)
+        #expect(why(row).hasPrefix("Nothing heard for"))
     }
 
     @Test func theSameRowAndInstantAlwaysSayTheSameThing() {
-        let input = TrayRowModel.Input(row: blocked(), lang: .en, nowMs: now)
+        let input = TrayRowModel.Input(row: blocked(), facts: said, lang: .en, nowMs: now)
         let first = TrayRowModel.make(input)
         let second = TrayRowModel.make(input)
         #expect(first == second)
@@ -1196,8 +1179,8 @@ struct RowWordsTests {
 
     @Test func thePinnedClockIsTheOneTheSentenceMeasuresFrom() {
         let row = blocked()
-        let early = TrayRowModel.why(row, lang: .en, nowMs: now)
-        let later = TrayRowModel.why(row, lang: .en, nowMs: now + 60 * minute)
+        let early = TrayRowModel.why(row, facts: said, lang: .en, nowMs: now)
+        let later = TrayRowModel.why(row, facts: said, lang: .en, nowMs: now + 60 * minute)
         #expect(early != later)
     }
 
@@ -1209,44 +1192,40 @@ struct RowWordsTests {
     // MARK: - Headline: the tray hero
 
     @Test func theTaskLeadsEvenWhenWordsAreFresh() {
-        var row = session()
-        row.lastWord = "All tests pass."
-        #expect(TrayRowModel.headline(row, lang: .en, nowMs: now) == "Refactor the settings panes")
+        let facts = SessionFacts(lastWords: "All tests pass.", lastEventMs: now - minute)
+        #expect(headline(session(), facts: facts) == "Refactor the settings panes")
     }
 
     @Test func freshWordsLeadOnlyWithoutATask() {
-        var row = session(task: "")
-        row.lastWord = "All tests pass."
-        #expect(TrayRowModel.headline(row, lang: .en, nowMs: now) == "All tests pass.")
-        row.lastEventMs = now - 45 * minute
-        #expect(TrayRowModel.headline(row, lang: .en, nowMs: now) == "pulse", "stale words fall back to the project")
+        let row = session(task: "")
+        #expect(headline(row, facts: SessionFacts(lastWords: "All tests pass.", lastEventMs: now - minute)) == "All tests pass.")
+        #expect(headline(row, facts: SessionFacts(lastWords: "All tests pass.", lastEventMs: now - 45 * minute)) == "pulse", "stale words fall back to the project")
     }
 
     @Test func aSessionWithNothingToSayNamesItsHandle() {
         var row = session(task: "")
-        row.project = ""
-        #expect(TrayRowModel.headline(row, lang: .en, nowMs: now) == L10n.t(.appSession, .en))
+        row.cwd = ""
+        #expect(headline(row) == L10n.t(.appSession, .en))
         row.landingPlan = LandingPlan(steps: [.ttyTab(tty: "ttys003")])
-        #expect(TrayRowModel.headline(row, lang: .en, nowMs: now) == L10n.t(.terminalSession, .en))
+        #expect(headline(row) == L10n.t(.terminalSession, .en))
     }
 
     @Test func aWaitLeadsWithWhatThePersonMustRecognise() {
         var row = blocked()
-        row.lastWord = "Fresh words never displace the question."
-        #expect(TrayRowModel.headline(row, lang: .en, nowMs: now) == "Refactor the settings panes")
+        let words = SessionFacts(lastWords: "Fresh words never displace the question.", lastEventMs: now - minute)
+        #expect(headline(row, facts: words) == "Refactor the settings panes")
         row.task = ""
-        #expect(TrayRowModel.headline(row, lang: .en, nowMs: now) == "pulse")
-        row.project = ""
-        #expect(TrayRowModel.headline(row, lang: .en, nowMs: now) == L10n.t(.needsYou, .en))
+        #expect(headline(row, facts: words) == "pulse")
+        row.cwd = ""
+        #expect(headline(row, facts: words) == L10n.t(.needsYou, .en))
     }
 
     @Test func aProcessOnlyRowSaysWhatLittleIsTrue() {
-        var row = AgentRow(rowKey: RowIdentity.process(agent: .codex, pid: 9), agent: .codex)
+        var row = AgentRow(key: .process(.codex, pid: 9), status: .processOnly)
         row.task = "never shown"
-        row.state = .processOnly
-        #expect(TrayRowModel.headline(row, lang: .en, nowMs: now) == L10n.t(.appDetectedNoDetails, .en))
+        #expect(headline(row) == L10n.t(.appDetectedNoDetails, .en))
         row.landingPlan = LandingPlan(steps: [.ttyTab(tty: "ttys003")])
-        #expect(TrayRowModel.headline(row, lang: .en, nowMs: now) == L10n.t(.terminalDetectedNoDetails, .en))
+        #expect(headline(row) == L10n.t(.terminalDetectedNoDetails, .en))
     }
 
     @Test func aBlockedRowCarriesItsAsk() {
@@ -1258,10 +1237,9 @@ struct RowWordsTests {
     // MARK: - The lamp explanation
 
     @Test func aRedLampSaysOneLine() {
-        let waiting = blocked()
         var other = session(.codex)
-        other.rowKey = "codex|b"
-        let rule = TrayState.lampRule(counts: TrayState.Counts(rows: [waiting, other]))
+        other.key = "codex|b"
+        let rule = TrayState.lampRule(counts: TrayState.Counts(rows: [blocked(), other]))
         #expect(rule == .blocked)
         let sentence = TrayState.lampSentence(rule, lang: .en)
         #expect(sentence == L10n.t(.lampRuleBlocked, .en))
@@ -1269,19 +1247,15 @@ struct RowWordsTests {
     }
 
     @Test func aProcessOnlySessionIsAGreyRuleNotAnOrangeOne() {
-        var process = AgentRow(rowKey: RowIdentity.process(agent: .cursor, pid: 3), agent: .cursor)
+        var process = AgentRow(key: .process(.cursor, pid: 3), status: .processOnly)
         process.liveProcess = true
-        process.state = .processOnly
         let rule = TrayState.lampRule(counts: TrayState.Counts(rows: [process]))
         #expect(rule == .processOnly)
         #expect(TrayState.lampSentence(rule, lang: .zh) == L10n.t(.lampRuleProcessOnly, .zh))
     }
 
     @Test func aStalledLampNamesNoThreshold() {
-        var stalled = session()
-        stalled.lastEventMs = now - 30 * minute
-        stalled.isStalled = true
-        let rule = TrayState.lampRule(counts: TrayState.Counts(rows: [stalled]))
+        let rule = TrayState.lampRule(counts: TrayState.Counts(rows: [stalled()]))
         #expect(rule == .stalled)
         let sentence = TrayState.lampSentence(rule, lang: .en)
         #expect(!sentence.contains("20"))
@@ -1289,9 +1263,8 @@ struct RowWordsTests {
 
     @Test func aGreyLampWithATurnSaysWhoseTurn() {
         var turn = session(.codex)
-        turn.state = .yourTurn(sinceMs: now - minute)
-        var process = AgentRow(rowKey: RowIdentity.process(agent: .codex, pid: 4), agent: .codex)
-        process.state = .processOnly
+        turn.status = .yourTurn(sinceMs: now - minute)
+        let process = AgentRow(key: .process(.codex, pid: 4), status: .processOnly)
         let rule = TrayState.lampRule(counts: TrayState.Counts(rows: [process, turn]))
         #expect(rule == .yourTurn, "a finished turn outranks a bare process")
     }
@@ -1299,24 +1272,13 @@ struct RowWordsTests {
     // MARK: - The lamp's shape and tone, per state
 
     @Test func everyStateHasItsShapeAndTone() {
-        var blockedRow = session()
-        blockedRow.state = .blocked(RowWait(kind: "Permission"))
-        let running = session()
-        var stalled = session()
-        stalled.isStalled = true
-        var turn = session()
-        turn.state = .yourTurn(sinceMs: now)
-        var recent = session()
-        recent.state = .recent
-        var process = AgentRow(rowKey: RowIdentity.process(agent: .codex, pid: 5), agent: .codex)
-        process.state = .processOnly
-
-        #expect(Lamp(blockedRow) == .waiting)
-        #expect(Lamp(running) == .running)
-        #expect(Lamp(stalled) == .stalled)
-        #expect(Lamp(turn) == .idle)
-        #expect(Lamp(recent) == .idle)
-        #expect(Lamp(process) == .processOnly, "a process is never orange")
+        typealias Status = AgentRow.Status
+        #expect(Lamp(Status.needsYou(Block(kind: .permission))) == .waiting)
+        #expect(Lamp(Status.running(stalled: false)) == .running)
+        #expect(Lamp(Status.running(stalled: true)) == .stalled)
+        #expect(Lamp(Status.yourTurn(sinceMs: now)) == .idle)
+        #expect(Lamp(Status.recent(.atPrompt)) == .idle)
+        #expect(Lamp(Status.processOnly) == .processOnly, "a process is never orange")
     }
 
     /// The menu bar draws the lamp of the rule that set it: the same five
@@ -1342,7 +1304,7 @@ struct RowWordsTests {
         let ignore = model.menu.first { $0.action == .dismiss }?.title
         #expect(ignore == "Ignore", "one word for setting a wait aside: the tray, the detail and the banner")
         // The only time on a waiting row is how long it has waited.
-        let waited = TrayRowModel.rowTime(SurfaceFixtures.rowPermission(), nowMs: SurfaceFixtures.nowMs, lang: .en)
+        let waited = TrayRowModel.rowTime(SurfaceFixtures.rowPermission().row, nowMs: SurfaceFixtures.nowMs, lang: .en)
         #expect(model.age == waited)
     }
 
@@ -1373,18 +1335,18 @@ struct RowWordsTests {
     }
 
     @Test func theProjectIsNotRepeatedWhenItIsTheHeadline() {
-        var row = SurfaceFixtures.rowPermission()
-        row.task = ""
-        let model = SurfaceFixtures.rowModel(row, lang: .en)
+        var sample = SurfaceFixtures.rowPermission()
+        sample.row.task = ""
+        let model = SurfaceFixtures.rowModel(sample, lang: .en)
         #expect(model.headline == "app")
         #expect(model.project == "")
     }
 
     @Test func aWaitWithoutWordsNamesItsKind() {
-        var row = SurfaceFixtures.rowPermission()
-        row.state = .blocked(RowWait(kind: "Permission", sinceMs: SurfaceFixtures.nowMs - 2 * 60_000))
-        let model = SurfaceFixtures.rowModel(row, lang: .en)
-        #expect(model.secondLine == TrayRowModel.SecondLine(kind: .ask, text: L10n.waitKind("Permission", .en)))
+        var sample = SurfaceFixtures.rowPermission()
+        sample.row.status = .needsYou(Block(kind: .permission, sinceMs: SurfaceFixtures.nowMs - 2 * 60_000))
+        let model = SurfaceFixtures.rowModel(sample, lang: .en)
+        #expect(model.secondLine == TrayRowModel.SecondLine(kind: .ask, text: L10n.waitKind(.permission, .en)))
     }
 
     @Test func everyFixtureSpeaksBothLanguages() {
@@ -1402,9 +1364,9 @@ struct RowWordsTests {
     // MARK: - The detail page
 
     @Test func theDetailPageSaysTheSameWhyAsTheRow() {
-        let row = SurfaceFixtures.rowPermission()
-        let face = SurfaceFixtures.rowModel(row, lang: .en)
-        let detail = DetailModel.make(row: row, lang: .en, nowMs: SurfaceFixtures.nowMs)
+        let sample = SurfaceFixtures.rowPermission()
+        let face = SurfaceFixtures.rowModel(sample, lang: .en)
+        let detail = SurfaceFixtures.detail(sample, lang: .en)
         #expect(detail.why == face.why)
         #expect(detail.lamp == face.lamp)
         #expect(detail.ask == "Bash: npm run build")
@@ -1421,10 +1383,7 @@ struct RowWordsTests {
     }
 
     @Test func staleWordsAreNotQuotedAsNow() {
-        var row = session()
-        row.lastEventMs = now - 45 * minute
-        row.lastWord = "old"
-        let detail = DetailModel.make(row: row, lang: .en, nowMs: now)
+        let detail = DetailModel.make(row: session(), facts: SessionFacts(lastWords: "old", lastEventMs: now - 45 * minute), lang: .en, nowMs: now)
         #expect(detail.lastMessage == nil)
     }
 
@@ -1436,12 +1395,12 @@ struct RowWordsTests {
         let steps = SurfaceFixtures.detailSteps(lang: .en)
         let labels = steps.facts.map { $0.label }
         #expect(labels == [L10n.t(.stepThisTurn, .en), L10n.t(.detailFolder, .en)], "one clock, then the folder")
-        let headline = TrayRowModel.headline(SurfaceFixtures.rowRunningStep(), lang: .en, nowMs: SurfaceFixtures.nowMs)
+        let running = SurfaceFixtures.rowRunningStep()
+        let headline = TrayRowModel.headline(running.row, facts: running.facts, lang: .en, nowMs: SurfaceFixtures.nowMs)
         #expect(steps.headline == headline)
         #expect(steps.why != nil, "a running row's why is not its second line (the step)")
 
-        let stalledRow = SurfaceFixtures.rowStalledStep()
-        let stalledFace = SurfaceFixtures.rowModel(stalledRow, lang: .en)
+        let stalledFace = SurfaceFixtures.rowModel(SurfaceFixtures.rowStalledStep(), lang: .en)
         let stalled = SurfaceFixtures.detailStalled(lang: .en)
         #expect(stalledFace.secondLine?.kind == .warning)
         #expect(stalledFace.secondLine?.text == stalledFace.why)
@@ -1465,9 +1424,7 @@ struct RowWordsTests {
     @Test func theDetailListsOnlyWhatItKnows() {
         var row = session()
         row.cwd = ""
-        row.project = ""
-        row.startedMs = 0
-        let detail = DetailModel.make(row: row, lang: .en, nowMs: now)
+        let detail = DetailModel.make(row: row, facts: said, lang: .en, nowMs: now)
         #expect(detail.facts.isEmpty, "\(detail.facts)")
     }
 }
@@ -1478,13 +1435,12 @@ struct RowWordsTests {
 /// measured, dropped work it had been asked to do, or let a click reach
 /// nothing without saying so.
 final class RowErrorTests: XCTestCase {
+    private let now: Int64 = 1_800_000_000_000
+
     private func liveRow() -> AgentRow {
-        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
+        var row = AgentRow(key: "claude|s1", status: .running(stalled: false))
         row.task = "Fix the auth module"
         row.liveProcess = true
-        row.state = .running
-        row.lastEventMs = Int64(Date().timeIntervalSince1970 * 1000)
-        row.source = .hooks
         return row
     }
 
@@ -1493,14 +1449,13 @@ final class RowErrorTests: XCTestCase {
     /// A turn's last error is shown on the detail page, where
     /// it can be read in full — not guessed into a count.
     func testALastErrorIsTheDetailPagesError() {
-        var row = liveRow()
-        row.lastErrorText = "npm ERR! missing script: test"
-        XCTAssertEqual(DetailModel.make(row: row, lang: .en, nowMs: row.lastEventMs).error, "npm ERR! missing script: test")
-        XCTAssertNil(DetailModel.make(row: liveRow(), lang: .en, nowMs: row.lastEventMs).error)
+        let failed = SessionFacts(lastError: "npm ERR! missing script: test", lastEventMs: now)
+        XCTAssertEqual(DetailModel.make(row: liveRow(), facts: failed, lang: .en, nowMs: now).error, "npm ERR! missing script: test")
+        XCTAssertNil(DetailModel.make(row: liveRow(), facts: SessionFacts(lastEventMs: now), lang: .en, nowMs: now).error)
     }
 
     func testNoErrorsIsNoFault() {
-        let why = TrayRowModel.why(liveRow(), lang: .en, nowMs: liveRow().lastEventMs)
+        let why = TrayRowModel.why(liveRow(), facts: SessionFacts(lastEventMs: now), lang: .en, nowMs: now)
         XCTAssertFalse(why.contains("error"), why)
     }
 }
@@ -1511,23 +1466,20 @@ final class RowErrorTests: XCTestCase {
 struct WaitAnnouncementTests {
     let now: Int64 = 1_800_000_000_000
 
-    private func waiting(_ key: String, _ agent: AgentID, ask: String, since: Int64) -> AgentRow {
-        var row = AgentRow(rowKey: key, agent: agent)
-        row.state = .blocked(RowWait(kind: "Permission", ask: ask, sinceMs: since))
-        return row
+    private func waiting(_ key: SessionKey, ask: String, since: Int64) -> AgentRow {
+        AgentRow(key: key, status: .needsYou(Block(kind: .permission, ask: ask, sinceMs: since)))
     }
 
     @Test func onlyARisingBlockedCountIsAnnounced() {
-        let old = waiting("claude|a", .claude, ask: "Bash: npm test", since: now - 600_000)
-        let new = waiting("copilot|b", .copilot, ask: "Edit: src/main.swift", since: now - 5_000)
+        let old = waiting("claude|a", ask: "Bash: npm test", since: now - 600_000)
+        let new = waiting("copilot|b", ask: "Edit: src/main.swift", since: now - 5_000)
         let rose = WaitAnnouncement.text(previousBlocked: 1, rows: [old, new], lang: .en)
         #expect(rose == "Copilot needs you: Edit: src/main.swift", "the newest wait, in its own words")
         let held = WaitAnnouncement.text(previousBlocked: 2, rows: [old, new], lang: .en)
         #expect(held == nil)
         let fell = WaitAnnouncement.text(previousBlocked: 2, rows: [old], lang: .en)
         #expect(fell == nil, "an answered wait is not announced")
-        var running = AgentRow(rowKey: "codex|c", agent: .codex)
-        running.state = .running
+        let running = AgentRow(key: "codex|c", status: .running(stalled: false))
         let other = WaitAnnouncement.text(previousBlocked: 0, rows: [running], lang: .en)
         #expect(other == nil, "a running session is not announced")
         let first = WaitAnnouncement.text(previousBlocked: nil, rows: [old], lang: .en)
@@ -1535,31 +1487,26 @@ struct WaitAnnouncementTests {
     }
 
     @Test func aWaitWithoutWordsSaysWhoAndInChinese() {
-        var quiet = AgentRow(rowKey: "pi|a", agent: .pi)
-        quiet.state = .blocked(RowWait(kind: "Waiting", sinceMs: now))
+        let quiet = AgentRow(key: "pi|a", status: .needsYou(Block(kind: .waiting, sinceMs: now)))
         let text = WaitAnnouncement.text(previousBlocked: 0, rows: [quiet], lang: .en)
         #expect(text == "Pi needs you")
-        let zh = WaitAnnouncement.text(previousBlocked: 0, rows: [waiting("claude|a", .claude, ask: "Bash: ls", since: now)], lang: .zh)
+        let zh = WaitAnnouncement.text(previousBlocked: 0, rows: [waiting("claude|a", ask: "Bash: ls", since: now)], lang: .zh)
         #expect(zh == "Claude 需要你：Bash: ls")
     }
 
     /// A row's VoiceOver label says its time in whole words.
     @Test func aRowsSpokenTimeIsInFullUnits() {
-        var row = waiting("claude|a", .claude, ask: "Bash: npm test", since: now - 4 * 60_000)
+        var row = waiting("claude|a", ask: "Bash: npm test", since: now - 4 * 60_000)
         row.task = "Fix the flaky test"
         let face = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
         #expect(face.age == "4m", "the drawn time stays compact")
         #expect(face.accessibilityLabel.contains(L10n.duration(4 * 60, .en, spoken: true)), "\(face.accessibilityLabel)")
         #expect(!face.accessibilityLabel.contains("4m"), "\(face.accessibilityLabel)")
-        var ran = AgentRow(rowKey: "codex|b", agent: .codex)
-        ran.state = .running
-        ran.turnStartMs = now - 20_000
-        ran.lastEventMs = now - 20_000
-        let young = TrayRowModel.rowTime(ran, nowMs: now, lang: .en, spoken: true)
+        var ran = AgentRow(key: "codex|b", status: .running(stalled: false))
+        let young = TrayRowModel.rowTime(ran, facts: SessionFacts(turnStartMs: now - 20_000, lastEventMs: now - 20_000), nowMs: now, lang: .en, spoken: true)
         #expect(young == "now")
-        ran.state = .yourTurn(sinceMs: now - 12 * 60_000)
-        ran.lastEventMs = now - 12 * 60_000
-        let ago = TrayRowModel.rowTime(ran, nowMs: now, lang: .en, spoken: true)
+        ran.status = .yourTurn(sinceMs: now - 12 * 60_000)
+        let ago = TrayRowModel.rowTime(ran, facts: SessionFacts(lastEventMs: now - 12 * 60_000), nowMs: now, lang: .en, spoken: true)
         let plain = ago.replacingOccurrences(of: "\u{00A0}", with: " ").replacingOccurrences(of: "\u{202F}", with: " ")
         #expect(plain == "12 minutes ago")
     }

@@ -4,14 +4,16 @@ import Foundation
 /// what its events said about it — from the agents' own hook events.
 ///
 /// Pulse reads no vendor session file. Each supported agent's hook appends
-/// one v6 line to the event log (`EventLog`) when a session starts, takes a
+/// one v7 line to the event log (`EventLog`) when a session starts, takes a
 /// prompt, runs a tool, is blocked, finishes its turn or ends; a process exit
-/// ends a session. This is the reducer those lines feed, in file order — a
+/// ends a session. This is the reducer those lines feed, in `seq` order — a
 /// pure value, `apply` in, `sessions` out — and `TrayState.project` turns it
 /// into what the tray draws. At launch the engine replays the whole log
 /// through it before the first projection, so everything here — the steps,
 /// the title, the turn's clock — is rebuilt from the log and never kept
-/// anywhere else.
+/// anywhere else. The quick facts a row's second line and the detail page
+/// say (`SessionFacts`) are read from here at render time (`facts(for:)`):
+/// they are not part of the projection.
 ///
 /// What a session says about itself, from its events only:
 ///
@@ -21,8 +23,8 @@ import Foundation
 /// - **title**: the first prompt that says something (not "continue"), and
 ///   the latest prompt;
 /// - **last words**: what the latest turn line carried; **error**: the text
-///   of a turn that ended on an error (`tool` = `error`), until the next
-///   turn starts (a prompt, or work after the turn ended). Tokens, context,
+///   of a turn that ended on an error (a `failed` line), until the next turn
+///   starts (a prompt, or work after the turn ended). Tokens, context,
 ///   cost and model are never read — a decision.
 ///
 /// The rules, each an owner decision:
@@ -43,17 +45,19 @@ import Foundation
 ///   permission is granted in the vendor's own prompt — the next `tool` line
 ///   (or prompt) stamped after the raise is the answer. When the block and
 ///   the tool line both name their tool, only that tool answers it: a
-///   parallel tool finishing is not the person saying yes, and a `:status`
+///   parallel tool finishing is not the person saying yes, and a `status`
 ///   line (a retry, a recoverable error) is no answer at all. Every line is
 ///   applied, so a parallel tool written after the answer no longer
 ///   hides it.
-/// - **`done`** (the vendor's "resolved", or a dismissal in Pulse) clears the
-///   session it names; an empty session clears only the agent's session-less
-///   session in the folder it names (every session-less one of the agent
-///   when it names none), never one that has an id. After a dismissal in
-///   Pulse (`tool` = `:dismiss`) the same block said again right after
-///   (same kind, inside the first raise's grace, no work since) stays
-///   cleared; after the vendor's "resolved" it is raised again.
+/// - **`done`** (the vendor's "resolved") and **`dismiss`** (Pulse's own)
+///   clear the session they name; an empty session clears only the agent's
+///   session-less session in the folder it names (every session-less one of
+///   the agent when it names none), never one that has an id. After a
+///   `dismiss` the same block said again right after (same kind, inside the
+///   first raise's grace, no work since) stays cleared; after the vendor's
+///   `done` it is raised again.
+/// - **`ignored`** lines are skipped: they record what the receiver heard,
+///   not a state.
 /// - **An exit ends a session**: a process exit (kqueue) or a pid found dead
 ///   ends every live session that pid ran. Nothing here guesses "running".
 package struct SessionBook: Equatable {
@@ -71,19 +75,6 @@ package struct SessionBook: Equatable {
         case ended(atMs: Int64)
     }
 
-    package struct Block: Equatable, Sendable {
-        /// `.permission`, `.question` or `.waiting`.
-        package var kind: AttentionKind
-        /// What the agent asked, sanitized; "" when the event did not say.
-        package var ask: String
-        package var sinceMs: Int64
-        /// The prompt's own window was in front when it was raised.
-        package var inFront: Bool
-        /// The tool the block is about, when the raise named it (`Bash`
-        /// from Claude's `Bash: npm test`); "" when unknown.
-        package var tool: String = ""
-    }
-
     /// A turn that arrived within `stopGraceMs` of a block: held, never
     /// dropped.
     package struct HeldTurn: Equatable, Sendable {
@@ -91,8 +82,8 @@ package struct SessionBook: Equatable {
         package var front: Bool
     }
 
-    /// The block a dismissal in Pulse (a `done` marked `:dismiss`) cleared
-    /// last, and when.
+    /// The block a dismissal in Pulse (a `dismiss` line) cleared last, and
+    /// when.
     package struct ClearedBlock: Equatable, Sendable {
         package var kind: AttentionKind
         package var ask: String
@@ -110,11 +101,11 @@ package struct SessionBook: Equatable {
     }
 
     package struct Session: Equatable, Sendable {
-        /// `RowIdentity.session` — decided by the first event, never changed.
-        package var key: String
-        package var agent: AgentID
+        /// Decided by the first event, never changed.
+        package var key: SessionKey
+        package var agent: AgentID { key.agent }
         /// The session exactly as the events spell it ("" for a
-        /// folder-keyed one) — what a dismissal's `done` must carry.
+        /// folder-keyed one) — what a `dismiss` must carry.
         package var session: String
         package var cwd = ""
         /// The agent process the hook ran under; 0 unknown.
@@ -138,8 +129,7 @@ package struct SessionBook: Equatable {
         /// What the latest turn line carried (a vendor's last words, when
         /// its hook sends them).
         package var message = ""
-        /// The text of the latest turn that ended on an error; cleared by
-        /// the next prompt.
+        /// The text of the latest `failed` turn; cleared by the next turn.
         package var lastError = ""
         /// The first prompt that says something — the session's title.
         package var title = ""
@@ -165,7 +155,7 @@ package struct SessionBook: Equatable {
         }
     }
 
-    package private(set) var sessions: [String: Session] = [:]
+    package private(set) var sessions: [SessionKey: Session] = [:]
 
     /// A turn ending this soon after a block does not clear it.
     package static let stopGraceMs: Int64 = 20_000
@@ -183,40 +173,38 @@ package struct SessionBook: Equatable {
 
     // MARK: - Events
 
-    /// One event line, in file order. Returns whether anything changed.
+    /// One event line, in `seq` order. Returns whether anything changed.
     @discardableResult
     package mutating func apply(_ record: AttentionRecord, nowMs: Int64) -> Bool {
-        guard let agent = Agents.agent(named: record.agent),
-              let kind = AttentionProtocol.kind(record.kind),
-              record.ms > 0, record.ms <= nowMs + Self.clockFutureToleranceMs
-        else { return false }
+        let kind = record.kind
+        guard kind != .ignored, record.ms > 0, record.ms <= nowMs + Self.clockFutureToleranceMs else { return false }
+        let agent = record.agent
         // No fake Waiting: an agent whose hooks cannot report a block is
         // never blocked, whoever wrote the line.
         if kind.isBlocking, agent.waitingSource == .none { return false }
         let ms = record.ms
         let spelled = record.session.trimmingCharacters(in: .whitespacesAndNewlines)
+        let dismissal = kind == .dismiss
 
-        switch kind {
-        case .done where spelled.isEmpty:
-            // An empty `done` clears the agent's session-less entries only:
-            // the one of the folder it names, or — naming none — every one.
+        if kind.isResolution, spelled.isEmpty {
+            // An empty resolution clears the agent's session-less entries
+            // only: the one of the folder it names, or — naming none — every
+            // one.
             let folder = record.cwd.trimmingCharacters(in: .whitespacesAndNewlines)
-            let folderKey = RowIdentity.session(agent: agent, session: "", cwd: record.cwd)
+            let folderKey = SessionKey(agent, "", cwd: record.cwd)
             let redacted = ContentSanitizer.redact(folder)
             var changed = false
             for key in sessions.keys.sorted() {
                 guard let session = sessions[key], session.agent == agent, session.session.isEmpty else { continue }
                 if !folder.isEmpty, key != folderKey, session.cwd != redacted { continue }
-                changed = resolve(key, at: ms, dismissal: record.isDismissal) || changed
+                changed = resolve(key, at: ms, dismissal: dismissal) || changed
             }
             return changed
-        default:
-            break
         }
 
-        let key = RowIdentity.session(agent: agent, session: spelled, cwd: record.cwd)
+        let key = SessionKey(agent, spelled, cwd: record.cwd)
         let before = sessions[key]
-        guard var session = before ?? introduce(key: key, agent: agent, session: spelled, kind: kind, ms: ms) else {
+        guard var session = before ?? introduce(key: key, session: spelled, kind: kind, ms: ms) else {
             return false
         }
         // A held turn whose grace this event's clock has passed goes first.
@@ -232,10 +220,10 @@ package struct SessionBook: Equatable {
             session.activityMs = max(session.activityMs, ms)
             Self.prompt(record.message, at: ms, into: &session)
             Self.answer(&session, at: ms)
-        case .tool:
+        case .tool, .status:
             session.activityMs = max(session.activityMs, ms)
             session.toolMs = max(session.toolMs, ms)
-            Self.step(record, at: ms, into: &session)
+            if kind == .tool { Self.step(record, at: ms, into: &session) }
             // Work goes on — unless it is older than the state it would
             // end, or a different tool than the one a block is about.
             if ms > session.stateSinceMs || before == nil {
@@ -254,12 +242,10 @@ package struct SessionBook: Equatable {
             }
         case .permission, .question, .waiting:
             Self.raise(kind, record: record, at: ms, in: &session)
-        case .turn:
+        case .turn, .failed:
             let message = TitleHeuristics.firstLine(record.message)
-            if record.tool == AttentionRecord.errorTool {
-                if !message.isEmpty { session.lastError = message }
-            } else if !message.isEmpty {
-                session.message = message
+            if !message.isEmpty {
+                if kind == .failed { session.lastError = message } else { session.message = message }
             }
             Self.turn(&session, at: ms, front: record.front == true)
         case .idle:
@@ -274,10 +260,12 @@ package struct SessionBook: Equatable {
             case .idle, .yourTurn, .ended:
                 break
             }
-        case .done:
-            _ = Self.clear(&session, at: ms, dismissal: record.isDismissal)
+        case .done, .dismiss:
+            _ = Self.clear(&session, at: ms, dismissal: dismissal)
         case .end:
             Self.set(&session, .ended(atMs: ms), at: ms)
+        case .ignored:
+            return false
         }
         sessions[key] = session
         return session != before
@@ -285,11 +273,17 @@ package struct SessionBook: Equatable {
 
     /// A session an event names for the first time — unless the event says
     /// nothing is going on (a `done` or an `end` for a session never seen).
-    private func introduce(key: String, agent: AgentID, session: String, kind: AttentionKind, ms: Int64) -> Session? {
-        if kind == .done || kind == .end { return nil }
-        // A turn or a tool with no identity has no session to belong to.
-        if kind == .turn || kind == .idle || kind == .tool, session.isEmpty { return nil }
-        return Session(key: key, agent: agent, session: session, stateSinceMs: ms, startedMs: ms)
+    private func introduce(key: SessionKey, session: String, kind: AttentionKind, ms: Int64) -> Session? {
+        switch kind {
+        case .done, .dismiss, .end, .ignored:
+            return nil
+        case .turn, .failed, .idle, .tool, .status:
+            // With no identity there is no session to belong to.
+            if session.isEmpty { return nil }
+        case .start, .working, .permission, .question, .waiting:
+            break
+        }
+        return Session(key: key, session: session, stateSinceMs: ms, startedMs: ms)
     }
 
     private func note(_ record: AttentionRecord, ms: Int64, into session: inout Session) {
@@ -318,12 +312,11 @@ package struct SessionBook: Equatable {
         if session.title.isEmpty, TitleHeuristics.isMeaningful(text) { session.title = text }
     }
 
-    /// A `tool` line that names its tool is a step (a `:status` line is
-    /// not). Lines are applied in file order, so the last `maxSteps` are
-    /// the newest.
+    /// A `tool` line that names its tool is a step. Lines are applied in
+    /// order, so the last `maxSteps` are the newest.
     private static func step(_ record: AttentionRecord, at ms: Int64, into session: inout Session) {
         let tool = record.tool.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !tool.isEmpty, !record.isStatus else { return }
+        guard !tool.isEmpty else { return }
         var target = TitleHeuristics.firstLine(record.message, limit: stepTargetLimit)
         if target.caseInsensitiveCompare(tool) == .orderedSame { target = "" }
         session.steps.append(Step(tool: String(tool.prefix(64)), target: target, ms: ms))
@@ -336,11 +329,10 @@ package struct SessionBook: Equatable {
     /// and the more specific of the two asks (`askSpecificity`) — the
     /// earlier one on a tie — with its tool. A later raise with no words
     /// keeps the earlier ones'. The same block said again after a dismissal
-    /// in Pulse cleared it (a `:dismiss` `done` between the two) is not
-    /// raised again: same
-    /// kind, inside the grace of the first raise, no work since the clear,
-    /// and words that say nothing new (the same ask, or only a generic
-    /// "needs your permission").
+    /// in Pulse cleared it (a `dismiss` between the two) is not raised
+    /// again: same kind, inside the grace of the first raise, no work since
+    /// the clear, and words that say nothing new (the same ask, or only a
+    /// generic "needs your permission").
     private static func raise(_ kind: AttentionKind, record: AttentionRecord, at ms: Int64, in session: inout Session) {
         var block = Block(
             kind: kind,
@@ -491,19 +483,19 @@ package struct SessionBook: Equatable {
         }
     }
 
-    private mutating func resolve(_ key: String, at ms: Int64, dismissal: Bool) -> Bool {
+    private mutating func resolve(_ key: SessionKey, at ms: Int64, dismissal: Bool) -> Bool {
         guard var session = sessions[key], Self.clear(&session, at: ms, dismissal: dismissal) else { return false }
         session.lastEventMs = max(session.lastEventMs, ms)
         sessions[key] = session
         return true
     }
 
-    /// Whether a `tool` line answers a block: it does unless both name a
-    /// tool and the names differ (a parallel tool finishing is not the
-    /// answer), or the line is a `:status` (work going on — a retry, a
-    /// recoverable error — is not the person answering).
+    /// Whether an activity line answers a block: a `tool` line does unless
+    /// both name a tool and the names differ (a parallel tool finishing is
+    /// not the answer); a `status` line never does (work going on — a retry,
+    /// a recoverable error — is not the person answering).
     package static func answers(_ record: AttentionRecord, _ block: Block) -> Bool {
-        if record.isStatus { return false }
+        guard record.kind == .tool else { return false }
         let tool = record.tool.trimmingCharacters(in: .whitespacesAndNewlines)
         if tool.isEmpty || block.tool.isEmpty { return true }
         return tool.caseInsensitiveCompare(block.tool) == .orderedSame
@@ -552,6 +544,23 @@ package struct SessionBook: Equatable {
         Set(sessions.values.filter { $0.pid > 0 && !$0.isEnded }.map(\.pid))
     }
 
+    // MARK: - Facts
+
+    /// What a session said lately, read at render time — never part of the
+    /// projection, so a burst of tool lines moves no row. Empty for a key
+    /// the book does not hold (a process-only row).
+    package func facts(for key: SessionKey) -> SessionFacts {
+        guard let session = sessions[key] else { return SessionFacts() }
+        return SessionFacts(
+            lastWords: session.message,
+            lastError: session.lastError,
+            steps: session.steps,
+            turnStartMs: session.turnStartMs,
+            lastEventMs: session.lastEventMs,
+            activityMs: session.activityMs
+        )
+    }
+
     // MARK: - Bounds
 
     /// Drops sessions quiet for longer than `retentionMs`, and keeps at most
@@ -564,7 +573,8 @@ package struct SessionBook: Equatable {
             let keep = sessions.values
                 .sorted { a, b in
                     if a.isEnded != b.isEnded { return !a.isEnded }
-                    return (a.lastEventMs, a.key) > (b.lastEventMs, b.key)
+                    if a.lastEventMs != b.lastEventMs { return a.lastEventMs > b.lastEventMs }
+                    return a.key > b.key
                 }
                 .prefix(Self.maxSessions)
                 .map(\.key)

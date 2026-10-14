@@ -7,20 +7,38 @@ import Foundation
 /// for the two modules, as the last argument). Each agent's adapter
 /// (`Agents/`) maps its own event names and payload onto a `HookAction`;
 /// nothing else is read — not the protocol's kind words, not plain text.
-/// Writes one v6 line to the
-/// event log (`EventLog` — the only file it writes) and exits 0 at once.
-/// Unknown events and payloads that are not a JSON object soft-fail (exit 0,
-/// no write), and a blocked event from an agent whose hooks cannot report
-/// one (`waiting: .none`) is refused — no fake Waiting. Nothing is ever
-/// held: the vendor's own prompt is always in charge.
+/// Every event it hears is one v7 line in the event log (`EventLog` — the
+/// only file it writes), and it exits 0 at once. An event it does not turn
+/// into state — one Pulse does not install, a payload that is not a JSON
+/// object, a blocked event from an agent whose hooks cannot report one
+/// (`waiting: .none`, no fake Waiting) — is an `ignored` line that says why.
+/// Nothing is ever held: the vendor's own prompt is always in charge.
 package enum PulseHookReceiver {
+    /// Why a heard event became an `ignored` line — its `message`.
+    package enum Ignored: String, Sendable {
+        /// The installed command named no event.
+        case noEvent = "no event named"
+        /// An event Pulse does not install for this agent.
+        case notInstalled = "not an installed event"
+        /// The payload is not a JSON object: cut off at `stdinLimit`, a
+        /// writer that died mid-write, plain text.
+        case unparsable = "payload is not a JSON object"
+        /// A blocked event from an agent whose hooks cannot report a wait.
+        case cannotWait = "blocked event from an agent that does not report waits"
+        /// Activity or a prompt that names no session: no row to belong to.
+        case noSession = "no session"
+        /// A known event that says nothing Pulse shows.
+        case silent = "says nothing Pulse shows"
+    }
+
     /// Always returns 0 — vendor hooks must never be broken by Pulse.
     ///
     /// `logURL` nil writes the real event log; a test passes a temporary one
     /// (never a global override — suites run in parallel). `locate` finds
-    /// the agent's pid and the landing handles; tests pass a fixed answer, and `front`
-    /// whether the prompt's window is frontmost — an AppKit question, so the
-    /// app passes it (`PromptVisibility.promptIsFrontmost`); unknown otherwise.
+    /// the agent's pid and the landing handles; tests pass a fixed answer,
+    /// and `front` whether the prompt's window is frontmost — an AppKit
+    /// question, so the app passes it (`PromptVisibility.promptIsFrontmost`);
+    /// unknown otherwise.
     @discardableResult
     package static func run(
         arguments: [String],
@@ -33,62 +51,62 @@ package enum PulseHookReceiver {
     ) -> Int32 {
         let args = Array(arguments.drop(while: { $0 != "--hook" }).dropFirst())
         let agentRaw = (args.first ?? "claude").lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        // Not one of the six — or another tool running this agent's hooks
+        // as its own: there is no agent to write a line for.
         guard let agent = attributedAgent(agentRaw, environment: environment) else {
             DebugLog.write("attention reject agent=\(agentRaw)")
             return 0
         }
-        let eventArg = args.count > 1 && !args[1].hasPrefix("{") ? args[1] : ""
-        // A payload that is not a JSON object — cut off at `stdinLimit`, a
-        // writer that died mid-write, plain text — writes nothing: its raw
-        // text would become a ghost wait whose ask is broken JSON.
-        guard var payload = parsePayload(stdin: stdin, trailingArg: args.count > 1 ? args.last : nil) else {
-            DebugLog.write("attention reject unparsable payload event=\(eventArg) agent=\(agent.rawValue)")
-            return 0
+        let event = args.count > 1 && !args[1].hasPrefix("{") ? args[1] : ""
+        var written: AttentionRecord
+        if var payload = parsePayload(stdin: stdin, trailingArg: args.count > 1 ? args.last : nil) {
+            if let msg = payload["msg"] as? [String: Any], payload["type"] == nil {
+                payload.merge(msg) { current, _ in current }
+            }
+            written = record(agent: agent, event: event, payload: payload, nowMs: nowMs)
+        } else {
+            // Its raw text would become a ghost wait whose ask is broken
+            // JSON: it is heard, and said to be unreadable — nothing else.
+            written = ignored(.unparsable, agent: agent, event: event, context: HookContext(payload: [:]), nowMs: nowMs)
         }
-        if let msg = payload["msg"] as? [String: Any], payload["type"] == nil {
-            payload.merge(msg) { current, _ in current }
-        }
-        guard let reading = interpret(agent: agent, event: eventArg, payload: payload) else {
-            DebugLog.write("attention reject event=\(eventArg) agent=\(agent.rawValue)")
-            return 0
-        }
-        // No fake Waiting: an agent whose hooks cannot say it is blocked is
-        // never shown blocked, whoever writes the line.
-        if case .blocked = reading.action, agent.waitingSource == .none {
-            DebugLog.write("attention reject blocked agent=\(agent.rawValue) waiting=none")
-            return 0
-        }
-        guard let line = record(agent: agent, reading: reading, payload: payload, nowMs: nowMs) else { return 0 }
         // Was the prompt's own window in front as this was raised? A turn
         // the user watched finish is not owed to them, and a blocked prompt
         // already on screen needs no banner.
-        var written = line
-        if let kind = AttentionProtocol.kind(line.kind), kind.isOpen {
-            written.front = front()
-        }
+        if written.kind.isOpen { written.front = front() }
         let located = locate(agent, environment)
         written.pid = located.pid > 1 ? located.pid : 0
         written.landing = cleanField(located.landing, limit: 240)
-        EventLog.append(written.line, at: logURL, nowMs: nowMs)
+        EventLog.append(written, at: logURL, nowMs: nowMs)
         return 0
     }
 
-    /// The v6 line one reading becomes, before the hook's own facts (front,
-    /// pid, landing) are added — nil when it writes nothing. Pure.
-    package static func record(agent: AgentID, reading: HookReading, payload: [String: Any], nowMs: Int64) -> AttentionRecord? {
+    /// The v7 line one vendor event becomes, before the hook's own facts
+    /// (front, pid, landing) and its `seq` are added — a state, or an
+    /// `ignored` line saying why not. Pure.
+    package static func record(agent: AgentID, event rawEvent: String, payload: [String: Any], nowMs: Int64) -> AttentionRecord {
         let context = HookContext(payload: payload)
-        // A vendor's tool never spells one of Pulse's `:` markers.
-        let tool = AttentionRecord.vendorTool(cleanField(string(payload, keys: ["tool_name", "toolName"]), limit: 64))
+        let event = rawEvent.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let reading = interpret(agent: agent, event: event, payload: payload) else {
+            return ignored(event.isEmpty ? .noEvent : .notInstalled, agent: agent, event: event, context: context, nowMs: nowMs)
+        }
+        // No fake Waiting: an agent whose hooks cannot say it is blocked is
+        // never shown blocked.
+        if case .blocked = reading.action, agent.waitingSource == .none {
+            return ignored(.cannotWait, agent: agent, event: event, context: context, nowMs: nowMs)
+        }
+        let tool = cleanField(string(payload, keys: ["tool_name", "toolName"]), limit: 64)
         let kind: AttentionKind
         var message = ""
         var toolColumn = ""
         switch reading.action {
         case .ignore:
-            return nil
+            return ignored(.silent, agent: agent, event: event, context: context, nowMs: nowMs)
         case .activity:
             // A tool with no session cannot be matched to anything, and
             // would make a row of its own.
-            guard !context.session.isEmpty else { return nil }
+            guard !context.session.isEmpty else {
+                return ignored(.noSession, agent: agent, event: event, context: context, nowMs: nowMs)
+            }
             kind = .tool
             toolColumn = tool
             let descriptor = toolDescriptor(from: payload)
@@ -96,13 +114,16 @@ package enum PulseHookReceiver {
                 message = String(descriptor.dropFirst(tool.count + 2))
             }
         case .status:
-            guard !context.session.isEmpty else { return nil }
-            kind = .tool
-            toolColumn = AttentionRecord.statusTool
+            guard !context.session.isEmpty else {
+                return ignored(.noSession, agent: agent, event: event, context: context, nowMs: nowMs)
+            }
+            kind = .status
         case .prompt:
             // Session-scoped only: an agent-wide clear from one terminal
             // must not clear another's.
-            guard !context.session.isEmpty else { return nil }
+            guard !context.session.isEmpty else {
+                return ignored(.noSession, agent: agent, event: event, context: context, nowMs: nowMs)
+            }
             kind = .working
             // What the person typed: the session's title and latest prompt.
             message = TitleHeuristics.promptTitle(string(payload, keys: ["prompt"]), limit: 200)
@@ -116,8 +137,7 @@ package enum PulseHookReceiver {
             kind = .turn
             message = genericMessage(from: payload)
         case .failedTurn:
-            kind = .turn
-            toolColumn = AttentionRecord.errorTool
+            kind = .failed
             message = errorMessage(from: payload)
         case .idle:
             kind = .idle
@@ -127,13 +147,30 @@ package enum PulseHookReceiver {
             kind = .end
         }
         return AttentionRecord(
-            agent: cleanField(agent.rawValue, limit: 48),
-            kind: kind.rawValue,
+            agent: agent,
+            kind: kind,
             ms: nowMs,
             message: cleanField(message, limit: 200),
             session: cleanField(context.session, limit: 80),
             cwd: cleanField(context.cwd, limit: 240),
-            tool: toolColumn
+            tool: toolColumn,
+            event: cleanField(event, limit: 64)
+        )
+    }
+
+    /// An `ignored` line: who, which event, where — and why, never the
+    /// payload's words.
+    package static func ignored(
+        _ reason: Ignored, agent: AgentID, event: String, context: HookContext, nowMs: Int64
+    ) -> AttentionRecord {
+        AttentionRecord(
+            agent: agent,
+            kind: .ignored,
+            ms: nowMs,
+            message: reason.rawValue,
+            session: cleanField(context.session, limit: 80),
+            cwd: cleanField(context.cwd, limit: 240),
+            event: cleanField(event, limit: 64)
         )
     }
 
@@ -305,7 +342,7 @@ package enum PulseHookReceiver {
         return ""
     }
 
-    /// One field of a v6 line: credentials redacted, every tab and line
+    /// One field of a v7 line: credentials redacted, every tab and line
     /// break — `\n`, `\r`, VT, FF, NEL, U+2028, U+2029 — a space
     /// (`AttentionProtocol.flatten`), bounded.
     package static func cleanField(_ value: String, limit: Int) -> String {

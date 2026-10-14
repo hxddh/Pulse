@@ -33,20 +33,25 @@ format's flavor — never by the agent.
 ## Who owns what
 
 - **`ScanEngine`** (`@MainActor`, not observed): the `SessionBook`, the
-  event-log cursor (generation header + byte offset) and the lines applied
-  in this generation, the last good process list, the previous projection's
+  event-log cursor (the header read, the byte offset, the log's `gen` and the
+  last `seq` applied), the last good process list, the previous projection's
   open waits (the next edge baseline), one backing-off log retry and the two
   cheap timers. It reads the log and the process table off the main thread,
-  calls `TrayState.project`, and hands the result to `StatusStore.land`. It
-  holds no UI state.
+  applies the lines numbered past the cursor, calls `TrayState.project`, and
+  hands the result to `StatusStore.land`. It holds no UI state.
 - **`WaitNotifier`** (`@MainActor`, not observed): banner planning
   (`WaitingDelivery`), posting (`PulseNotify`), rate limiting, withdrawal and
   clicks. Its bookkeeping is the pure `WaitLedger`, in memory only.
 - **`StatusStore`** (`@Observable`): only what views read — the snapshot,
   rows, settings, a few flags — and the intents views send; every decision
-  is a pure model's (`TrayNoticeModel`, `BannerRoute`, `TrayRowModel`,
-  `PulseSnapshot.needsPublish`). `land` assigns an observed property only
-  when its value changed (`ScanQuietTests`). Settings (open at login,
+  is a pure model's (`TrayNoticeModel`, `BannerRoute`, `TrayRowModel`).
+  `land` assigns an observed property only when its value changed
+  (`ScanQuietTests`). The projection carries state only — a row's
+  `AgentRow.Status`, never a step or a clock — so plain equality says "the
+  same world" and a burst of tool lines lands nothing. What a session said
+  lately (`SessionFacts`: steps, last words, error, clocks) is read from the
+  book when a row or the detail page is drawn (`StatusStore.facts(for:)`),
+  on the tray's own clock (`TimelineView`, `TrayChrome.clock`). Settings (open at login,
   "don't suggest hooks") go through `StatusStore.set`, which writes
   `settings.json` only on a change; a login change asks macOS. The language is the system's
   (`ResolvedLanguage.system`), read once.
@@ -79,12 +84,15 @@ the popover is shown, hands every key to the pure `TrayKeys.reduce`
 back to the app that had it. The row's context menu shows each item's key.
 Settings is `SettingsWindowController` rendering `SettingsFace` from
 `SettingsModel`.
-Views do no I/O; every surface is a value with a fixture in
+A row and the detail page redraw on the tray's clock (`TimelineView`,
+every `TrayChrome.clock` seconds while the tray is open): their relative
+times and the session's facts move without a projection. Views do no I/O;
+every surface is a value with a fixture in
 `PulseQA/SurfaceFixtures.swift` and a capture from `scripts/qa_captures.sh`.
 
 ## Landing — how ↩, a click or a banner reaches the prompt
 
-The hook records where its session lives (the v6 `landing` column, most
+The hook records where its session lives (the v7 `landing` column, most
 specific first): `tmux:%3;tmuxsock:<socket>;iterm:w0t1p0:<uuid>;tty:/dev/ttys004;term:<TERM_PROGRAM>;app:<__CFBundleIdentifier>`.
 `LandingPlan.make(handle:cwd:pid:hostApp:)` (pure, once per projection)
 turns it into ordered steps; `TerminalFocus.land` (on the click) runs them

@@ -190,6 +190,9 @@ package struct SettingsModel: Equatable {
         package var present: Set<AgentID>
         package var failed: [AgentID: HooksInstaller.Failure] = [:]
         package var lastEventMs: [AgentID: Int64]
+        /// The last event each agent's hook sent that Pulse heard and did not
+        /// turn into state (an `ignored` line): its event and why.
+        package var ignored: [AgentID: Ignored] = [:]
         package var nowMs: Int64
         /// nil: macOS has not been asked yet.
         package var notifyAuthorized: Bool?
@@ -206,6 +209,7 @@ package struct SettingsModel: Equatable {
             present: Set<AgentID>,
             failed: [AgentID: HooksInstaller.Failure] = [:],
             lastEventMs: [AgentID: Int64],
+            ignored: [AgentID: Ignored] = [:],
             nowMs: Int64,
             notifyAuthorized: Bool? = nil,
             launchAtLogin: Bool,
@@ -218,6 +222,7 @@ package struct SettingsModel: Equatable {
             self.present = present
             self.failed = failed
             self.lastEventMs = lastEventMs
+            self.ignored = ignored
             self.nowMs = nowMs
             self.notifyAuthorized = notifyAuthorized
             self.launchAtLogin = launchAtLogin
@@ -226,30 +231,47 @@ package struct SettingsModel: Equatable {
         }
     }
 
+    /// One heard event Pulse did not turn into state: the vendor's event name
+    /// (only when it is an identifier — never a path) and the receiver's
+    /// reason (`PulseHookReceiver.Ignored`).
+    package struct Ignored: Equatable, Sendable {
+        package var event: String
+        package var reason: String
+
+        package init(event: String, reason: String) {
+            let identifier = !event.isEmpty && event.count <= 64
+                && event.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || "_.:-".unicodeScalars.contains($0) }
+            self.event = identifier ? event : "?"
+            self.reason = reason
+        }
+
+        package var phrase: String { "\(event) (\(reason))" }
+    }
+
     /// How Pulse reads one session, without naming it: its state, where
     /// its facts come from, how a click lands, whether its process is
     /// watched, and when it last spoke.
     package struct ReportSession: Equatable {
         package var agent: AgentID
         package var state: String
-        package var source: RowSource
         package var go: LandingPlan.Precision?
         package var liveProcess: Bool
         package var lastEventMs: Int64
 
-        package init(_ row: AgentRow) {
+        /// `lastEventMs`: the session's newest event (`SessionFacts`); 0 for
+        /// a process-only row.
+        package init(_ row: AgentRow, lastEventMs: Int64 = 0) {
             agent = row.agent
-            switch row.state {
-            case .blocked: state = "blocked"
-            case .running: state = row.isStalled ? "stalled" : "running"
+            switch row.status {
+            case .needsYou: state = "blocked"
+            case .running(let stalled): state = stalled ? "stalled" : "running"
             case .yourTurn: state = "your turn"
             case .recent: state = "recent"
             case .processOnly: state = "process only"
             }
-            source = row.source
             go = row.landingPlan.precision
             liveProcess = row.liveProcess
-            lastEventMs = row.lastEventMs
+            self.lastEventMs = lastEventMs
         }
 
         package func line(nowMs: Int64) -> String {
@@ -259,7 +281,8 @@ package struct SettingsModel: Equatable {
             case .app: goWord = "app only"
             case nil: goWord = "none"
             }
-            var text = "  \(agent.rawValue): \(state), from \(source == .hooks ? "hooks" : "process only"), go \(goWord)"
+            let source = state == "process only" ? "process only" : "hooks"
+            var text = "  \(agent.rawValue): \(state), from \(source), go \(goWord)"
             text += liveProcess ? ", process watched" : ", no process"
             text += lastEventMs > 0 ? ", last event \(max(0, (nowMs - lastEventMs) / 1000))s ago" : ", no event"
             return text
@@ -300,6 +323,7 @@ package struct SettingsModel: Equatable {
                     line += ", no event yet"
                 }
             }
+            if let ignored = input.ignored[agent] { line += ", last ignored: \(ignored.phrase)" }
             lines.append(line)
         }
         lines.append(input.sessions.isEmpty ? "sessions: none listed" : "sessions:")

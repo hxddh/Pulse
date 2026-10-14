@@ -11,8 +11,9 @@ import Foundation
 /// ⌘D), the context menu (which shows each key), VoiceOver actions and
 /// the detail page.
 ///
-/// Pure: the row, the language, the clock and a few facts only the store
-/// knows, passed in as plain values. Every sentence Pulse says of a row —
+/// Pure: the row, what its session said lately (`SessionFacts`, read from
+/// the book when the row is drawn), the language, the clock and a few facts
+/// only the store knows, passed in as plain values. Every sentence Pulse says of a row —
 /// the headline, the why, the state word, the step and time words — is a
 /// static function here (below), and `DetailModel` says the same ones, so
 /// the row and the detail page say one thing.
@@ -70,7 +71,7 @@ package struct TrayRowModel: Equatable {
     }
 
     package var lang: ResolvedLanguage
-    package var rowKey: String
+    package var key: SessionKey
     package var agent: AgentID
     package var lamp: Lamp
     /// The short project name — "" when the headline already is the project.
@@ -96,15 +97,18 @@ package struct TrayRowModel: Equatable {
     package var accessibilityLabel: String
     package var accessibilityHint: String
 
-    /// Store-only facts, as values.
+    /// The row, what its session said lately, and store-only facts, as
+    /// values.
     package struct Input {
         package var row: AgentRow
+        package var facts: SessionFacts
         package var lang: ResolvedLanguage
         package var nowMs: Int64
-        package var notice: RowNotice? = nil
+        package var notice: RowNotice?
 
-        package init(row: AgentRow, lang: ResolvedLanguage, nowMs: Int64, notice: RowNotice? = nil) {
+        package init(row: AgentRow, facts: SessionFacts = SessionFacts(), lang: ResolvedLanguage, nowMs: Int64, notice: RowNotice? = nil) {
             self.row = row
+            self.facts = facts
             self.lang = lang
             self.nowMs = nowMs
             self.notice = notice
@@ -113,15 +117,16 @@ package struct TrayRowModel: Equatable {
 
     package static func make(_ input: Input) -> TrayRowModel {
         let row = input.row
+        let facts = input.facts
         let lang = input.lang
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-        let headline = Self.headline(row, lang: lang, nowMs: input.nowMs)
-        let why = Self.why(row, lang: lang, nowMs: input.nowMs)
-        let lamp = Lamp(row)
-        let age = Self.rowTime(row, nowMs: input.nowMs, lang: lang)
-        let place = row.shortPlace
+        let headline = Self.headline(row, facts: facts, lang: lang, nowMs: input.nowMs)
+        let why = Self.why(row, facts: facts, lang: lang, nowMs: input.nowMs)
+        let lamp = row.lamp
+        let age = Self.rowTime(row, facts: facts, nowMs: input.nowMs, lang: lang)
+        let place = row.project
         let project = place == headline ? "" : place
-        let second = secondLine(row, why: why, lamp: lamp, lang: lang, nowMs: input.nowMs)
+        let second = secondLine(row, facts: facts, why: why, lang: lang, nowMs: input.nowMs)
         let turnLabel = row.isYourTurn ? t(.yourTurn) : nil
 
         var menu: [Button] = []
@@ -134,14 +139,14 @@ package struct TrayRowModel: Equatable {
         // VoiceOver hears whole words: "4 minutes", never the drawn "4m".
         var spoken = [row.agent.displayName, Self.stateText(row, lang: lang), headline]
         if !project.isEmpty { spoken.append(project) }
-        let spokenAge = Self.rowTime(row, nowMs: input.nowMs, lang: lang, spoken: true)
+        let spokenAge = Self.rowTime(row, facts: facts, nowMs: input.nowMs, lang: lang, spoken: true)
         if !spokenAge.isEmpty { spoken.append(spokenAge) }
         if let second, second.kind != .step { spoken.append(second.text) } else { spoken.append(why) }
         if let second, second.kind == .step { spoken.append(second.text) }
 
         return TrayRowModel(
             lang: lang,
-            rowKey: row.rowKey,
+            key: row.key,
             agent: row.agent,
             lamp: lamp,
             project: project,
@@ -166,22 +171,23 @@ package struct TrayRowModel: Equatable {
     /// Cursor or OpenCode row among them: their hooks name no tool.
     package static func secondLine(
         _ row: AgentRow,
+        facts: SessionFacts,
         why: String,
-        lamp: Lamp,
         lang: ResolvedLanguage,
         nowMs: Int64
     ) -> SecondLine? {
-        if let wait = row.wait {
-            let text = ask(row) ?? L10n.waitKind(wait.kind, lang)
+        switch row.status {
+        case .needsYou(let block):
+            let text = ask(row) ?? L10n.waitKind(block.kind, lang)
             return SecondLine(kind: .ask, text: truncate(text, 140))
-        }
-        if lamp == .stalled {
+        case .running(stalled: true):
             return SecondLine(kind: .warning, text: why)
-        }
-        if row.state == .running, let step = row.lastStep {
+        case .running(stalled: false):
+            guard let step = facts.lastStep else { return nil }
             return SecondLine(kind: .step, text: truncate(stepLine(step, nowMs: nowMs, lang: lang), 140))
+        case .yourTurn, .recent, .processOnly:
+            return nil
         }
-        return nil
     }
 }
 
@@ -195,9 +201,9 @@ package struct TrayRowModel: Equatable {
 ///   "Started before Pulse — details after its next step"). Never the word
 ///   "hook" — `surface_check.py` holds it.
 ///
-/// Pure: the row, the language and the clock in; the same inputs always
-/// give the same sentences. It never guesses — every word comes from a
-/// field the row carries.
+/// Pure: the row, its facts, the language and the clock in; the same inputs
+/// always give the same sentences. It never guesses — every word comes from
+/// a field the row or its facts carry.
 extension TrayRowModel {
     /// Hard ceiling on the headline, in characters — a guard against a
     /// pathological title, not the thing that shapes the row.
@@ -210,22 +216,22 @@ extension TrayRowModel {
     /// says what little is true; a session leads with its task (a stable line
     /// the eye can find), then the agent's fresh last words, then the
     /// project.
-    package static func headline(_ row: AgentRow, lang: ResolvedLanguage, nowMs: Int64) -> String {
-        truncate(rawHeadline(row, lang: lang, nowMs: nowMs), headlineLimit)
+    package static func headline(_ row: AgentRow, facts: SessionFacts = SessionFacts(), lang: ResolvedLanguage, nowMs: Int64) -> String {
+        truncate(rawHeadline(row, facts: facts, lang: lang, nowMs: nowMs), headlineLimit)
     }
 
-    private static func rawHeadline(_ row: AgentRow, lang: ResolvedLanguage, nowMs: Int64) -> String {
+    private static func rawHeadline(_ row: AgentRow, facts: SessionFacts, lang: ResolvedLanguage, nowMs: Int64) -> String {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-        let project = TitleHeuristics.shortProject(row.project)
-        switch row.state {
-        case .blocked:
+        let project = row.project
+        switch row.status {
+        case .needsYou:
             if let task = row.usefulTask { return task }
             return project.isEmpty ? t(.needsYou) : project
         case .processOnly:
             return row.canFocusTerminal ? t(.terminalDetectedNoDetails) : t(.appDetectedNoDetails)
         case .running, .yourTurn, .recent:
             if let task = row.usefulTask { return task }
-            if !row.lastWord.isEmpty, row.selfReportFresh(at: nowMs) { return row.lastWord }
+            if !facts.lastWords.isEmpty, facts.selfReportFresh(at: nowMs) { return facts.lastWords }
             if !project.isEmpty { return project }
             return row.canFocusTerminal ? t(.terminalSession) : t(.appSession)
         }
@@ -234,53 +240,48 @@ extension TrayRowModel {
     // MARK: - Why
 
     /// Which evidence put the row in its state, and since when.
-    package static func why(_ row: AgentRow, lang: ResolvedLanguage, nowMs: Int64) -> String {
+    package static func why(_ row: AgentRow, facts: SessionFacts = SessionFacts(), lang: ResolvedLanguage, nowMs: Int64) -> String {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         let name = row.agent.displayName
         func since(_ ms: Int64) -> String { ms > 0 ? L10n.ago(ms, nowMs: nowMs, lang) : "?" }
-        let quiet = L10n.duration(row.lastActivitySeconds(at: nowMs), lang)
-        switch row.state {
-        case .blocked(let wait):
-            let kind = kindNoun(wait.kind, lang: lang)
-            var text = String(format: t(.explainAsked), name, kind, since(wait.sinceMs))
-            if wait.inFront { text += t(.explainAskedFront) }
+        let quiet = L10n.duration(facts.lastActivitySeconds(at: nowMs), lang)
+        let last = facts.lastActivityMs
+        switch row.status {
+        case .needsYou(let block):
+            var text = String(format: t(.explainAsked), name, kindNoun(block.kind, lang: lang), since(block.sinceMs))
+            if block.inFront { text += t(.explainAskedFront) }
             return text
         case .yourTurn(let sinceMs):
             return String(format: t(.explainTurn), name, since(sinceMs))
         case .processOnly:
             return t(.explainProcessOnly)
-        case .running:
-            if row.isStalled {
-                guard row.lastActivityMs > 0 else { return t(.explainStalledUnknown) }
-                if let step = row.lastStep {
-                    return String(format: t(.stepStalled), quiet, stepText(step))
-                }
-                return String(format: t(.explainStalled), quiet)
+        case .running(stalled: true):
+            guard last > 0 else { return t(.explainStalledUnknown) }
+            if let step = facts.lastStep {
+                return String(format: t(.stepStalled), quiet, stepText(step))
             }
-            guard row.lastActivityMs > 0 else { return t(.explainRunningNoClock) }
-            return String(format: t(.explainRunning), name, since(row.lastActivityMs))
-        case .recent:
-            // Which rule made it recent — never a guess that it runs.
-            switch row.recentReason {
-            case .atPrompt:
-                return String(format: t(.explainIdle), since(row.lastActivityMs))
-            case .ended:
-                return String(format: t(.explainEnded), since(row.stateSinceMs > 0 ? row.stateSinceMs : row.lastActivityMs))
-            case .quiet:
-                return String(format: t(.explainQuiet), quiet)
-            case .silent:
-                return String(format: t(.explainSilent), quiet)
-            }
+            return String(format: t(.explainStalled), quiet)
+        case .running(stalled: false):
+            guard last > 0 else { return t(.explainRunningNoClock) }
+            return String(format: t(.explainRunning), name, since(last))
+        // Which rule made it recent — never a guess that it runs.
+        case .recent(.atPrompt):
+            return String(format: t(.explainIdle), since(last))
+        case .recent(.ended(let atMs)):
+            return String(format: t(.explainEnded), since(atMs > 0 ? atMs : last))
+        case .recent(.quiet):
+            return String(format: t(.explainQuiet), quiet)
+        case .recent(.silent):
+            return String(format: t(.explainSilent), quiet)
         }
     }
 
     /// A wait kind as what the agent did: "asked for permission".
-    package static func kindNoun(_ kind: String, lang: ResolvedLanguage) -> String {
+    package static func kindNoun(_ kind: AttentionKind, lang: ResolvedLanguage) -> String {
         switch kind {
-        case "Permission": return L10n.t(.explainKindPermission, lang)
-        case "Input": return L10n.t(.explainKindInput, lang)
-        case "Waiting", "": return L10n.t(.explainKindWaiting, lang)
-        default: return kind
+        case .permission: return L10n.t(.explainKindPermission, lang)
+        case .question: return L10n.t(.explainKindInput, lang)
+        default: return L10n.t(.explainKindWaiting, lang)
         }
     }
 
@@ -289,12 +290,12 @@ extension TrayRowModel {
     /// The state in a word or two ("Needs you", "Running", "Your turn").
     package static func stateText(_ row: AgentRow, lang: ResolvedLanguage) -> String {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-        switch row.state {
-        case .blocked: return t(.needsYou)
+        switch row.status {
+        case .needsYou: return t(.needsYou)
         case .processOnly: return t(.processOnly)
         case .yourTurn: return t(.yourTurn)
         case .recent: return t(.recent)
-        case .running: return row.isStalled ? t(.stalled) : t(.running)
+        case .running(let stalled): return stalled ? t(.stalled) : t(.running)
         }
     }
 
@@ -322,26 +323,26 @@ extension TrayRowModel {
 
     /// How long the current turn has run ("14m", "now" below a minute);
     /// "" when its start is not known.
-    package static func turnDuration(_ row: AgentRow, nowMs: Int64, lang: ResolvedLanguage, spoken: Bool = false) -> String {
-        guard row.turnStartMs > 0, row.turnStartMs <= nowMs else { return "" }
-        return L10n.duration(Double(nowMs - row.turnStartMs) / 1000, lang, spoken: spoken)
+    package static func turnDuration(_ facts: SessionFacts, nowMs: Int64, lang: ResolvedLanguage, spoken: Bool = false) -> String {
+        guard facts.turnStartMs > 0, facts.turnStartMs <= nowMs else { return "" }
+        return L10n.duration(Double(nowMs - facts.turnStartMs) / 1000, lang, spoken: spoken)
     }
 
     /// The row's one time: how long a wait has been outstanding ("4m"); for
     /// a running row this turn's duration, when its start is known; else
     /// when it last moved ("3m ago"). `spoken`: in full units, as VoiceOver
     /// says it ("4 minutes"). "" when the row has none.
-    package static func rowTime(_ row: AgentRow, nowMs: Int64, lang: ResolvedLanguage, spoken: Bool = false) -> String {
+    package static func rowTime(_ row: AgentRow, facts: SessionFacts = SessionFacts(), nowMs: Int64, lang: ResolvedLanguage, spoken: Bool = false) -> String {
         if let wait = row.wait {
             guard wait.sinceMs > 0 else { return "" }
             return L10n.duration(Double(nowMs - wait.sinceMs) / 1000, lang, spoken: spoken)
         }
-        if row.state == .running {
-            let turn = turnDuration(row, nowMs: nowMs, lang: lang, spoken: spoken)
+        if row.isRunning {
+            let turn = turnDuration(facts, nowMs: nowMs, lang: lang, spoken: spoken)
             if !turn.isEmpty { return turn }
         }
-        guard row.lastActivityMs > 0 else { return "" }
-        return L10n.ago(row.lastActivityMs, nowMs: nowMs, lang, spoken: spoken)
+        guard facts.lastActivityMs > 0 else { return "" }
+        return L10n.ago(facts.lastActivityMs, nowMs: nowMs, lang, spoken: spoken)
     }
 
     // MARK: - Focus
@@ -375,7 +376,8 @@ extension TrayRowModel {
 /// its header, once), the ask (and what to do about it), the why (when the
 /// row's second line did not already say it), the recent steps, the agent's
 /// last message, the last error and the folder — all from the session's own
-/// events, in the words the row uses (`TrayRowModel`). Each thing is said
+/// events (the row and its `SessionFacts`), in the words the row uses
+/// (`TrayRowModel`). Each thing is said
 /// once: no headline block under a header that names it, no state-and-age
 /// beside "This turn", no start time. How Pulse reads a session is not on
 /// the page; it is in Settings → Hooks → "Copy report". Nothing is shown as
@@ -391,7 +393,7 @@ package struct DetailModel: Equatable {
     package enum Action: Equatable { case back, focus, dismiss }
 
     package var lang: ResolvedLanguage
-    package var rowKey: String
+    package var key: SessionKey
     package var agent: AgentID
     package var lamp: Lamp
     /// `TrayRowModel.headline` — the page's title, in its header.
@@ -418,40 +420,40 @@ package struct DetailModel: Equatable {
 
     package static func make(
         row: AgentRow,
+        facts said: SessionFacts = SessionFacts(),
         lang: ResolvedLanguage,
         nowMs: Int64,
         notice: RowNotice? = nil
     ) -> DetailModel {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         typealias Words = TrayRowModel
-        let fresh = row.selfReportFresh(at: nowMs)
+        let fresh = said.selfReportFresh(at: nowMs)
 
         var facts: [Fact] = []
-        if row.state == .running || row.isBlocked {
-            let turn = Words.turnDuration(row, nowMs: nowMs, lang: lang)
+        if row.isRunning || row.isBlocked {
+            let turn = Words.turnDuration(said, nowMs: nowMs, lang: lang)
             if !turn.isEmpty { facts.append(Fact(label: t(.stepThisTurn), value: turn)) }
         }
         if !row.displayPath.isEmpty { facts.append(Fact(label: t(.detailFolder), value: row.displayPath)) }
 
-        let steps = row.recentSteps.reversed().map { step in
+        let steps = said.steps.reversed().map { step in
             Fact(label: L10n.ago(step.ms, nowMs: nowMs, lang), value: Words.stepText(step))
         }
-        let lamp = Lamp(row)
-        let why = Words.why(row, lang: lang, nowMs: nowMs)
-        let second = Words.secondLine(row, why: why, lamp: lamp, lang: lang, nowMs: nowMs)
+        let why = Words.why(row, facts: said, lang: lang, nowMs: nowMs)
+        let second = Words.secondLine(row, facts: said, why: why, lang: lang, nowMs: nowMs)
 
         return DetailModel(
             lang: lang,
-            rowKey: row.rowKey,
+            key: row.key,
             agent: row.agent,
-            lamp: lamp,
-            headline: Words.headline(row, lang: lang, nowMs: nowMs),
+            lamp: row.lamp,
+            headline: Words.headline(row, facts: said, lang: lang, nowMs: nowMs),
             headlineQuiet: row.isProcessOnly,
             ask: Words.ask(row),
             why: second?.text == why ? nil : why,
             steps: steps,
-            lastMessage: fresh && !row.lastWord.isEmpty ? row.lastWord : nil,
-            error: row.lastErrorText.isEmpty ? nil : row.lastErrorText,
+            lastMessage: fresh && !said.lastWords.isEmpty ? said.lastWords : nil,
+            error: said.lastError.isEmpty ? nil : said.lastError,
             facts: facts,
             canFocus: row.canFocusTerminal,
             focusTitle: Words.focusTitle(row, lang: lang),

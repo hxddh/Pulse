@@ -31,6 +31,10 @@ enum TrayChrome {
     static let oneLineTextStart: CGFloat = lampSize + PulseTheme.Space.s + 18 + PulseTheme.Space.s
     /// The most a project may take from the headline.
     static let identityMaxWidth: CGFloat = 112
+    /// How often an open tray redraws what moves on its own — relative
+    /// times, and the steps and last words read from the book
+    /// (`StatusStore.facts`). Nothing in the store announces them.
+    static let clock: TimeInterval = 5
 }
 
 // MARK: - The tray
@@ -111,9 +115,9 @@ struct TrayView: View {
                             store: store,
                             ui: ui,
                             row: row,
-                            selected: ui.keys.selected == row.rowKey
+                            selected: ui.keys.selected == row.key
                         )
-                        .id(row.rowKey)
+                        .id(row.key)
                     }
                 }
                 .padding(.vertical, PulseTheme.Space.xxs)
@@ -256,10 +260,11 @@ struct TrayNoticeFace: View {
 
 // MARK: - Agent row
 
-/// The store-bound wrapper: builds the row's value and routes the row's
-/// intents through `TrayUI`. The pointer entering a row selects it — one
-/// highlight, as in a menu: the keyboard and the pointer move the same
-/// selection.
+/// The store-bound wrapper: builds the row's value on the tray's clock
+/// (`TrayChrome.clock` — its times and the session's facts move without a
+/// projection) and routes the row's intents through `TrayUI`. The pointer
+/// entering a row selects it — one highlight, as in a menu: the keyboard and
+/// the pointer move the same selection.
 @MainActor
 private struct TrayRowButton: View {
     var store: StatusStore
@@ -268,14 +273,16 @@ private struct TrayRowButton: View {
     var selected = false
 
     var body: some View {
-        TrayRowFace(
-            model: store.trayRowModel(row),
-            selected: selected
-        ) { action in
-            ui.send(action, row: row)
+        TimelineView(.periodic(from: .now, by: TrayChrome.clock)) { context in
+            TrayRowFace(
+                model: store.trayRowModel(row, at: context.date),
+                selected: selected
+            ) { action in
+                ui.send(action, row: row)
+            }
         }
         .onHover { inside in
-            if inside { ui.hover(row.rowKey, at: NSEvent.mouseLocation) }
+            if inside { ui.hover(row.key, at: NSEvent.mouseLocation) }
         }
     }
 }
@@ -470,14 +477,14 @@ final class TrayUI {
     let store: StatusStore
     var keys = TrayKeys.State()
     /// The order the rows had when the tray opened, newcomers appended.
-    var frozen: [String] = []
+    var frozen: [SessionKey] = []
     /// Every row that has been on screen this glance. While the tray is open
     /// they stay listed, in their place, as long as they exist.
-    var pinned: Set<String> = []
+    var pinned: Set<SessionKey> = []
     /// The row the pointer selected last. The list scrolls to a selection
     /// the keyboard made, never to one the pointer made — a row that moved
     /// under a still pointer would select the next one.
-    @ObservationIgnored var pointerSelection: String?
+    @ObservationIgnored var pointerSelection: SessionKey?
     /// Where the pointer was when it last selected a row, or when the tray
     /// opened. A hover with the pointer still there — the list appeared, or
     /// scrolled to the keyboard's selection, under a pointer that did not
@@ -501,33 +508,27 @@ final class TrayUI {
     // MARK: - What the tray lists
 
     /// The rows on screen — every row, the ones already shown this glance
-    /// in the frozen order, then newcomers (`TrayOrder.openWindow`). The
-    /// list scrolls inside the tray's height.
+    /// in the frozen order, then newcomers (`TrayOrder.openList`). The list
+    /// scrolls inside the tray's height.
     var displayRows: [AgentRow] {
-        TrayOrder.openWindow(
-            all: store.cachedAll,
-            window: store.snapshot.rows,
-            pinned: pinned,
-            frozen: frozen
-        )
+        TrayOrder.openList(all: store.rows, pinned: pinned, frozen: frozen)
     }
 
     /// The row whose detail page is open, while it still exists.
     var detailRow: AgentRow? {
-        guard let key = keys.detail else { return nil }
-        return store.cachedAll.first { $0.rowKey == key }
+        keys.detail.flatMap { lookup($0) }
     }
 
     private func reducerRows() -> [TrayKeys.Row] {
         var rows = displayRows.map { TrayKeys.Row($0) }
-        if let detail = detailRow, !rows.contains(where: { $0.key == detail.rowKey }) {
+        if let detail = detailRow, !rows.contains(where: { $0.key == detail.key }) {
             rows.append(TrayKeys.Row(detail))
         }
         return rows
     }
 
-    private func lookup(_ key: String) -> AgentRow? {
-        store.cachedAll.first { $0.rowKey == key }
+    private func lookup(_ key: SessionKey) -> AgentRow? {
+        store.rows.first { $0.key == key }
     }
 
     // MARK: - Lifecycle
@@ -539,12 +540,12 @@ final class TrayUI {
     /// clock last).
     func open(pointer: CGPoint? = nil) {
         generation &+= 1
-        frozen = store.snapshot.rows.map(\.rowKey)
+        frozen = store.rows.map(\.key)
         pinned = Set(frozen)
         pointerSelection = nil
         self.pointer = pointer
         var next = TrayKeys.State()
-        next.selected = displayRows.first?.rowKey
+        next.selected = displayRows.first?.key
         if keys != next { keys = next }
         applyPendingReveal()
     }
@@ -554,19 +555,19 @@ final class TrayUI {
     /// for a row that no longer exists is dropped.
     func applyPendingReveal() {
         guard let reveal = store.takePendingReveal() else { return }
-        guard lookup(reveal.rowKey) != nil else { return }
+        guard lookup(reveal.key) != nil else { return }
         var next = keys
-        next.selected = reveal.rowKey
-        next.detail = reveal.detail ? reveal.rowKey : nil
+        next.selected = reveal.key
+        next.detail = reveal.detail ? reveal.key : nil
         if keys != next { keys = next }
     }
 
     /// A scan landed: newcomers take the next place, a detail page whose row
     /// left closes, and the selection stays on a row that is on screen.
     func absorbScan() {
-        let extended = TrayOrder.extend(frozen, with: store.cachedAll)
+        let extended = TrayOrder.extend(frozen, with: store.rows)
         if extended != frozen { frozen = extended }
-        let nextPinned = pinned.union(displayRows.map(\.rowKey))
+        let nextPinned = pinned.union(displayRows.map(\.key))
         if nextPinned != pinned { pinned = nextPinned }
         var next = keys
         if let detail = next.detail, lookup(detail) == nil { next.detail = nil }
@@ -611,9 +612,9 @@ final class TrayUI {
             if row.canFocusTerminal {
                 store.focusTerminal(row)
             } else {
-                showDetail(row.rowKey)
+                showDetail(row.key)
             }
-        case .details: showDetail(row.rowKey)
+        case .details: showDetail(row.key)
         case .dismiss: store.dismissWaiting(row)
         case .focus: store.focusTerminal(row)
         }
@@ -630,7 +631,7 @@ final class TrayUI {
     /// The pointer moved onto a row: it is the selection — one highlight,
     /// as in a menu. Not while a detail page is open (no row is on screen),
     /// and not when the pointer is where it was (`pointer`).
-    func hover(_ key: String, at location: CGPoint) {
+    func hover(_ key: SessionKey, at location: CGPoint) {
         guard keys.detail == nil, location != pointer else { return }
         pointer = location
         pointerSelection = key
@@ -639,7 +640,7 @@ final class TrayUI {
         if keys != next { keys = next }
     }
 
-    func showDetail(_ key: String) {
+    func showDetail(_ key: SessionKey) {
         var next = keys
         next.detail = key
         next.selected = key

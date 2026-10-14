@@ -67,12 +67,11 @@ struct ReportTests {
     /// project; the text says only states, counts and ages.
     @Test func theReportCarriesNoPathSessionOrProject() {
         var withSession = input()
-        var row = AgentRow(rowKey: "claude|secret-session", agent: .claude)
-        row.sessionID = "secret-session"
+        var row = AgentRow(key: "claude|secret-session", status: .running(stalled: false))
+        row.session = "secret-session"
         row.cwd = "/Users/me/secret-project"
-        row.project = "secret-project"
         row.task = "a private prompt"
-        withSession.sessions = [SettingsModel.ReportSession(row)]
+        withSession.sessions = [SettingsModel.ReportSession(row, lastEventMs: now)]
         let text = SettingsModel.report(withSession)
         #expect(!text.contains("/"), "not even a folder: \(text)")
         #expect(!text.contains("secret"), "\(text)")
@@ -83,18 +82,14 @@ struct ReportTests {
     /// in the report: its state, where its facts come from, how a click
     /// lands, whether its process is watched and when it last spoke.
     @Test func theReportSaysHowPulseReadsEachSession() {
-        var hooked = AgentRow(rowKey: "claude|s1", agent: .claude)
-        hooked.state = .running
-        hooked.source = .hooks
+        var hooked = AgentRow(key: "claude|s1", status: .running(stalled: false))
         hooked.liveProcess = true
         hooked.pid = 42
-        hooked.lastEventMs = now - 7_000
         hooked.landingPlan = LandingPlan(steps: [.ttyTab(tty: "ttys003")])
-        var process = AgentRow(rowKey: "cursor|p", agent: .cursor)
-        process.state = .processOnly
+        var process = AgentRow(key: .process(.cursor, pid: 9), status: .processOnly)
         process.liveProcess = true
         var chosen = input()
-        chosen.sessions = [hooked, process].map(SettingsModel.ReportSession.init)
+        chosen.sessions = [SettingsModel.ReportSession(hooked, lastEventMs: now - 7_000), SettingsModel.ReportSession(process)]
         let text = SettingsModel.report(chosen)
         #expect(text.contains("\nsessions:\n"), "\(text)")
         #expect(text.contains("  claude: running, from hooks, go exact, process watched, last event 7s ago"), "\(text)")
@@ -102,13 +97,28 @@ struct ReportTests {
         #expect(SettingsModel.report(input()).hasSuffix("sessions: none listed"))
     }
 
+    /// The report names each agent's last ignored event and why — never a
+    /// path, even when the event argument was one.
+    @Test func theReportSaysWhatWasIgnored() {
+        var heard = input()
+        heard.installed = [.claude, .cursor]
+        heard.ignored = [
+            .claude: SettingsModel.Ignored(event: "SubagentStop", reason: PulseHookReceiver.Ignored.notInstalled.rawValue),
+            .cursor: SettingsModel.Ignored(event: "/Users/me/secret", reason: PulseHookReceiver.Ignored.unparsable.rawValue),
+        ]
+        let text = SettingsModel.report(heard)
+        #expect(text.contains("last ignored: SubagentStop (not an installed event)"), "\(text)")
+        #expect(text.contains("last ignored: ? (payload is not a JSON object)"), "\(text)")
+        #expect(!text.contains("secret"), "\(text)")
+    }
+
     /// The store's report reads the engine's last events, never the file.
     @MainActor
     @Test func theStoresReportReadsTheEngine() {
         let store = StatusStore()
         let fired: Int64 = Int64(Date().timeIntervalSince1970 * 1000) - 60_000
-        let line = AttentionRecord(agent: "claude", kind: "turn", ms: fired, session: "s1").line
-        store.engine.landLog(EventLog.Chunk(header: "# g", lines: [line], end: 200, fresh: true))
+        let turn = AttentionRecord(agent: .claude, kind: .turn, ms: fired, session: "s1", seq: 1)
+        store.engine.landLog(EventLog.Chunk(header: AttentionProtocol.Header(next: 2, gen: "g"), records: [turn], end: 200))
         #expect(store.engine.latestHookEventMs[.claude] == fired)
         let report = store.reportText
         #expect(report.contains("  claude: "))
@@ -195,7 +205,7 @@ final class TrayNoticeTests: XCTestCase {
         store.installPreviewFixture("waiting")
         store.notifyAuthorized = true
         store.presentAgents = []
-        XCTAssertTrue(store.cachedAll.contains { $0.liveProcess })
+        XCTAssertTrue(store.rows.contains { $0.liveProcess })
         XCTAssertTrue(store.trayNoticeInput.unconnected.isEmpty, "running is not being on this Mac")
         store.presentAgents = [.opencode]
         XCTAssertEqual(store.trayNoticeInput.unconnected, [.opencode])

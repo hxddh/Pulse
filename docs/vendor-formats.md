@@ -72,11 +72,15 @@ Every installed command is `pulse-hook <agent> <vendor event name>`; the
 payload is the vendor's JSON on stdin (the two modules: the last argument).
 Only the agent's own adapter reads it, and only for an event it installs:
 an event's action is in its adapter's table, and `read` refines it from the
-payload where the payload decides (marked *payload* below). A payload that
-is not a JSON object — cut off at the 1 MiB stdin bound, broken, or plain
-text — writes nothing, and so does an event the adapter does not know or
-Pulse does not install (Copilot's VS Code–style PascalCase names included:
-Pulse installs the camelCase ones).
+payload where the payload decides (marked *payload* below). Every line
+carries the vendor's event name in its `event` column. A payload that is
+not a JSON object — cut off at the 1 MiB stdin bound, broken, or plain text
+— is an `ignored` line and nothing else, and so is an event the adapter
+does not know or Pulse does not install (Copilot's VS Code–style PascalCase
+names included: Pulse installs the camelCase ones), a known event that says
+nothing Pulse shows ("ignored" below), activity or a prompt that names no
+session, and a blocked event from Codex or Cursor. The `ignored` line's
+message says which (`PulseHookReceiver.Ignored`); the reducer skips it.
 
 | Agent | Vendor event | Pulse |
 | --- | --- | --- |
@@ -89,7 +93,7 @@ Pulse installs the camelCase ones).
 | | `Notification` `idle_prompt` | `idle` |
 | | `Notification` `elicitation_complete` / `elicitation_response` | `done` |
 | | `Stop` | `turn` (message = `last_assistant_message`) |
-| | `StopFailure` | `turn`, tool = `error` (message = `last_assistant_message`, else `error_details`, else `error`) |
+| | `StopFailure` | `failed` (message = `last_assistant_message`, else `error_details`, else `error`) |
 | | `SessionEnd` | `end` |
 | **Codex** (`~/.codex/hooks.json` only; `config.toml` is never touched) — never blocked | `SessionStart` / `UserPromptSubmit` / `Stop` / `SessionEnd` | `start` / `working` (message = `prompt`) / `turn` (message = `last_assistant_message`) / `end` |
 | | `PostToolUse` (async) | `tool` (the stall rule's evidence; tool = `tool_name`, message = its target) |
@@ -100,14 +104,14 @@ Pulse installs the camelCase ones).
 | | `agentStop` | `turn` |
 | | `notification` `permission_prompt` / `elicitation_dialog` (*payload*) | `permission` / `question` |
 | | `notification` `agent_idle` / `agent_completed` / `shell_completed` | ignored (background subagents and shells, not the session's turn) |
-| | `errorOccurred` (*payload*) | `turn`, tool = `error`, message = `error.message` when `recoverable: false`; else `tool`, tool = `:status` |
+| | `errorOccurred` (*payload*) | `failed`, message = `error.message` when `recoverable: false`; else `status` |
 | **OpenCode** (plugin `~/.config/opencode/plugins/pulse.js`; payload as the last argument; a subagent's child session is dropped, its asks sent under the root session) | `session.created` | `start` |
-| | `session.status` `busy` / `retry` (*payload*) | `tool`, tool = `:status` |
+| | `session.status` `busy` / `retry` (*payload*) | `status` (anything else: `ignored`) |
 | | `permission.asked` (*payload*: the ask) | `permission` (ask = `permission: patterns`) |
 | | `question.asked` (*payload*: the ask) | `question` (ask = first question) |
 | | `permission.replied` / `question.replied` / `question.rejected` | `done` |
 | | `session.idle` | `turn` |
-| | `session.error` | `turn`, tool = `error` (message = the error's message, forwarded by the plugin) |
+| | `session.error` | `failed` (message = the error's message, forwarded by the plugin) |
 | | `session.deleted` | `end` |
 | **Cursor** (`~/.cursor/hooks.json`) — never blocked | `sessionStart` / `sessionEnd` | `start` / `end` |
 | | `afterAgentResponse` | `tool` (no tool name) |
@@ -118,7 +122,7 @@ Pulse installs the camelCase ones).
 | | `tool_execution_end` | `tool` (tool = `toolName`, message = one argument — command, path, file_path, pattern, url or query — that the extension kept from the call's `tool_execution_start` by `toolCallId`; the end event carries no arguments. Sliced at 2000 characters only to bound the argv; the receiver redacts the whole value before it shortens it) |
 | | `ui_prompt_start` `kind: confirm` / other kinds (*payload*) | `permission` / `question` (ask = `title`; never the event's `reason`, which is `ui_prompt`) |
 | | `ui_prompt_end` | `done` |
-| | `agent_settled` (*payload*) | `turn` (message = the run's last assistant words, which the extension kept from `agent_end`); `turn`, tool = `error` when that message stopped on an error (message = its `errorMessage`) |
+| | `agent_settled` (*payload*) | `turn` (message = the run's last assistant words, which the extension kept from `agent_end`); `failed` when that message stopped on an error (message = its `errorMessage`) |
 | | `tool_execution_start`, `agent_end` | observed by the extension to fill the events above; never sent |
 
 ## Title, steps and last words

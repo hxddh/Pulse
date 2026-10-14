@@ -39,7 +39,7 @@ package struct WaitLedger: Equatable {
     }
 
     /// The wait open on each blocked row, by row key.
-    package private(set) var waits: [String: Wait] = [:]
+    package private(set) var waits: [SessionKey: Wait] = [:]
     /// When the last banner was accepted — the rate limit's anchor; 0 never.
     package private(set) var lastNotificationMs: Int64 = 0
 
@@ -48,8 +48,8 @@ package struct WaitLedger: Equatable {
     // MARK: - Banner ids (pure)
 
     /// One banner per row: a later ask on the same row replaces it.
-    package static func bannerID(rowKey: String) -> String {
-        let safe = rowKey
+    package static func bannerID(_ key: SessionKey) -> String {
+        let safe = key.description
             .replacingOccurrences(of: "|", with: "-")
             .replacingOccurrences(of: "/", with: "-")
         return "pulse-waiting-\(safe)"
@@ -65,14 +65,14 @@ package struct WaitLedger: Equatable {
     /// banner. `baseline`: the launch replay's projection — its waits are
     /// never announced. Returns the banner ids whose waits all closed.
     @discardableResult
-    package mutating func reconcile(rows: [AgentRow], edges: Set<String>, nowMs: Int64 = 0, baseline: Bool = false) -> Set<String> {
-        var next: [String: Wait] = [:]
+    package mutating func reconcile(rows: [AgentRow], edges: Set<SessionKey>, nowMs: Int64 = 0, baseline: Bool = false) -> Set<String> {
+        var next: [SessionKey: Wait] = [:]
         for row in rows {
-            guard let wait = row.wait, next[row.rowKey] == nil else { continue }
-            if let open = waits[row.rowKey], !edges.contains(row.rowKey) {
-                next[row.rowKey] = open
+            guard let wait = row.wait, next[row.key] == nil else { continue }
+            if let open = waits[row.key], !edges.contains(row.key) {
+                next[row.key] = open
             } else {
-                next[row.rowKey] = Wait(sinceMs: wait.sinceMs, seenMs: nowMs, announce: !baseline)
+                next[row.key] = Wait(sinceMs: wait.sinceMs, seenMs: nowMs, announce: !baseline)
             }
         }
         let closed = Set(waits.compactMap { key, wait in next[key] == wait ? nil : wait.bannerID })
@@ -82,7 +82,7 @@ package struct WaitLedger: Equatable {
 
     /// The open wait's banner is owed. Returns whether that was news.
     @discardableResult
-    package mutating func markQueued(_ key: String) -> Bool {
+    package mutating func markQueued(_ key: SessionKey) -> Bool {
         guard var wait = waits[key], !wait.queued, !wait.notified, !wait.dismissed else { return false }
         wait.queued = true
         waits[key] = wait
@@ -95,7 +95,7 @@ package struct WaitLedger: Equatable {
     /// wait was answered while the request was in flight, and the banner
     /// goes as soon as it came.
     @discardableResult
-    package mutating func markNotified(_ key: String, nowMs: Int64, bannerID: String = "") -> Set<String> {
+    package mutating func markNotified(_ key: SessionKey, nowMs: Int64, bannerID: String = "") -> Set<String> {
         lastNotificationMs = max(lastNotificationMs, nowMs)
         guard var wait = waits[key], !wait.dismissed else {
             return bannerID.isEmpty ? [] : withdrawable([bannerID])
@@ -110,7 +110,7 @@ package struct WaitLedger: Equatable {
     /// The person dismissed the row's wait: it is owed no banner, and the
     /// banner it had is withdrawn.
     @discardableResult
-    package mutating func dismiss(_ key: String) -> Set<String> {
+    package mutating func dismiss(_ key: SessionKey) -> Set<String> {
         guard var wait = waits[key] else { return [] }
         let shown = wait.bannerID
         wait.dismissed = true
@@ -122,7 +122,7 @@ package struct WaitLedger: Equatable {
     }
 
     /// The in-front hold on this wait is over: it may have its one banner.
-    package mutating func markFrontDue(_ key: String) {
+    package mutating func markFrontDue(_ key: SessionKey) {
         guard var wait = waits[key], !wait.frontDue else { return }
         wait.frontDue = true
         waits[key] = wait
@@ -139,24 +139,25 @@ package struct WaitLedger: Equatable {
 
     /// Whether a banner click has somewhere to go: its wait is still open
     /// and not ignored. False when it was answered — the click opens the
-    /// tray instead of routing to a prompt that is gone.
-    package func isOpen(_ rowKey: String) -> Bool {
-        guard !rowKey.isEmpty, let wait = waits[rowKey] else { return false }
+    /// tray instead of routing to a prompt that is gone. `rowKey` is the
+    /// banner's `SessionKey.description`.
+    package func isOpen(rowKey: String) -> Bool {
+        guard !rowKey.isEmpty, let wait = waits.first(where: { $0.key.description == rowKey })?.value else { return false }
         return !wait.dismissed
     }
 
     /// Open waits whose banner is still owed.
-    package var queuedKeys: Set<String> {
+    package var queuedKeys: Set<SessionKey> {
         Set(waits.filter { $0.value.queued && !$0.value.notified && !$0.value.dismissed }.keys)
     }
 
     /// Open waits the person dismissed.
-    package var dismissedKeys: Set<String> {
+    package var dismissedKeys: Set<SessionKey> {
         Set(waits.filter { $0.value.dismissed }.keys)
     }
 
     /// Open waits whose in-front hold is over.
-    package var frontDueKeys: Set<String> {
+    package var frontDueKeys: Set<SessionKey> {
         Set(waits.filter { $0.value.frontDue }.keys)
     }
 

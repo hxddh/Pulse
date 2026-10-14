@@ -87,71 +87,75 @@ enum SurfaceFixtures {
     static var nowMs: Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
     static let minute: Int64 = 60_000
 
-    static func rowModel(_ row: AgentRow, lang: ResolvedLanguage, appOnly: Bool = false) -> TrayRowModel {
-        let notice = appOnly ? RowNotice.appOnly(row: row, lang: lang) : nil
-        return TrayRowModel.make(TrayRowModel.Input(row: row, lang: lang, nowMs: nowMs, notice: notice))
+    /// A row and what its session said lately — what the store hands a row
+    /// face (`StatusStore.facts`).
+    struct Sample {
+        var row: AgentRow
+        var facts = SessionFacts()
     }
 
-    static func baseRow(_ agent: AgentID, key: String, task: String = "Fix the flaky login test") -> AgentRow {
-        var row = AgentRow(rowKey: key, agent: agent)
-        row.sessionID = key
+    static func rowModel(_ sample: Sample, lang: ResolvedLanguage, appOnly: Bool = false) -> TrayRowModel {
+        let notice = appOnly ? RowNotice.appOnly(row: sample.row, lang: lang) : nil
+        return TrayRowModel.make(TrayRowModel.Input(row: sample.row, facts: sample.facts, lang: lang, nowMs: nowMs, notice: notice))
+    }
+
+    static func detail(_ sample: Sample, lang: ResolvedLanguage, notice: RowNotice? = nil) -> DetailModel {
+        DetailModel.make(row: sample.row, facts: sample.facts, lang: lang, nowMs: nowMs, notice: notice)
+    }
+
+    static func base(_ agent: AgentID, id: String, task: String = "Fix the flaky login test") -> Sample {
+        var row = AgentRow(key: SessionKey(agent, id), status: .running(stalled: false))
+        row.session = id
         row.task = task
         row.cwd = "/Users/me/code/app"
-        row.project = "app"
-        row.source = .hooks
         row.liveProcess = true
         row.pid = 4312
-        row.state = .running
-        row.lastEventMs = nowMs - 1 * minute
-        row.startedMs = nowMs - 40 * minute
         row.landing = LandingHandle(tmuxPane: "%3", term: "tmux")
         row.landingPlan = LandingPlan(steps: [.tmuxPane(pane: "%3", socket: "", hostBundleIDs: [])])
-        return row
+        return Sample(row: row, facts: SessionFacts(lastEventMs: nowMs - 1 * minute))
     }
 
-    static func rowPermission() -> AgentRow {
-        var row = baseRow(.claude, key: "fx-perm")
-        row.state = .blocked(RowWait(
-            kind: "Permission", ask: "Bash: npm run build", sinceMs: nowMs - 8 * minute
-        ))
-        return row
+    static func rowPermission() -> Sample {
+        var sample = base(.claude, id: "fx-perm")
+        sample.row.status = .needsYou(Block(kind: .permission, ask: "Bash: npm run build", sinceMs: nowMs - 8 * minute, tool: "Bash"))
+        return sample
     }
 
-    static func rowQuestionFront() -> AgentRow {
-        var row = baseRow(.claude, key: "fx-question")
-        row.state = .blocked(RowWait(
-            kind: "Input", ask: "Which database should the migration target?",
+    static func rowQuestionFront() -> Sample {
+        var sample = base(.claude, id: "fx-question")
+        sample.row.status = .needsYou(Block(
+            kind: .question, ask: "Which database should the migration target?",
             sinceMs: nowMs - 30_000, inFront: true
         ))
-        return row
+        return sample
     }
 
-    static func rowTurn() -> AgentRow {
-        var row = baseRow(.codex, key: "fx-turn", task: "Add an offline queue for login")
-        row.state = .yourTurn(sinceMs: nowMs - 3 * minute)
-        row.lastWord = "All 42 tests pass; the queue drains on reconnect."
-        return row
+    static func rowTurn() -> Sample {
+        var sample = base(.codex, id: "fx-turn", task: "Add an offline queue for login")
+        sample.row.status = .yourTurn(sinceMs: nowMs - 3 * minute)
+        sample.facts.lastWords = "All 42 tests pass; the queue drains on reconnect."
+        return sample
     }
 
-    static func rowStalled() -> AgentRow {
-        var row = baseRow(.copilot, key: "fx-stalled", task: "Port the parser to Swift")
-        row.isStalled = true
-        row.lastEventMs = nowMs - 25 * minute
-        row.activityMs = nowMs - 25 * minute
-        return row
+    static func rowStalled() -> Sample {
+        var sample = base(.copilot, id: "fx-stalled", task: "Port the parser to Swift")
+        sample.row.status = .running(stalled: true)
+        sample.facts.lastEventMs = nowMs - 25 * minute
+        sample.facts.activityMs = nowMs - 25 * minute
+        return sample
     }
 
-    static func rowRunning() -> AgentRow {
-        baseRow(.codex, key: "fx-running", task: "Add retry with jitter to the upload queue")
+    static func rowRunning() -> Sample {
+        base(.codex, id: "fx-running", task: "Add retry with jitter to the upload queue")
     }
 
     /// A session in a Terminal.app tab whose tab script did not land (macOS
     /// Automation denied): a Go brings Terminal forward, not the tab.
-    static func rowTerminalTab() -> AgentRow {
-        var row = baseRow(.claude, key: "fx-terminal-tab", task: "Rename the settings keys")
-        row.landing = LandingHandle("tty:/dev/ttys004;term:Apple_Terminal")
-        row.landingPlan = LandingPlan.make(handle: row.landing, cwd: row.cwd, pid: 4312)
-        return row
+    static func rowTerminalTab() -> Sample {
+        var sample = base(.claude, id: "fx-terminal-tab", task: "Rename the settings keys")
+        sample.row.landing = LandingHandle("tty:/dev/ttys004;term:Apple_Terminal")
+        sample.row.landingPlan = LandingPlan.make(handle: sample.row.landing, cwd: sample.row.cwd, pid: 4312)
+        return sample
     }
 
     /// Five steps, as a hook reports them: the tool, its target, when.
@@ -165,38 +169,36 @@ enum SurfaceFixtures {
         ]
     }
 
-    static func rowRunningStep() -> AgentRow {
-        var row = baseRow(.claude, key: "fx-running-step", task: "Add retry with jitter to the upload queue")
-        row.recentSteps = steps(endingAt: nowMs - 2 * minute)
-        row.lastStep = row.recentSteps.last
-        row.turnStartMs = nowMs - 14 * minute
-        row.lastEventMs = nowMs - 2 * minute
-        row.activityMs = nowMs - 2 * minute
-        return row
+    static func rowRunningStep() -> Sample {
+        var sample = base(.claude, id: "fx-running-step", task: "Add retry with jitter to the upload queue")
+        sample.facts = SessionFacts(
+            steps: steps(endingAt: nowMs - 2 * minute),
+            turnStartMs: nowMs - 14 * minute,
+            lastEventMs: nowMs - 2 * minute,
+            activityMs: nowMs - 2 * minute
+        )
+        return sample
     }
 
-    static func rowStalledStep() -> AgentRow {
-        var row = rowStalled()
-        row.recentSteps = steps(endingAt: nowMs - 25 * minute)
-        row.lastStep = row.recentSteps.last
-        row.turnStartMs = nowMs - 40 * minute
-        return row
+    static func rowStalledStep() -> Sample {
+        var sample = rowStalled()
+        sample.facts.steps = steps(endingAt: nowMs - 25 * minute)
+        sample.facts.turnStartMs = nowMs - 40 * minute
+        return sample
     }
 
-    static func rowProcessOnly() -> AgentRow {
-        var row = AgentRow(rowKey: "cursor|pid:4242", agent: .cursor)
-        row.source = .process
+    static func rowProcessOnly() -> Sample {
+        var row = AgentRow(key: .process(.cursor, pid: 4242), status: .processOnly)
         row.liveProcess = true
         row.pid = 4242
-        row.state = .processOnly
-        return row
+        return Sample(row: row)
     }
 
     // MARK: - The tray's header and notice
 
     static func header(lang: ResolvedLanguage) -> TrayHeaderModel {
         TrayHeaderModel.make(
-            counts: TrayState.Counts(rows: [rowPermission(), rowQuestionFront(), rowRunning(), rowStalled(), rowTurn(), rowProcessOnly()]),
+            counts: TrayState.Counts(rows: [rowPermission(), rowQuestionFront(), rowRunning(), rowStalled(), rowTurn(), rowProcessOnly()].map(\.row)),
             lang: lang
         )
     }
@@ -236,27 +238,24 @@ enum SurfaceFixtures {
     // MARK: - The detail page
 
     static func detailPermission(lang: ResolvedLanguage) -> DetailModel {
-        DetailModel.make(row: rowPermission(), lang: lang, nowMs: nowMs)
+        detail(rowPermission(), lang: lang)
     }
 
     static func detailTurn(lang: ResolvedLanguage) -> DetailModel {
-        DetailModel.make(row: rowTurn(), lang: lang, nowMs: nowMs)
+        detail(rowTurn(), lang: lang)
     }
 
     static func detailSteps(lang: ResolvedLanguage) -> DetailModel {
-        DetailModel.make(row: rowRunningStep(), lang: lang, nowMs: nowMs)
+        detail(rowRunningStep(), lang: lang)
     }
 
     static func detailStalled(lang: ResolvedLanguage) -> DetailModel {
-        DetailModel.make(row: rowStalledStep(), lang: lang, nowMs: nowMs)
+        detail(rowStalledStep(), lang: lang)
     }
 
     static func detailAppOnly(lang: ResolvedLanguage) -> DetailModel {
-        let row = rowTerminalTab()
-        return DetailModel.make(
-            row: row, lang: lang, nowMs: nowMs,
-            notice: RowNotice.appOnly(row: row, lang: lang)
-        )
+        let sample = rowTerminalTab()
+        return detail(sample, lang: lang, notice: RowNotice.appOnly(row: sample.row, lang: lang))
     }
 
     // MARK: - Settings

@@ -7,9 +7,11 @@ import Foundation
 /// `SessionBook` holds what the events said. `project` turns it into rows
 /// (`sessionRows`: one per session worth showing, plus a process-only row for
 /// each agent process no session has claimed) and then into the tray
-/// (`assemble`: sort, window, lamp, title, counts, edges). It never reads a
-/// clock, a file or a setting — the `Context` carries all of them — so the
-/// same world always projects the same way.
+/// (`assemble`: sort, lamp, title, counts, edges). It never reads a clock, a
+/// file or a setting — the `Context` carries all of them — so the same world
+/// always projects the same value, and plain equality says "nothing moved":
+/// a row carries its status, never a step or a clock that moves with every
+/// tool line (those are `SessionFacts`, read at render time).
 ///
 /// Time rules, said by the row's why (`TrayRowModel.why`):
 ///
@@ -44,13 +46,13 @@ package struct TrayState: Equatable {
         package var stalledSeconds: Double = AgentRow.stalledSeconds
         /// The previous projection's open waits (`waitingSince`): a row not
         /// in it, or one whose wait is a new raise, is a Waiting edge.
-        package var previousWaits: [String: Int64] = [:]
+        package var previousWaits: [SessionKey: Int64] = [:]
 
         package init(
             nowMs: Int64,
             lang: ResolvedLanguage = .en,
             stalledSeconds: Double = AgentRow.stalledSeconds,
-            previousWaits: [String: Int64] = [:]
+            previousWaits: [SessionKey: Int64] = [:]
         ) {
             self.nowMs = nowMs
             self.lang = lang
@@ -59,8 +61,8 @@ package struct TrayState: Equatable {
         }
     }
 
-    /// Every row, in the tray's order (`snapshot.rows` carries the same
-    /// list: the tray lists every session and scrolls).
+    /// Every row, in the tray's order: the tray lists every session and
+    /// scrolls.
     package var rows: [AgentRow] = []
     /// The lamp, the menu-bar title and tooltip, the counts.
     package var snapshot = PulseSnapshot()
@@ -68,7 +70,7 @@ package struct TrayState: Equatable {
     package var activity: ProbeSchedule.Activity = .empty
     /// When each open wait was raised, by row — the next projection's
     /// `previousWaits`.
-    package var waitingSince: [String: Int64] = [:]
+    package var waitingSince: [SessionKey: Int64] = [:]
     /// Rows that became blocked since the previous projection — reported,
     /// not acted on: `WaitNotifier` owns notification policy.
     package var newlyBlocked: [AgentRow] = []
@@ -79,29 +81,11 @@ package struct TrayState: Equatable {
         processes: [AgentProcesses.Hit],
         context: Context
     ) -> TrayState {
-        assemble(rows: sessionRows(book: book, processes: processes, context: context), context: context)
-    }
-
-    /// This state with every fact a burst of tool lines moves on its own —
-    /// the steps, the activity and event clocks — set aside: two states with
-    /// the same `quietSignature` differ only in what a row's quiet second
-    /// line says, never in a state, a wait, the lamp or a count. The engine
-    /// lands such a change at most once per tick.
-    package var quietSignature: TrayState {
-        func quiet(_ row: AgentRow) -> AgentRow {
-            var copy = row
-            copy.lastStep = nil
-            copy.recentSteps = []
-            copy.lastEventMs = 0
-            copy.activityMs = 0
-            return copy
-        }
-        var copy = self
-        copy.rows = rows.map(quiet)
-        copy.newlyBlocked = newlyBlocked.map(quiet)
-        copy.snapshot.rows = snapshot.rows.map(quiet)
-        copy.snapshot.updatedAt = .distantPast
-        return copy
+        assemble(
+            rows: sessionRows(book: book, processes: processes, context: context),
+            context: context,
+            activityMs: book.sessions.mapValues(\.activityMs)
+        )
     }
 
     // MARK: - Rows
@@ -121,36 +105,23 @@ package struct TrayState: Equatable {
         for session in book.sessions.values.sorted(by: { $0.key < $1.key }) {
             let live = session.pid > 0 && !session.isEnded
             if !session.isEnded { claimed[session.agent, default: []].append(session) }
-            var row = AgentRow(rowKey: session.key, agent: session.agent)
-            row.sessionID = session.session
-            row.attentionSession = session.session
-            row.cwd = session.cwd
-            row.project = TitleHeuristics.shortProject(session.cwd)
-            row.pid = Int(session.pid)
-            row.liveProcess = live
-            row.startedMs = session.startedMs
-            row.lastEventMs = session.lastEventMs
-            row.activityMs = session.activityMs
-            row.source = .hooks
-            row.state = state(of: session, nowMs: nowMs)
-            row.stateSinceMs = stateSince(of: session, nowMs: nowMs)
-            row.recentReason = recentReason(of: session)
+            let status = Self.status(of: session, nowMs: nowMs, stalledSeconds: context.stalledSeconds)
 
             // Only a session still working or blocked is kept by its
-            // process; a recent one leaves after the window, live or not.
-            // A silent one's window starts when it went silent — its last
+            // process; a recent one leaves after the window, live or not. A
+            // silent one's window starts when it went silent — its last
             // event is already past the window by then.
-            let recentFrom = row.isRecent && row.recentReason == .silent ? row.stateSinceMs : session.lastEventMs
-            guard nowMs - recentFrom <= recentWindowMs || !row.isRecent else { continue }
+            if case .recent(let reason) = status {
+                let from = reason == .silent ? session.lastEventMs + silentBoundMs : session.lastEventMs
+                guard nowMs - from <= recentWindowMs else { continue }
+            }
 
-            // What its events said: the title, the last words, the error,
-            // the steps and the turn's clock.
+            var row = AgentRow(key: session.key, status: status)
+            row.session = session.session
+            row.cwd = session.cwd
+            row.pid = session.pid
+            row.liveProcess = live
             row.task = session.title
-            row.lastWord = session.message
-            row.lastErrorText = session.lastError
-            row.recentSteps = session.steps
-            row.lastStep = session.steps.last
-            row.turnStartMs = session.turnStartMs
 
             // How to reach it: the hook's landing handle first; the process
             // table fills only what the hook did not say.
@@ -165,13 +136,6 @@ package struct TrayState: Equatable {
                 handle: landing, cwd: row.cwd,
                 pid: live ? session.pid : 0, hostApp: hit?.hostApp
             )
-
-            // Silence is evidence only from an agent whose hook reports
-            // every tool call; the others are silent through every long turn.
-            row.isStalled = row.state == .running
-                && session.agent.reportsToolActivity
-                && session.toolMs > 0
-                && AgentRow.stalled(lastActivityMs: session.lastEventMs, nowMs: nowMs, threshold: context.stalledSeconds)
             out.append(row)
         }
 
@@ -182,10 +146,9 @@ package struct TrayState: Equatable {
                     || (session.pid == 0 && !session.cwd.isEmpty && session.cwd == hit.cwd)
             }
             guard !owned else { continue }
-            var row = AgentRow(rowKey: RowIdentity.process(agent: hit.agent, pid: Int(hit.pid)), agent: hit.agent)
+            var row = AgentRow(key: .process(hit.agent, pid: hit.pid), status: .processOnly)
             row.cwd = hit.cwd
-            row.project = TitleHeuristics.shortProject(hit.cwd)
-            row.pid = Int(hit.pid)
+            row.pid = hit.pid
             row.liveProcess = true
             row.landing = LandingHandle(
                 tty: LandingHandle.normalizeTTY(hit.tty),
@@ -195,75 +158,53 @@ package struct TrayState: Equatable {
                 handle: row.landing, cwd: row.cwd,
                 pid: hit.pid, hostApp: hit.hostApp
             )
-            row.startedMs = hit.startedMs
-            row.stateSinceMs = hit.startedMs
-            row.source = .process
-            row.state = .processOnly
             out.append(row)
         }
         return out
     }
 
-    /// The row state for a session at `nowMs`.
-    package static func state(of session: SessionBook.Session, nowMs: Int64) -> RowState {
+    /// A session's status at `nowMs`: the book's state, moved by the time
+    /// rules and the stall rule.
+    package static func status(
+        of session: SessionBook.Session,
+        nowMs: Int64,
+        stalledSeconds: Double = AgentRow.stalledSeconds
+    ) -> AgentRow.Status {
         let quiet = nowMs - session.lastEventMs > idleBoundMs
         let unknownPid = session.pid <= 0
         switch session.state {
         case .blocked(let block):
-            if unknownPid, quiet { return .recent }
-            return .blocked(RowWait(kind: waitKind(block.kind), ask: block.ask, sinceMs: block.sinceMs, inFront: block.inFront))
+            if unknownPid, quiet { return .recent(.quiet) }
+            return .needsYou(block)
         case .working:
-            if unknownPid, quiet { return .recent }
-            if nowMs - session.lastEventMs > silentBoundMs { return .recent }
-            return .running
+            if unknownPid, quiet { return .recent(.quiet) }
+            if nowMs - session.lastEventMs > silentBoundMs { return .recent(.silent) }
+            // Silence is evidence only from an agent whose hook reports
+            // every tool call; the others are silent through every long turn.
+            let stalled = session.agent.reportsToolActivity
+                && session.toolMs > 0
+                && AgentRow.stalled(lastActivityMs: session.lastEventMs, nowMs: nowMs, threshold: stalledSeconds)
+            return .running(stalled: stalled)
         case .yourTurn(let since):
-            if nowMs - since > idleBoundMs { return .recent }
+            if nowMs - since > idleBoundMs { return .recent(.atPrompt) }
             return .yourTurn(sinceMs: since)
-        case .idle, .ended:
-            return .recent
-        }
-    }
-
-    /// Why a session projected as recent is: ended, at its prompt, quiet
-    /// past the idle bound with no process Pulse can see, or silent past
-    /// `silentBoundMs` although its process lives.
-    package static func recentReason(of session: SessionBook.Session) -> RecentReason {
-        switch session.state {
-        case .ended: return .ended
-        case .idle, .yourTurn: return .atPrompt
-        case .working: return session.pid > 0 ? .silent : .quiet
-        case .blocked: return .quiet
-        }
-    }
-
-    /// When the row entered the state `state(of:nowMs:)` gives: the
-    /// session's own state clock, or — when a time rule moved it to recent —
-    /// the moment the rule did.
-    package static func stateSince(of session: SessionBook.Session, nowMs: Int64) -> Int64 {
-        switch (session.state, state(of: session, nowMs: nowMs)) {
-        case (.yourTurn(let since), .recent): return since + idleBoundMs
-        case (.working, .recent) where session.pid > 0: return session.lastEventMs + silentBoundMs
-        case (.blocked, .recent), (.working, .recent): return session.lastEventMs + idleBoundMs
-        default: return session.stateSinceMs
-        }
-    }
-
-    /// The protocol kind as the token `RowWait` carries (`L10n.waitKind`).
-    package static func waitKind(_ kind: AttentionKind) -> String {
-        switch kind {
-        case .permission: return "Permission"
-        case .question: return "Input"
-        default: return "Waiting"
+        case .idle:
+            return .recent(.atPrompt)
+        case .ended(let at):
+            return .recent(.ended(atMs: at))
         }
     }
 
     // MARK: - The tray
 
-    /// Rows in, the tray out: sorted, windowed, the lamp, the title, the
-    /// counts and the Waiting edges.
+    /// Rows in, the tray out: sorted, the lamp, the title, the counts and
+    /// the Waiting edges. `activityMs`: each session's newest activity — a
+    /// later raise on a row that was waiting is news when the session moved
+    /// in between (`isNewRaise`).
     package static func assemble(
         rows input: [AgentRow],
-        context: Context
+        context: Context,
+        activityMs: [SessionKey: Int64] = [:]
     ) -> TrayState {
         var state = TrayState()
         // Waiting → active → stalled → recent; within Waiting the oldest
@@ -278,51 +219,49 @@ package struct TrayState: Equatable {
                 if wb == 0 { return true }
                 return wa < wb
             }
-            if a.section != b.section { return a.section.rawValue < b.section.rawValue }
+            if a.rank != b.rank { return a.rank < b.rank }
             let ta = a.usefulTask != nil, tb = b.usefulTask != nil
             if ta != tb { return ta }
             if a.liveProcess != b.liveProcess { return a.liveProcess }
             let ra = AgentID.priority.firstIndex(of: a.agent) ?? 999
             let rb = AgentID.priority.firstIndex(of: b.agent) ?? 999
             if ra != rb { return ra < rb }
-            return a.rowKey < b.rowKey
+            return a.key < b.key
         }
 
         state.rows = all
         state.snapshot = snapshot(rows: all, context: context)
         state.activity = activity(rows: all)
         for row in all {
-            guard let wait = row.wait, state.waitingSince[row.rowKey] == nil else { continue }
-            state.waitingSince[row.rowKey] = wait.sinceMs
+            guard let wait = row.wait, state.waitingSince[row.key] == nil else { continue }
+            state.waitingSince[row.key] = wait.sinceMs
         }
         // Edges — a key that was not waiting, or one whose wait is a new
         // raise (a second ask on the same row). Keys never change
-        // (`RowIdentity`), so nothing has to follow one.
+        // (`SessionKey`), so nothing has to follow one.
         state.newlyBlocked = all.filter { row in
-            guard row.isBlocked else { return false }
-            guard let previous = context.previousWaits[row.rowKey] else { return true }
-            return isNewRaise(row, previousSinceMs: previous)
+            guard let wait = row.wait else { return false }
+            guard let previous = context.previousWaits[row.key] else { return true }
+            return isNewRaise(sinceMs: wait.sinceMs, previousSinceMs: previous, activityMs: activityMs[row.key] ?? 0)
         }
         return state
     }
 
-    /// Whether the row's wait is a *new* raise on a row that was already
-    /// waiting since `previousSinceMs`: a second permission, a new question.
-    /// A later raise counts when the session moved after the old one (its
-    /// next tool call is how a second ask begins) or when it is past the
-    /// slack.
-    package static func isNewRaise(_ row: AgentRow, previousSinceMs: Int64) -> Bool {
-        guard let wait = row.wait else { return false }
-        let since = wait.sinceMs
-        guard since > 0, previousSinceMs > 0, since > previousSinceMs else { return false }
-        return row.activityMs > previousSinceMs || since - previousSinceMs > reraiseSlackMs
+    /// Whether a wait raised at `sinceMs` is a *new* raise on a row that was
+    /// already waiting since `previousSinceMs`: a second permission, a new
+    /// question. A later raise counts when the session moved after the old
+    /// one (its next tool call is how a second ask begins) or when it is
+    /// past the slack.
+    package static func isNewRaise(sinceMs: Int64, previousSinceMs: Int64, activityMs: Int64) -> Bool {
+        guard sinceMs > 0, previousSinceMs > 0, sinceMs > previousSinceMs else { return false }
+        return activityMs > previousSinceMs || sinceMs - previousSinceMs > reraiseSlackMs
     }
 
     /// The tick's tier. By row state, like the lamp and the header — a
     /// process with no session, or a finished turn, is not work in progress.
     package static func activity(rows: [AgentRow]) -> ProbeSchedule.Activity {
         if rows.contains(where: \.isBlocked) { return .waiting }
-        if rows.contains(where: { $0.state == .running }) { return .running }
+        if rows.contains(where: \.isRunning) { return .running }
         return rows.isEmpty ? .empty : .recent
     }
 
@@ -335,9 +274,7 @@ package struct TrayState: Equatable {
         let lang = context.lang
         let counts = Counts(rows: all)
 
-        var snap = PulseSnapshot()
-        snap.counts = counts
-        snap.rows = all
+        var snap = PulseSnapshot(counts: counts, projected: true)
 
         // The menu bar carries a title only when something is blocked: how
         // many, and how long the oldest has waited ("2 · 4m"; "2·4分钟" when
@@ -411,9 +348,9 @@ package struct TrayState: Equatable {
 
         package init(rows: [AgentRow] = []) {
             for row in rows {
-                switch row.state {
-                case .blocked: blocked += 1
-                case .running: if row.isStalled { stalled += 1 } else { running += 1 }
+                switch row.status {
+                case .needsYou: blocked += 1
+                case .running(let isStalled): if isStalled { stalled += 1 } else { running += 1 }
                 case .yourTurn: yourTurn += 1
                 case .processOnly: processOnly += 1
                 case .recent: recent += 1

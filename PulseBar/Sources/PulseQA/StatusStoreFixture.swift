@@ -15,26 +15,29 @@ extension StatusStore {
     func installPreviewFixture(_ name: String) {
         previewFixtureActive = true
         let now = Int64(Date().timeIntervalSince1970 * 1000)
+        var facts: [SessionKey: SessionFacts] = [:]
 
         func row(
-            _ key: String,
+            _ id: String,
             _ agent: AgentID,
             task: String,
             cwd: String = "/Users/me/code/Pulse",
-            source: RowSource = .hooks,
             live: Bool = true,
             ageMinutes: Int = 1
         ) -> AgentRow {
-            var value = AgentRow(rowKey: key, agent: agent)
-            value.sessionID = key
+            var value = AgentRow(key: SessionKey(agent, id), status: live ? .running(stalled: false) : .recent(.atPrompt))
+            value.session = id
             value.task = task
             value.cwd = cwd
-            value.project = TitleHeuristics.shortProject(cwd)
-            value.source = source
             value.liveProcess = live
-            value.state = live ? .running : .recent
-            value.lastEventMs = now - Int64(ageMinutes * 60 * 1000)
-            value.startedMs = now - 54 * 60 * 1000
+            facts[value.key] = SessionFacts(lastEventMs: now - Int64(ageMinutes * 60 * 1000))
+            return value
+        }
+
+        func process(_ agent: AgentID, pid: Int32) -> AgentRow {
+            var value = AgentRow(key: .process(agent, pid: pid), status: .processOnly)
+            value.liveProcess = true
+            value.pid = pid
             return value
         }
 
@@ -51,91 +54,66 @@ extension StatusStore {
             )
             switch name {
             case "status-waiting":
-                fixtureRow.state = .blocked(RowWait(
-                    kind: "Permission",
+                fixtureRow.status = .needsYou(Block(
+                    kind: .permission,
                     ask: "Bash: ./scripts/release.sh 2.0.0 --commit",
                     sinceMs: now - 8 * 60 * 1000
                 ))
             case "status-stalled":
-                fixtureRow.isStalled = true
-                fixtureRow.lastEventMs = now - 25 * 60 * 1000
+                fixtureRow.status = .running(stalled: true)
+                facts[fixtureRow.key]?.lastEventMs = now - 25 * 60 * 1000
             case "status-running":
-                fixtureRow.lastWord = "The fixtures pass."
-                let step = SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 60 * 1000)
-                fixtureRow.recentSteps = [step]
-                fixtureRow.lastStep = step
-                fixtureRow.turnStartMs = now - 14 * 60 * 1000
+                facts[fixtureRow.key] = SessionFacts(
+                    lastWords: "The fixtures pass.",
+                    steps: [SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 60 * 1000)],
+                    turnStartMs: now - 14 * 60 * 1000,
+                    lastEventMs: now - 60 * 1000
+                )
             case "status-turn":
                 // Finished, unseen — a quiet count, not the red lamp.
-                fixtureRow.state = .yourTurn(sinceMs: now - 3 * 60 * 1000)
+                fixtureRow.status = .yourTurn(sinceMs: now - 3 * 60 * 1000)
             default:
                 fixtureRow.liveProcess = false
-                fixtureRow.state = .recent
+                fixtureRow.status = .recent(.atPrompt)
             }
-            landFixture([fixtureRow], title: name == "status-waiting" ? "1 · 8m" : "")
+            landFixture([fixtureRow], facts: facts, title: name == "status-waiting" ? "1 · 8m" : "")
             return
         }
 
         if name == "coverage" {
-            let codex = row(
-                "coverage-codex",
-                .codex,
-                task: "Ship runtime observability",
-                cwd: "/Users/me/code/Pulse"
-            )
-
-            var pi = row(
-                "coverage-pi",
-                .pi,
-                task: "",
-                cwd: "",
-                source: .process
-            )
-            pi.lastEventMs = 0
-            pi.state = .processOnly
-            pi.startedMs = now - 60 * 60 * 1000
-
-            let cursor = row(
-                "coverage-cursor",
-                .cursor,
-                task: "Refine adapter coverage",
-                cwd: "/Users/me/code/Client",
-                live: false
-            )
+            let codex = row("coverage-codex", .codex, task: "Ship runtime observability", cwd: "/Users/me/code/Pulse")
+            let pi = process(.pi, pid: 4101)
+            let cursor = row("coverage-cursor", .cursor, task: "Refine adapter coverage", cwd: "/Users/me/code/Client", live: false)
             hooksStatus = .all
-            landFixture([codex, pi, cursor], title: "")
+            landFixture([codex, pi, cursor], facts: facts, title: "")
             return
         }
 
         var waiting = row("claude-preview", .claude, task: "Approve the release build")
-        waiting.state = .blocked(RowWait(
-            kind: "Permission",
+        waiting.status = .needsYou(Block(
+            kind: .permission,
             ask: "Bash: ./scripts/release.sh 2.0.0 --commit",
             sinceMs: now - 8 * 60 * 1000
         ))
 
-        var active = row(
+        let active = row(
             "codex-preview",
             .codex,
             task: "[hxddh/Pulse](https://github.com/hxddh/Pulse) Fix panel corners"
         )
-        active.activityMs = now - 15_000
-        active.lastWord = "Corners now follow the panel radius."
-        active.recentSteps = [
-            SessionBook.Step(tool: "Edit", target: "Sources/PulseApp/PulseTheme.swift", ms: now - 3 * 60 * 1000),
-            SessionBook.Step(tool: "Bash", target: "swift test --filter Snapshot", ms: now - 15_000),
-        ]
-        active.lastStep = active.recentSteps.last
-        active.turnStartMs = now - 9 * 60 * 1000
-
-        var stalled = row(
-            "pi-preview",
-            .pi,
-            task: "Check the process detector",
-            cwd: "",
-            ageMinutes: 32
+        facts[active.key] = SessionFacts(
+            lastWords: "Corners now follow the panel radius.",
+            steps: [
+                SessionBook.Step(tool: "Edit", target: "Sources/PulseApp/PulseTheme.swift", ms: now - 3 * 60 * 1000),
+                SessionBook.Step(tool: "Bash", target: "swift test --filter Snapshot", ms: now - 15_000),
+            ],
+            turnStartMs: now - 9 * 60 * 1000,
+            lastEventMs: now - 60 * 1000,
+            activityMs: now - 15_000
         )
-        stalled.isStalled = true
+
+        var stalled = row("pi-preview", .pi, task: "Check the process detector", cwd: "", ageMinutes: 32)
+        stalled.status = .running(stalled: true)
 
         let recent = row(
             "cursor-preview",
@@ -156,43 +134,25 @@ extension StatusStore {
                 live: false,
                 ageMinutes: 6
             )
-            var process = row(
-                "copilot-preview",
-                .copilot,
-                task: "",
-                cwd: "",
-                source: .process,
-                ageMinutes: 0
-            )
-            process.lastEventMs = 0
-            process.state = .processOnly
-            process.startedMs = now - 70 * 60 * 1000
-            let sub = row(
-                "claude-sub-preview",
-                .claude,
-                task: "Run collector fixtures",
-                cwd: "/Users/me/code/Pulse"
-            )
-            rows += [quiet, process, sub]
+            let sub = row("claude-sub-preview", .claude, task: "Run collector fixtures", cwd: "/Users/me/code/Pulse")
+            rows += [quiet, process(.copilot, pid: 4102), sub]
         }
-        rows.sort { $0.section.rawValue < $1.section.rawValue }
-        landFixture(rows, title: "\(rows.filter(\.isBlocked).count) · 8m")
+        rows.sort { $0.rank < $1.rank }
+        landFixture(rows, facts: facts, title: "\(rows.filter(\.isBlocked).count) · 8m")
     }
 
     /// The fixture's rows on screen, with the lamp, the tooltip and the
-    /// counts the projection would give them.
-    private func landFixture(_ rows: [AgentRow], title: String) {
-        cachedAll = rows
+    /// counts the projection would give them, and their sessions' facts.
+    private func landFixture(_ rows: [AgentRow], facts: [SessionKey: SessionFacts], title: String) {
+        self.rows = rows
+        fixtureFacts = facts
         let counts = TrayState.Counts(rows: rows)
         let rule = TrayState.lampRule(counts: counts)
-        var snap = PulseSnapshot()
+        var snap = PulseSnapshot(counts: counts, projected: true)
         snap.lamp = Lamp(rule)
         snap.title = title
         snap.tooltip = TrayState.lampSentence(rule, lang: lang)
         snap.accessibilityLabel = snap.lamp.isGrey ? tr(.a11yIdle) : snap.tooltip
-        snap.rows = rows
-        snap.counts = counts
-        snap.updatedAt = Date()
         snapshot = snap
     }
 }

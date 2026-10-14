@@ -1,33 +1,36 @@
 import Foundation
 
-/// What an event means, as a type. Every hook event is one line of the
-/// event log:
+/// What a line of the event log means, as a type. One kind per meaning —
+/// no marker in another column changes it:
 ///
 /// - **blocked** (`permission`, `question`, `waiting`): the agent cannot go
 ///   on without you — the red lamp, a banner, a sound;
-/// - **your turn** (`turn`): it finished and is waiting for the next prompt —
-///   a quiet count, never the red lamp;
+/// - **your turn** (`turn`, `failed`): it finished — or, `failed`, its turn
+///   ended on an error — and waits for the next prompt: a quiet count, never
+///   the red lamp;
 /// - **idle** (`idle`): it has sat at its prompt a while (Claude's
 ///   `idle_prompt`, about a minute after a turn). Your turn only when Pulse
-///   had not seen the turn end — the session was still working or blocked,
-///   or was never seen — so a turn the person already saw is not revived;
-/// - **resolved** (`done`): nothing is owed;
+///   had not seen the turn end — so a turn the person already saw is not
+///   revived;
+/// - **resolved** (`done`, `dismiss`): nothing is owed — the vendor said its
+///   prompt closed (`done`), or the person set the wait aside in Pulse
+///   (`dismiss`, written by the app alone);
 /// - **lifecycle** (`start`, `working`, `end`): the session began, took a
 ///   prompt, or ended;
-/// - **activity** (`tool`): a tool ran. It keeps a working session
-///   from reading stalled, answers a block raised for that tool, and is
-///   the session's last step.
+/// - **activity** (`tool`, `status`): a tool ran — its last step, the answer
+///   to a block raised for that tool — or (`status`) work goes on and no tool
+///   ran: never a step, never an answer;
+/// - **ignored** (`ignored`): the receiver heard an event it did not turn
+///   into state — an event Pulse does not install, a payload that is not a
+///   JSON object, a blocked event from an agent that cannot report one — and
+///   says why in `message`. The reducer skips it; it is there to be read.
 package enum AttentionKind: String, Sendable, CaseIterable {
-    case permission
-    case question
-    case waiting
-    case turn
-    case idle
-    case done
-    case start
-    case working
-    case end
-    case tool
+    case permission, question, waiting
+    case turn, failed, idle
+    case done, dismiss
+    case start, working, end
+    case tool, status
+    case ignored
 
     /// The agent cannot continue until the user acts.
     package var isBlocking: Bool {
@@ -35,101 +38,58 @@ package enum AttentionKind: String, Sendable, CaseIterable {
     }
 
     /// Still owed to the user: the kinds whose `front` column is written.
-    package var isOpen: Bool { isBlocking || self == .turn || self == .idle }
+    package var isOpen: Bool { isBlocking || self == .turn || self == .failed || self == .idle }
+
+    /// Work going on: a tool ran, or (`status`) the agent says it is busy.
+    package var isActivity: Bool { self == .tool || self == .status }
+
+    /// Nothing is owed any more: the vendor's "resolved" or Pulse's own
+    /// dismissal.
+    package var isResolution: Bool { self == .done || self == .dismiss }
 }
 
-/// One v6 record: ten tab-separated columns.
+/// One v7 record: twelve tab-separated columns.
 ///
-/// `agent  kind  ms  message  session  cwd  front  pid  landing  tool`
+/// `seq  ms  agent  kind  event  session  cwd  pid  front  landing  tool  message`
 ///
-/// - `message`: what the event said — a block's ask, a turn's last words
-///   (or, on a failed turn, its error), a prompt's text, a tool's target;
+/// - `seq`: the line's number in its log — assigned by `EventLog.append`
+///   under the append lock, one more than the last; a reader applies only the
+///   lines past the last one it applied;
+/// - `event`: the vendor's own name of the hook event that wrote the line
+///   (`PermissionRequest`, `tool_execution_end`, `session.status`), or
+///   Pulse's own (`pulse.dismiss`, `pulse.seen`);
+/// - `pid`: the agent process the hook ran under, empty when unknown (a pid
+///   of 1 or less is never written: the hook's parent had exited);
 /// - `front`: `1` when the prompt's own window was frontmost as the event was
 ///   raised, `0` when it was not, empty when that could not be established;
-/// - `pid`: the agent process the hook ran under, empty when unknown (a
-///   pid of 1 or less is never written: the hook's parent had exited);
 /// - `landing`: where the session can be reached, most specific first,
 ///   `;`-separated — `tmux:%3`, `iterm:w0t1p0:<uuid>`, `tty:/dev/ttys004`,
 ///   `term:<TERM_PROGRAM>`;
 /// - `tool`: the tool a `tool` line ran, or the tool a block is about
-///   (`Bash`); its target, when known, is the message. On a `turn` line,
-///   `error` says the turn ended on an error and the message is its text;
-///   on a `tool` line, `:status` says work goes on and no tool ran; on a
-///   `done` line, `:dismiss` says the app wrote it (a dismissal).
+///   (`Bash`); its target, when known, is the message;
+/// - `message`: what the event said — a block's ask, a turn's last words, a
+///   failed turn's error, a prompt's text, a tool's target, why a line was
+///   ignored. Last, so the free text never shifts a column.
 ///
 /// Writers clean every field (`AttentionProtocol.flatten`: no tabs, no line
 /// breaks of any kind) before building one.
 package struct AttentionRecord: Equatable, Sendable {
-    package var agent: String
-    package var kind: String
+    package var seq: Int64
     package var ms: Int64
-    package var message: String
+    package var agent: AgentID
+    package var kind: AttentionKind
+    package var event: String
     package var session: String
     package var cwd: String
-    package var front: Bool?
     package var pid: Int32
+    package var front: Bool?
     package var landing: String
     package var tool: String
-
-    /// The `tool` column of a `turn` line that ended on an error.
-    package static let errorTool = "error"
-
-    /// Pulse's own markers in the `tool` column begin with `:` — a value no
-    /// vendor tool name has (tool names are identifiers), so a marker is
-    /// never read as a tool and a tool is never read as a marker.
-    package static let reservedPrefix = ":"
-
-    /// The `tool` column of a `tool` line that says only that work goes on
-    /// — a status (OpenCode `session.status` busy / retry), a recoverable
-    /// error (Copilot `errorOccurred`) — not that a tool ran. It is neither
-    /// a step nor an answer to a block.
-    package static let statusTool = ":status"
-
-    /// The `tool` column of the app's own `done` — a dismissal in Pulse (or
-    /// a finished turn looked at). Only this `done` makes the same block
-    /// said again right after stay cleared; a vendor's "resolved" does not.
-    package static let dismissTool = ":dismiss"
-
-    /// This line's `tool` column is the status marker (`statusTool`).
-    package var isStatus: Bool {
-        tool.trimmingCharacters(in: .whitespacesAndNewlines) == Self.statusTool
-    }
-
-    /// This line is the app's own `done` (`dismissTool`).
-    package var isDismissal: Bool {
-        kind == AttentionKind.done.rawValue
-            && tool.trimmingCharacters(in: .whitespacesAndNewlines) == Self.dismissTool
-    }
-
-    /// The app's own `done` for a dismissal (or a finished turn looked
-    /// at): under exactly the session the entry carried — an empty one,
-    /// with its folder, clears only that agent's session-less entry there —
-    /// and marked `dismissTool`, so the vendor's echo of the same ask stays
-    /// cleared.
-    package static func dismissal(agent: String, session: String, cwd: String, ms: Int64) -> AttentionRecord {
-        AttentionRecord(
-            agent: agent,
-            kind: AttentionKind.done.rawValue,
-            ms: ms,
-            session: AttentionProtocol.flatten(session),
-            cwd: AttentionProtocol.flatten(cwd),
-            tool: dismissTool
-        )
-    }
-
-    /// A vendor's tool name as the receiver may write it: a leading `:`
-    /// is dropped, so it can never spell one of Pulse's markers.
-    package static func vendorTool(_ name: String) -> String {
-        var value = name.trimmingCharacters(in: .whitespaces)
-        while value.hasPrefix(reservedPrefix) {
-            value = String(value.dropFirst()).trimmingCharacters(in: .whitespaces)
-        }
-        return value
-    }
+    package var message: String
 
     package init(
-        agent: String,
-        kind: String,
+        agent: AgentID,
+        kind: AttentionKind,
         ms: Int64,
         message: String = "",
         session: String = "",
@@ -137,88 +97,155 @@ package struct AttentionRecord: Equatable, Sendable {
         front: Bool? = nil,
         pid: Int32 = 0,
         landing: String = "",
-        tool: String = ""
+        tool: String = "",
+        event: String = "",
+        seq: Int64 = 0
     ) {
+        self.seq = seq
+        self.ms = ms
         self.agent = agent
         self.kind = kind
-        self.ms = ms
-        self.message = message
+        self.event = event
         self.session = session
         self.cwd = cwd
-        self.front = front
         self.pid = pid
+        self.front = front
         self.landing = landing
         self.tool = tool
+        self.message = message
+    }
+
+    /// The `event` of the app's own dismissal of a wait (⌘D, a banner's
+    /// "Ignore").
+    package static let dismissEvent = "pulse.dismiss"
+    /// The `event` of the app's own "your turn, seen" (the person went to a
+    /// finished session).
+    package static let seenEvent = "pulse.seen"
+
+    /// The app's own `dismiss`: under exactly the session the row carried —
+    /// an empty one, with its folder, clears only that agent's session-less
+    /// entry there — so the vendor's echo of the same ask stays cleared.
+    package static func dismissal(
+        agent: AgentID, session: String, cwd: String, ms: Int64, event: String = AttentionRecord.dismissEvent
+    ) -> AttentionRecord {
+        AttentionRecord(
+            agent: agent,
+            kind: .dismiss,
+            ms: ms,
+            session: AttentionProtocol.flatten(session),
+            cwd: AttentionProtocol.flatten(cwd),
+            event: event
+        )
     }
 
     /// The record as one line, without a line break.
     package var line: String {
         [
-            agent,
-            kind,
+            String(seq),
             String(ms),
-            message,
+            agent.rawValue,
+            kind.rawValue,
+            event,
             session,
             cwd,
-            AttentionProtocol.frontField(front),
             pid > 1 ? String(pid) : "",
+            AttentionProtocol.frontField(front),
             landing,
             tool,
+            message,
         ].joined(separator: "\t")
     }
 
-    /// A complete v6 record, or nil for anything else (a comment, a blank
-    /// line, a line with another column count).
+    /// A complete v7 record, or nil for anything else: a comment, a blank
+    /// line, a line with another column count, a `seq` that is not a
+    /// positive number, an agent or a kind the protocol does not know.
     package init?<S: StringProtocol>(line: S) {
-        guard let cols = AttentionProtocol.columns(of: line) else { return nil }
+        guard let cols = AttentionProtocol.columns(of: line),
+              let seq = Int64(cols[0]), seq > 0,
+              let agent = Agents.agent(named: cols[2]),
+              let kind = AttentionProtocol.kind(cols[3])
+        else { return nil }
         self.init(
-            agent: cols[0],
-            kind: cols[1],
-            ms: Int64(cols[2]) ?? 0,
-            message: cols[3],
-            session: cols[4],
-            cwd: cols[5],
-            front: AttentionProtocol.parseFront(cols[6]),
+            agent: agent,
+            kind: kind,
+            ms: Int64(cols[1]) ?? 0,
+            message: cols[11],
+            session: cols[5],
+            cwd: cols[6],
+            front: AttentionProtocol.parseFront(cols[8]),
             pid: AttentionProtocol.parsePid(cols[7]),
-            landing: cols[8],
-            tool: cols[9]
+            landing: cols[9],
+            tool: cols[10],
+            event: cols[4],
+            seq: seq
         )
     }
 }
 
-/// Attention Protocol v6 — every hook event of every supported agent, read
-/// by its adapter in `pulse-hook` (the app's `--hook`), as one line of one
-/// append-only event log (`events.tsv`, `EventLog`).
+/// Attention Protocol v7 — every hook event of every supported agent, read
+/// by its adapter in `pulse-hook` (the app's `--hook`), as one numbered line
+/// of one append-only event log (`events.tsv`, `EventLog`).
 ///
-/// Writers: `PulseHookReceiver` (through `EventLog.append`) and the app's
-/// own `done` for a dismissal (`tool` = `:dismiss`).
-/// Reader: `SessionBook` (the app), every line in file order. Spec:
-/// `docs/attention-protocol.md`.
+/// Writers: `PulseHookReceiver` and the app's own `dismiss`, both through
+/// `EventLog.append`. Reader: `SessionBook` (the app), every line in `seq`
+/// order. Spec: `docs/attention-protocol.md`.
 package enum AttentionProtocol {
-    package static let version = 6
+    package static let version = 7
 
     /// What every `events.tsv` header begins with. A file whose first line
-    /// does not is not a v6 log: it is deleted and a fresh one started,
-    /// never read (`EventLog`).
-    package static let headerPrefix = "# pulse-events v6 "
+    /// does not is not a v7 log: it is emptied and a fresh one started, never
+    /// read (`EventLog`).
+    package static let headerPrefix = "# pulse-events v7 "
 
-    /// The first line of `events.tsv`: the protocol and this file's
-    /// generation (a new one each time the file is created or compacted, so
-    /// a reader holding a byte offset knows the file was rewritten). Only
-    /// complete v6 records (ten columns) are read.
-    package static func header(generation: String) -> String {
-        headerPrefix + "\(generation) (agent\\tkind\\tms\\tmessage\\tsession\\tcwd\\tfront\\tpid\\tlanding\\ttool)\n"
+    /// The columns, in order — what the header's legend says.
+    package static let columnNames = [
+        "seq", "ms", "agent", "kind", "event", "session", "cwd", "pid", "front", "landing", "tool", "message",
+    ]
+
+    /// Column count of a complete v7 record.
+    package static let columnCount = 12
+
+    /// The first line of `events.tsv`: the protocol, the `seq` the next line
+    /// gets when nothing in the file has a larger one, and the log's `gen` —
+    /// chosen when the log is started (created, or a log that is not v7
+    /// started over) and kept by every compaction, so a reader knows whether
+    /// a rewritten file continues the numbering it applied.
+    package struct Header: Equatable, Sendable {
+        package var next: Int64
+        package var gen: String
+
+        package init(next: Int64, gen: String) {
+            self.next = next
+            self.gen = gen
+        }
+
+        /// A v7 header line, or nil for anything else.
+        package init?<S: StringProtocol>(line: S) {
+            let text = String(line)
+            guard AttentionProtocol.isHeader(text) else { return nil }
+            var next: Int64?
+            var gen: String?
+            for token in text.split(separator: " ").map(String.init) {
+                if token.hasPrefix("next=") { next = Int64(token.dropFirst(5)) }
+                if token.hasPrefix("gen=") { gen = String(token.dropFirst(4)) }
+            }
+            guard let next, next > 0, let gen, !gen.isEmpty else { return nil }
+            self.init(next: next, gen: gen)
+        }
+
+        /// The header line, with its line break.
+        package var line: String {
+            let legend = AttentionProtocol.columnNames.joined(separator: "\\t")
+            return AttentionProtocol.headerPrefix + "next=\(next) gen=\(gen) (\(legend))\n"
+        }
     }
 
-    /// Whether a file's first line is a v6 header.
+    /// Whether a file's first line is a v7 header.
     package static func isHeader<S: StringProtocol>(_ line: S) -> Bool {
         line.hasPrefix(headerPrefix)
     }
 
-    /// Column count of a complete v6 record.
-    package static let columnCount = 10
-
-    /// The columns of one v6 record, or nil for a blank line, a comment or
+    /// The columns of one v7 record, or nil for a blank line, a comment or
     /// header, or a line without exactly `columnCount` columns. Only the
     /// line's own break (`\n`, `\r`) is trimmed: a record's trailing columns
     /// are often empty, so trailing tabs are part of it.
@@ -233,10 +260,10 @@ package enum AttentionProtocol {
     }
 
     /// The typed kind of a line's `kind` column, or nil when it is not one
-    /// of the v6 kinds, spelled as written (`AttentionKind.rawValue`). No
-    /// other spelling is read: every writer is Pulse's own — the receiver's
-    /// adapters and the app's dismissal — so a word the protocol does not
-    /// know is never guessed into a state, and never into Waiting.
+    /// of the v7 kinds, spelled as written (`AttentionKind.rawValue`). No
+    /// other spelling is read: every writer is Pulse's own, so a word the
+    /// protocol does not know is never guessed into a state, and never into
+    /// Waiting.
     package static func kind(_ raw: String) -> AttentionKind? {
         AttentionKind(rawValue: raw)
     }

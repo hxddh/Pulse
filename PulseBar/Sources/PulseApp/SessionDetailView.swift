@@ -15,8 +15,12 @@ struct SessionDetailView: View {
     let row: AgentRow
 
     var body: some View {
-        SessionDetailFace(model: store.detailModel(row), maxHeight: CGFloat(ui.maxListHeight)) { action in
-            ui.send(action, row: row)
+        // On the tray's clock: the page's times, steps and last words move
+        // without a projection.
+        TimelineView(.periodic(from: .now, by: TrayChrome.clock)) { context in
+            SessionDetailFace(model: store.detailModel(row, at: context.date), maxHeight: CGFloat(ui.maxListHeight)) { action in
+                ui.send(action, row: row)
+            }
         }
     }
 }

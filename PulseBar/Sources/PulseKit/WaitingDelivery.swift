@@ -20,9 +20,9 @@ package struct WaitingDelivery: Equatable {
     package static let minimumRetryMs: Int64 = 250
 
     /// Row keys whose active Waiting event the user already ignored.
-    package var acknowledged: Set<String>
+    package var acknowledged: Set<SessionKey>
     /// Row keys Notification Center has not answered for yet.
-    package var inFlight: Set<String>
+    package var inFlight: Set<SessionKey>
     /// `WaitLedger.canDeliver` for this instant.
     package var canDeliverNow: Bool
     package var msSinceLastNotification: Int64
@@ -30,15 +30,15 @@ package struct WaitingDelivery: Equatable {
     /// Row keys whose in-front hold is over (`WaitLedger.frontDueKeys`):
     /// raised while their prompt was in front, still open, app no longer
     /// in front.
-    package var frontDue: Set<String> = []
+    package var frontDue: Set<SessionKey> = []
 
     package init(
-        acknowledged: Set<String>,
-        inFlight: Set<String>,
+        acknowledged: Set<SessionKey>,
+        inFlight: Set<SessionKey>,
         canDeliverNow: Bool,
         msSinceLastNotification: Int64,
         minimumIntervalMs: Int64,
-        frontDue: Set<String> = []
+        frontDue: Set<SessionKey> = []
     ) {
         self.acknowledged = acknowledged
         self.inFlight = inFlight
@@ -56,13 +56,13 @@ package struct WaitingDelivery: Equatable {
                 // only interrupt someone who is looking at it — unless
                 // it is still open after `deferAfterMs` and its app has left
                 // the front (`deferred`).
-                && (row.wait?.inFront != true || frontDue.contains(row.rowKey))
-                && !acknowledged.contains(row.rowKey)
-                && !inFlight.contains(row.rowKey)
+                && (row.wait?.inFront != true || frontDue.contains(row.key))
+                && !acknowledged.contains(row.key)
+                && !inFlight.contains(row.key)
         }
         // One per row key, first wins, in the rows' order (waits first).
-        var seen = Set<String>()
-        let candidates = eligible.filter { seen.insert($0.rowKey).inserted }
+        var seen = Set<SessionKey>()
+        let candidates = eligible.filter { seen.insert($0.key).inserted }
         guard let first = candidates.first else { return .nothing }
         guard canDeliverNow else {
             return .hold(
@@ -88,7 +88,7 @@ package struct WaitingDelivery: Equatable {
     package static func deferred(rows: [AgentRow], ledger: WaitLedger, nowMs: Int64) -> [AgentRow] {
         rows.filter { row in
             guard let wait = row.wait, wait.inFront,
-                  let open = ledger.waits[row.rowKey],
+                  let open = ledger.waits[row.key],
                   open.announce, !open.frontDue, !open.notified, !open.dismissed
             else { return false }
             let since = wait.sinceMs > 0 ? wait.sinceMs : open.seenMs
@@ -109,20 +109,19 @@ package struct WaitingBanner: Equatable {
     package var threadID: String
 
     /// Notification Center's group for one session's banners.
-    package static func thread(rowKey: String) -> String { "pulse.waiting." + rowKey }
+    package static func thread(_ key: SessionKey) -> String { "pulse.waiting." + key.description }
 
     package static func make(_ row: AgentRow, lang: ResolvedLanguage) -> WaitingBanner {
-        let project = TitleHeuristics.shortProject(row.project.isEmpty ? row.cwd : row.project)
+        let project = row.project
         let title = project.isEmpty ? row.agent.displayName : "\(row.agent.displayName) · \(project)"
         let task = row.usefulTask.map { clip($0) } ?? ""
-        return WaitingBanner(title: title, subtitle: task, body: body(row, lang: lang), threadID: thread(rowKey: row.rowKey))
+        return WaitingBanner(title: title, subtitle: task, body: body(row, lang: lang), threadID: thread(row.key))
     }
 
     /// `Permission · Approve shell command` — the reason and the ask; the
     /// reason alone when the agent did not say.
     package static func body(_ row: AgentRow, lang: ResolvedLanguage) -> String {
-        let kind = row.wait?.kind ?? ""
-        var bits = [kind.isEmpty ? L10n.t(.needsYou, lang) : L10n.waitKind(kind, lang)]
+        var bits = [row.wait.map { L10n.waitKind($0.kind, lang) } ?? L10n.t(.needsYou, lang)]
         let ask = (row.wait?.ask ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if !ask.isEmpty { bits.append(clip(ask)) }
         return bits.joined(separator: " · ")

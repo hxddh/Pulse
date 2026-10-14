@@ -235,8 +235,7 @@ struct HooksNudgeSettingTests {
 @Suite("Terminal automation")
 struct TerminalAutomationTests {
     private func row(_ handle: String) -> AgentRow {
-        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
-        row.state = .running
+        var row = AgentRow(key: "claude|s1", status: .running(stalled: false))
         row.cwd = "/w/a"
         row.landing = LandingHandle(handle)
         row.landingPlan = LandingPlan.make(handle: row.landing, cwd: row.cwd)

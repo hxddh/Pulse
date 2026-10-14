@@ -13,7 +13,7 @@ CHANGELOG.
 | [`README.md`](README.md) | You want to know what the product is |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You change anything the user sees — it is the behaviour spec |
 | [`docs/architecture.md`](docs/architecture.md) | You need who owns which state, how processes are read, how a click lands, or the version identity |
-| [`docs/attention-protocol.md`](docs/attention-protocol.md) | You touch the event log (`events.tsv`, Attention Protocol v6) or a hook's line |
+| [`docs/attention-protocol.md`](docs/attention-protocol.md) | You touch the event log (`events.tsv`, Attention Protocol v7) or a hook's line |
 | [`docs/vendor-formats.md`](docs/vendor-formats.md) | You touch a hook receiver, the installer or any per-agent fact — each contract has a pinned source (`vendor-formats.json`), a test and a weekly drift sentinel |
 
 The tests are the spec's proof: a behaviour is pinned by a test in the file of
@@ -35,8 +35,9 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
 
 - **No fake Waiting.** Waiting comes only from the vendor's own hook / plugin /
   extension event that reports a block (`waiting: .hooks`). Codex and Cursor
-  are `waiting: .none`: the receiver refuses a blocked line for them and the
-  product says "doesn't report when it waits". **Red means blocked** —
+  are `waiting: .none`: the receiver writes an `ignored` line instead of a
+  blocked one, the reducer refuses one whoever wrote it, and the product says
+  "doesn't report when it waits". **Red means blocked** —
   `permission`, `question`, `waiting`. A finished turn (`turn`) is "your
   turn": a quiet tray count, never red, never a banner, never a row of its own.
 - **No quota, cost or reset HUD.** Tokens, context, cost, model and plan are
@@ -52,21 +53,28 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
 - **No network.** Pulse makes no network connection; "Releases…" opens the
   releases page in the browser.
 - **Pulse keeps no record of its own.** The hooks write the one event log
-  (`events.tsv`, append-only, v6); beside it only `settings.json`, the
+  (`events.tsv`, append-only, v7); beside it only `settings.json`, the
   hook-install ledger and `debug.log` outlive a launch. The app appends only a
-  `done` for a dismissal. Banner bookkeeping (`WaitLedger`) is in memory. A log
-  that is not v6 is treated as absent and started over — never read or
-  migrated.
+  `dismiss` (a wait set aside, a finished turn looked at). Banner bookkeeping
+  (`WaitLedger`) is in memory. A log that is not v7 is treated as absent and
+  started over — never read or migrated.
+- **Every heard event is one line.** The receiver writes a state line, or an
+  `ignored` line that says why not (an event not installed, a payload that is
+  not JSON, a blocked event from an agent that cannot report one) — never the
+  payload's words. The reducer skips `ignored`; it is there to be read.
 - **Replay before the first projection.** At launch `ScanEngine` applies the
   whole log, in order, to `SessionBook`, and only then projects; that
-  projection is the banner baseline. After it only the bytes past the cursor
-  are read. A rewritten log (new generation) is read whole and matched to the
-  applied lines by position (`EventLog.unapplied`), never by text alone. A
-  failed or empty read changes nothing.
+  projection is the banner baseline. Every line carries a `seq` assigned
+  under the append lock; after the replay only the bytes past the cursor are
+  read, and only lines numbered past the last applied are applied. A
+  rewritten log (a compaction keeps the log's `gen` and every kept line's
+  `seq`) is read whole and applied past that number; a log started over
+  (another `gen`) is applied whole. Identity is the number, never the text.
+  A failed or empty read changes nothing.
 - **The log is bounded without losing an answer.** Compaction keeps, per
   session, the recent lines, an open block with everything after it, the
   lines a replay rebuilds the title and clocks from, and always the line being
-  appended. Lines end at `\n` bytes only.
+  appended — each under its own `seq`. Lines end at `\n` bytes only.
 - **A source failure must not blank the tray.** A failed libproc scan keeps
   the last good list; a failed log read keeps what was applied and retries on
   one backing-off timer (5 s → 60 s). Sessions leave only by an `end`, a
@@ -82,6 +90,10 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
 - **The reducer and the projection stay pure.** `SessionBook.apply` and
   `TrayState.project` take values and return values. Side effects live in
   `ScanEngine`, `WaitNotifier` and `StatusStore`.
+  The projection carries state only (`AgentRow.Status`); what moves with
+  every tool line — steps, last words, clocks (`SessionFacts`) — is read from
+  the book when a row is drawn, so a projection that finds the same world is
+  equal and lands nothing.
 - **Install only documented, observe-only hooks, reversibly.** Never a gating
   event (`HookContract.gatingEvents`: PreToolUse, beforeShellExecution, …),
   never anything that returns a decision; an event not installed is not read.
@@ -106,15 +118,19 @@ pointing down only:
 ServiceManagement (`surface_check`) and never reaches `StatusStore`; the
 `--hook` path runs in it without starting AppKit.
 
-Data flow: a hook appends a line to `events.tsv` → `AttentionWatcher` wakes
-`ScanEngine`, which applies the new lines to `SessionBook` →
-`TrayState.project(book:processes:context:)` returns rows, lamp, title, one
+Data flow: a hook appends one numbered line to `events.tsv` →
+`AttentionWatcher` wakes `ScanEngine`, which applies the lines numbered past
+its cursor to `SessionBook` → `TrayState.project(book:processes:context:)`
+returns rows (each with one `AgentRow.Status` — state only), lamp, title, one
 `TrayState.Counts` and newly-blocked edges → `StatusStore.land` assigns an
-observed property only when it changed (a projection that moves only quiet
-facts — steps, clocks — lands at most once per tick) → `WaitNotifier` plans
-one banner per wait from the edges and withdraws it when the wait is
-answered, dismissed or ends. `TrayRowModel` says every row's headline and
-why; the detail page says the same words.
+observed property only when it changed (plain equality: the projection
+carries no step and no clock) → `WaitNotifier` plans one banner per wait from
+the edges and withdraws it when the wait is answered, dismissed or ends.
+`TrayRowModel` says every row's headline and why from the row and its
+`SessionFacts`, read from the book when it is drawn (the tray's
+`TimelineView` clock); the detail page says the same words. Every key inside
+Pulse is a `SessionKey`; its `description` is the one string that leaves the
+process (a banner's id and user info).
 
 ## Working on it
 

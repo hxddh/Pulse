@@ -58,6 +58,7 @@ extension StatusStore {
                 installed: hooksStatus.installedAgents,
                 present: presentAgents,
                 lastEventMs: engine.latestHookEventMs,
+            ignored: engine.latestIgnored,
                 nowMs: Int64(Date().timeIntervalSince1970 * 1000),
                 lang: lang,
                 failed: hooksStatus.failures
@@ -98,11 +99,12 @@ extension StatusStore {
             present: presentAgents,
             failed: hooksStatus.failures,
             lastEventMs: engine.latestHookEventMs,
+            ignored: engine.latestIgnored,
             nowMs: Int64(Date().timeIntervalSince1970 * 1000),
             notifyAuthorized: notifyAuthorized,
             launchAtLogin: settings.launchAtLogin,
             loginItem: loginItem,
-            sessions: cachedAll.map(SettingsModel.ReportSession.init)
+            sessions: rows.map { SettingsModel.ReportSession($0, lastEventMs: facts(for: $0.key).lastEventMs) }
         ))
     }
 

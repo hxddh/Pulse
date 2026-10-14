@@ -72,15 +72,15 @@ package enum HookAction: Equatable, Sendable {
     /// The agent is working (a tool ran, a reply streamed): a `tool` line.
     case activity
     /// Work goes on, but no tool ran — a status, a retry, a recoverable
-    /// error: a `tool` line marked `:status` (`AttentionRecord.statusTool`),
-    /// never a step and never the answer to a block.
+    /// error: a `status` line, never a step and never the answer to a block.
     case status
     /// The agent cannot continue until the user acts.
     case blocked(AttentionKind)
     /// The turn is over: your turn.
     case turn
     /// The turn ended on an error (an API error, an unrecoverable failure):
-    /// your turn, and the error's text is the session's last error.
+    /// a `failed` line — your turn, and the error's text is the session's
+    /// last error.
     case failedTurn
     /// The agent has sat at its prompt a while (Claude's `idle_prompt`):
     /// your turn only if the turn's end was not seen (`AttentionKind.idle`).

@@ -250,7 +250,7 @@ enum TerminalFocus {
 /// reopen and a notification action call the status item owned by this
 /// process, so they cannot trigger an Automation permission prompt.
 ///
-/// Prefer `StatusStore.requestTrayReveal(rowKey:)` when a concrete Waiting row
+/// Prefer `StatusStore.requestTrayReveal(key:)` when a concrete Waiting row
 /// should be selected after open (Go-Look Closure).
 enum TrayReveal {
     static func show() {

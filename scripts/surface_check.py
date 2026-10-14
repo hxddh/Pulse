@@ -54,7 +54,7 @@ QA_PURE_FILES = ["SurfaceFixtures.swift"]
 STORE = re.compile(r"\b(StatusStore|store|AppServices)\b")
 # Settings is redrawn by what it reads; a per-scan fact would redraw it
 # every scan. It reads `store.settings` and a few flags, never the rows.
-SCAN_FACT_FREE = [("SettingsViews.swift", re.compile(r"\bstore\.(snapshot|cachedAll)\b"))]
+SCAN_FACT_FREE = [("SettingsViews.swift", re.compile(r"\bstore\.(snapshot|rows)\b"))]
 # A step is a past step: none of its words says it is still going.
 RUNNING_WORDS = re.compile(r"running|Running|正在")
 
@@ -112,7 +112,10 @@ def main() -> int:
         if not (QA / file).exists():
             errors.append(f"{file}: missing from PulseQA")
     copy = (KIT / "L10n.swift").read_text()
-    whys = re.findall(r'case \.((?:explain|step)\w+):\s*return "((?:[^"\\]|\\.)*)"', copy)
+    # One line per key, both languages: `case .key: return ("en", "zh")`.
+    string = r'"((?:[^"\\]|\\.)*)"'
+    pairs = re.findall(r'case \.((?:explain|step)\w+):\s*return \(' + string + r',\s*' + string + r'\)', copy)
+    whys = [(key, value) for key, en, zh in pairs for value in (en, zh)]
     if not whys:
         errors.append("L10n.swift: no explain* strings found")
     for key, value in whys:

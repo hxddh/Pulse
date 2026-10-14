@@ -1,6 +1,6 @@
 import Foundation
 
-/// Where a session can be reached, read from the v6 `landing` column
+/// Where a session can be reached, read from the v7 `landing` column
 /// (`HookLanding.handles`): `tmux:%3;tmuxsock:<path>;iterm:w0t1p0:<uuid>;
 /// tty:/dev/ttys004;term:<TERM_PROGRAM>;app:<bundle id>`.
 package struct LandingHandle: Hashable, Sendable {
