@@ -61,10 +61,10 @@ final class WaitingDeliveryTests: XCTestCase {
     /// A burst is one banner per wait — never a summary — and never two at
     /// once: the first goes now, the rest queue behind the interval.
     func testABurstIsOneBannerPerWaitOneAtATime() {
-        let five = (1...5).map { waiting("k\($0)") }
+        let five = (1...5).map { waiting(SessionKey(stringLiteral: "k\($0)")) }
         guard case .post(let first, let later) = planner().plan(five) else { return XCTFail() }
         XCTAssertEqual(first.key, "k1")
-        XCTAssertEqual(later.map(\.key), ["k2", "k3", "k4", "k5"])
+        XCTAssertEqual(later.map { $0.key }, ["k2", "k3", "k4", "k5"])
     }
 
     func testADuplicateRowKeyNeverTraps() {
