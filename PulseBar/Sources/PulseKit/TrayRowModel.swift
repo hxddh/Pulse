@@ -196,10 +196,11 @@ package struct TrayRowModel: Equatable {
 /// What a row is doing and why Pulse says so, in plain words:
 ///
 /// - `headline` — what it is doing or asking: the tray hero;
-/// - `why` — one sentence: what put the row in its state, and since when
-///   ("Claude asked for permission · 4m ago", "Nothing new for 23m",
-///   "Started before Pulse — details after its next step"). Never the word
-///   "hook" — `surface_check.py` holds it.
+/// - `why` — one sentence: what put the row in its state, the vendor event
+///   that said so, and since when ("Asked permission (PermissionRequest) ·
+///   4m ago", "Turn ended (Stop) · 2m ago", "Nothing new for 23m", "Started
+///   before Pulse — details after its next step"). The agent's name is the
+///   row's icon; never the word "hook" — `surface_check.py` holds it.
 ///
 /// Pure: the row, its facts, the language and the clock in; the same inputs
 /// always give the same sentences. It never guesses — every word comes from
@@ -239,20 +240,23 @@ extension TrayRowModel {
 
     // MARK: - Why
 
-    /// Which evidence put the row in its state, and since when.
+    /// Which evidence put the row in its state — the vendor event that
+    /// said so, when the book knows it — and since when.
     package static func why(_ row: AgentRow, facts: SessionFacts = SessionFacts(), lang: ResolvedLanguage, nowMs: Int64) -> String {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-        let name = row.agent.displayName
         func since(_ ms: Int64) -> String { ms > 0 ? L10n.ago(ms, nowMs: nowMs, lang) : "?" }
+        func said(_ what: String, event: String, at ms: Int64) -> String {
+            String(format: t(.explainWhen), cause(what, event: event, lang: lang), since(ms))
+        }
         let quiet = L10n.duration(facts.lastActivitySeconds(at: nowMs), lang)
         let last = facts.lastActivityMs
         switch row.status {
         case .needsYou(let block):
-            var text = String(format: t(.explainAsked), name, kindNoun(block.kind, lang: lang), since(block.sinceMs))
+            var text = said(kindNoun(block.kind, lang: lang), event: facts.stateEvent, at: block.sinceMs)
             if block.inFront { text += t(.explainAskedFront) }
             return text
         case .yourTurn(let sinceMs):
-            return String(format: t(.explainTurn), name, since(sinceMs))
+            return said(t(.explainTurn), event: facts.stateEvent, at: sinceMs)
         case .processOnly:
             return t(.explainProcessOnly)
         case .running(stalled: true):
@@ -263,12 +267,12 @@ extension TrayRowModel {
             return String(format: t(.explainStalled), quiet)
         case .running(stalled: false):
             guard last > 0 else { return t(.explainRunningNoClock) }
-            return String(format: t(.explainRunning), name, since(last))
+            return said(t(.explainRunning), event: facts.lastEvent, at: last)
         // Which rule made it recent — never a guess that it runs.
         case .recent(.atPrompt):
-            return String(format: t(.explainIdle), since(last))
+            return said(t(.explainIdle), event: facts.stateEvent, at: last)
         case .recent(.ended(let atMs)):
-            return String(format: t(.explainEnded), since(atMs > 0 ? atMs : last))
+            return said(t(.explainEnded), event: facts.stateEvent, at: atMs > 0 ? atMs : last)
         case .recent(.quiet):
             return String(format: t(.explainQuiet), quiet)
         case .recent(.silent):
@@ -276,7 +280,15 @@ extension TrayRowModel {
         }
     }
 
-    /// A wait kind as what the agent did: "asked for permission".
+    /// "Asked permission (PermissionRequest)": what happened and the vendor
+    /// event that said it — the event only when it is a name
+    /// (`EventName.display`); "" says nothing more.
+    package static func cause(_ what: String, event: String, lang: ResolvedLanguage) -> String {
+        let name = EventName.display(event)
+        return name.isEmpty ? what : String(format: L10n.t(.explainCause, lang), what, name)
+    }
+
+    /// A wait kind as what the agent did: "Asked permission".
     package static func kindNoun(_ kind: AttentionKind, lang: ResolvedLanguage) -> String {
         switch kind {
         case .permission: return L10n.t(.explainKindPermission, lang)
@@ -317,6 +329,35 @@ extension TrayRowModel {
     /// minute, like the row's own time.
     package static func stepLine(_ step: SessionBook.Step, nowMs: Int64, lang: ResolvedLanguage) -> String {
         "\(stepText(step)) · \(L10n.ago(step.ms, nowMs: nowMs, lang))"
+    }
+
+    // MARK: - Timeline
+
+    /// What one heard line did, in a few words: "Raised · Permission",
+    /// "Answered", "Bash · swift test" (a step, as the row says it),
+    /// "Ignored — not an installed event". The detail page's timeline.
+    package static func effectText(_ effect: SessionBook.Effect, lang: ResolvedLanguage) -> String {
+        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
+        switch effect {
+        case .started: return t(.timelineStarted)
+        case .prompt: return t(.timelinePrompt)
+        case .step(let tool, let target): return stepText(SessionBook.Step(tool: tool, target: target, ms: 0))
+        case .working: return t(.timelineWorking)
+        case .status: return t(.timelineStatus)
+        case .raised(let kind): return String(format: t(.timelineRaised), L10n.waitKind(kind, lang))
+        case .again: return t(.timelineAgain)
+        case .answered: return t(.timelineAnswered)
+        case .yourTurn: return t(.yourTurn)
+        case .turnEnded: return t(.timelineTurnEnded)
+        case .failed: return t(.timelineFailed)
+        case .held: return t(.timelineHeld)
+        case .atPrompt: return t(.timelineAtPrompt)
+        case .resolved: return t(.timelineResolved)
+        case .dismissed: return t(.timelineDismissed)
+        case .seen: return t(.timelineSeen)
+        case .ended: return t(.timelineEnded)
+        case .skipped(let reason): return String(format: t(.timelineSkipped), Connection.reasonText(reason, lang: lang))
+        }
     }
 
     // MARK: - Time
@@ -374,8 +415,9 @@ extension TrayRowModel {
 /// The row is one line; this is what a person reads after deciding to look,
 /// in the order it is worth reading: the headline as the page's title (in
 /// its header, once), the ask (and what to do about it), the why (when the
-/// row's second line did not already say it), the recent steps, the agent's
-/// last message, the last error and the folder — all from the session's own
+/// row's second line did not already say it), the timeline of what Pulse
+/// heard (steps among it), the agent's last message, the last error and the
+/// folder — all from the session's own
 /// events (the row and its `SessionFacts`), in the words the row uses
 /// (`TrayRowModel`). Each thing is said
 /// once: no headline block under a header that names it, no state-and-age
@@ -387,6 +429,23 @@ package struct DetailModel: Equatable {
     package struct Fact: Equatable {
         package var label: String
         package var value: String
+    }
+
+    /// One heard line on the timeline: how long ago, the vendor's event
+    /// ("" when it is not a name) and what it did.
+    package struct Entry: Equatable {
+        package enum Tone: Equatable {
+            /// The lamp went red.
+            case alert
+            /// It moved the session.
+            case plain
+            /// Heard, and nothing new: said again, held, status, ignored.
+            case quiet
+        }
+        package var time: String
+        package var event: String
+        package var effect: String
+        package var tone: Tone
     }
 
     /// What the detail page can ask for.
@@ -404,9 +463,8 @@ package struct DetailModel: Equatable {
     /// `TrayRowModel.why` — nil when it is the row's own second line (a
     /// stalled row's why), which would say the same sentence twice.
     package var why: String?
-    /// Up to `SessionBook.maxSteps` recent steps, newest first: how long
-    /// ago, and "tool · target".
-    package var steps: [Fact]
+    /// Up to `SessionBook.maxTimeline` heard lines, newest first.
+    package var timeline: [Entry]
     package var lastMessage: String?
     package var error: String?
     /// This turn's duration (the page's one clock) and the folder.
@@ -436,8 +494,13 @@ package struct DetailModel: Equatable {
         }
         if !row.displayPath.isEmpty { facts.append(Fact(label: t(.detailFolder), value: row.displayPath)) }
 
-        let steps = said.steps.reversed().map { step in
-            Fact(label: L10n.ago(step.ms, nowMs: nowMs, lang), value: Words.stepText(step))
+        let timeline = said.timeline.reversed().map { heard in
+            Entry(
+                time: L10n.ago(min(heard.ms, nowMs), nowMs: nowMs, lang),
+                event: EventName.display(heard.event),
+                effect: Words.effectText(heard.effect, lang: lang),
+                tone: tone(heard.effect)
+            )
         }
         let why = Words.why(row, facts: said, lang: lang, nowMs: nowMs)
         let second = Words.secondLine(row, facts: said, why: why, lang: lang, nowMs: nowMs)
@@ -451,7 +514,7 @@ package struct DetailModel: Equatable {
             headlineQuiet: row.isProcessOnly,
             ask: Words.ask(row),
             why: second?.text == why ? nil : why,
-            steps: steps,
+            timeline: timeline,
             lastMessage: fresh && !said.lastWords.isEmpty ? said.lastWords : nil,
             error: said.lastError.isEmpty ? nil : said.lastError,
             facts: facts,
@@ -460,6 +523,18 @@ package struct DetailModel: Equatable {
             canDismiss: row.isBlocked,
             notice: notice
         )
+    }
+
+    /// How loud a timeline line is: red for a raise, quiet for a line that
+    /// changed nothing anyone waits on.
+    package static func tone(_ effect: SessionBook.Effect) -> Entry.Tone {
+        switch effect {
+        case .raised: return .alert
+        case .again, .held, .status, .atPrompt, .skipped: return .quiet
+        case .started, .prompt, .step, .working, .answered, .yourTurn, .turnEnded, .failed,
+             .resolved, .dismissed, .seen, .ended:
+            return .plain
+        }
     }
 }
 

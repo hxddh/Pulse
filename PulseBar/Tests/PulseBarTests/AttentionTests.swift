@@ -1324,29 +1324,44 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertTrue(HooksSupport.isWired(.cursor))
     }
 
-    /// The Settings lines say what is installed, what is not, when a hook
-    /// last spoke, and which agents never report a wait; the agents that
-    /// are not on this Mac share one line.
-    func testSettingsSaysEachAgentsHook() {
+    /// The Settings lines say each agent's connection — installed, needing
+    /// an update or not, what was heard last and when, and which agents
+    /// never report a wait; the agents that are not on this Mac share one
+    /// line.
+    func testSettingsSaysEachAgentsConnection() {
         let now: Int64 = 1_800_000_000_000
-        let lines = SettingsModel.hookAgents(
-            installed: [.claude, .codex], present: [.claude, .codex, .cursor, .copilot],
-            lastEventMs: [.claude: now - 12 * 60_000], nowMs: now, lang: .en
-        )
+        let present: Set<AgentID> = [.claude, .codex, .cursor, .copilot]
+        let connections = [
+            Connection(agent: .claude, install: .complete, lastHeard: Connection.Heard(event: "Stop", ms: now - 12 * 60_000)),
+            Connection(agent: .codex, install: .partial(found: 4, of: 6)),
+            Connection(agent: .cursor, install: .complete),
+            Connection(agent: .copilot, install: .notInstalled),
+            Connection(agent: .opencode, install: .notInstalled),
+            Connection(agent: .pi, install: .notInstalled),
+        ]
+        let lines = SettingsModel.hookAgents(connections: connections, present: present, nowMs: now, lang: .en)
         XCTAssertEqual(lines.map(\.agent), [.claude, .codex, .cursor, .copilot])
         let claude = lines[0]
         XCTAssertTrue(claude.installed)
-        XCTAssertEqual(claude.lastEvent, String(format: L10n.t(.settingsHookLastEvent, .en), L10n.duration(12 * 60, .en)))
-        XCTAssertNil(claude.note)
+        XCTAssertEqual(
+            claude.detail,
+            String(format: L10n.t(.settingsHookHeard, .en), "Stop", L10n.ago(now - 12 * 60_000, nowMs: now, .en))
+                + " · " + L10n.t(.settingsHookReportsWaits, .en)
+        )
         let codex = lines.first { $0.agent == .codex }
-        XCTAssertEqual(codex?.lastEvent, L10n.t(.settingsHookNoEvent, .en))
-        XCTAssertEqual(codex?.note, L10n.t(.settingsHookNoWait, .en))
-        XCTAssertEqual(lines.first { $0.agent == .cursor }?.note, L10n.t(.settingsHookNoWait, .en))
+        XCTAssertEqual(codex?.state, String(format: L10n.t(.settingsHookPartial, .en), 4, 6))
+        XCTAssertEqual(codex?.detail, L10n.t(.settingsHookNoEvent, .en) + " · " + L10n.t(.settingsHookNoWait, .en))
+        XCTAssertTrue(lines.first { $0.agent == .cursor }?.detail.hasSuffix(L10n.t(.settingsHookNoWait, .en)) == true)
         let copilot = lines.first { $0.agent == .copilot }
         XCTAssertEqual(copilot?.state, L10n.t(.hooksMissing, .en))
-        XCTAssertEqual(copilot?.lastEvent, "")
+        XCTAssertEqual(copilot?.detail, L10n.t(.settingsHookReportsWaits, .en), "nothing heard is said only where a hook is")
         XCTAssertEqual(copilot?.installed, false, "an agent here without its hook says so; Install all fixes it")
-        let absent = SettingsModel.absentAgents(installed: [.claude, .codex], present: [.claude, .codex, .cursor, .copilot])
+        let model = SettingsModel(
+            lang: .en, launchAtLogin: false, notifications: .allowed, hooksStatus: "", hooksInstalled: true,
+            hookAgents: lines, version: ""
+        )
+        XCTAssertTrue(model.hooksNeedUpdate, "a partial install is said once, under Install all")
+        let absent = SettingsModel.absentAgents(connections: connections, present: present)
         XCTAssertEqual(absent, [.opencode, .pi], "in roster order")
         let line = SettingsModel.absentLine(absent, lang: .en)
         XCTAssertNotNil(line)
@@ -1356,13 +1371,45 @@ final class HooksInstallerTests: XCTestCase {
 
     /// A failed install names the agent and why.
     func testAFailedInstallIsItsOwnLine() {
-        let lines = SettingsModel.hookAgents(
-            installed: [], present: [], lastEventMs: [:], nowMs: 0, lang: .en,
-            failed: [.opencode: .invalidJSON]
-        )
+        let connections = AgentID.allCases.map { agent in
+            Connection.make(
+                agent: agent, probed: .notInstalled,
+                failure: agent == .opencode ? .invalidJSON : nil, heard: nil, ignored: nil
+            )
+        }
+        let lines = SettingsModel.hookAgents(connections: connections, present: [], nowMs: 0, lang: .en)
         XCTAssertEqual(lines.map(\.agent), [.opencode])
-        XCTAssertTrue(lines[0].failed)
+        XCTAssertEqual(lines[0].tone, .warning)
         XCTAssertTrue(lines[0].state.contains(L10n.t(.hooksFailureInvalidJSON, .en)), lines[0].state)
+    }
+
+    /// An install read from disk: whole after Install all; partial when an
+    /// event is taken out by hand; stale when the launcher is gone; and
+    /// Install all makes it whole again.
+    func testTheConnectionIsReadFromTheConfig() throws {
+        try seedVendors()
+        try HooksInstaller.install()
+        for agent in AgentID.allCases {
+            XCTAssertEqual(HooksSupport.inspect(agent), .complete, agent.rawValue)
+        }
+        let url = tempHome.appendingPathComponent(".claude/settings.json")
+        var root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        var hooks = try XCTUnwrap(root["hooks"] as? [String: Any])
+        hooks.removeValue(forKey: "Stop")
+        root["hooks"] = hooks
+        try JSONSerialization.data(withJSONObject: root).write(to: url)
+        let events = Set(AgentID.claude.spec.hooks.events.map(\.name))
+        XCTAssertEqual(HooksSupport.inspect(.claude), .partial(found: events.count - 1, of: events.count))
+        XCTAssertEqual(HooksSupport.probeStatus().isInstalled(for: .claude), true, "partial still carries the hook")
+
+        try FileManager.default.removeItem(at: HooksInstaller.launcherURL)
+        XCTAssertEqual(HooksSupport.inspect(.codex), .staleLauncher, "the launcher its hooks run is gone")
+
+        try HooksInstaller.install()
+        XCTAssertEqual(HooksSupport.inspect(.claude), .complete)
+        XCTAssertEqual(HooksSupport.inspect(.codex), .complete)
+        HooksInstaller.uninstall()
+        XCTAssertEqual(HooksSupport.inspect(.claude), .notInstalled)
     }
 }
 

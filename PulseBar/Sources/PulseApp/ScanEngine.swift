@@ -53,12 +53,13 @@ final class ScanEngine {
     private(set) var logCursor: EventLog.Cursor?
     /// Agent processes the last process scan found.
     private(set) var processes: [AgentProcesses.Hit] = []
-    /// The newest hook event per agent, for Settings' "last event" and the
-    /// report. Kept here so a redraw never reads a file.
-    private(set) var latestHookEventMs: [AgentID: Int64] = [:]
-    /// The last line each agent's hook sent that was `ignored` — its event
-    /// and why — for the report.
-    private(set) var latestIgnored: [AgentID: SettingsModel.Ignored] = [:]
+    /// The newest line each agent's hook wrote — its vendor event and when —
+    /// for Settings' connection lines and the report. Kept here so a redraw
+    /// never reads a file.
+    private(set) var latestHeard: [AgentID: Connection.Heard] = [:]
+    /// The newest line each agent's hook sent that was `ignored` — its
+    /// event, why and when.
+    private(set) var latestIgnored: [AgentID: Connection.Ignored] = [:]
     /// The last projection's open waits (`TrayState.waitingSince`) — what
     /// the next one finds its Waiting edges against.
     private var lastWaits: [SessionKey: Int64] = [:]
@@ -332,8 +333,14 @@ final class ScanEngine {
         min(delay * 2, maxLogRetry)
     }
 
-    private func noteHookEvent(_ agent: AgentID, atMs ms: Int64) {
-        if (latestHookEventMs[agent] ?? 0) < ms { latestHookEventMs[agent] = ms }
+    /// One line an agent's hook wrote: the newest wins, a later line on
+    /// the same clock too.
+    private func noteHookEvent(_ record: AttentionRecord, atMs ms: Int64) {
+        if (latestHeard[record.agent]?.ms ?? 0) <= ms {
+            latestHeard[record.agent] = Connection.Heard(event: record.event, ms: ms)
+        }
+        guard record.kind == .ignored, (latestIgnored[record.agent]?.ms ?? 0) <= ms else { return }
+        latestIgnored[record.agent] = Connection.Ignored(event: record.event, reason: record.message, ms: ms)
     }
 
     /// Event records, in order. Tests call this directly. `verifyPids` (the
@@ -345,12 +352,11 @@ final class ScanEngine {
             // A `dismiss` is Pulse's own: not the agent's hook speaking, so
             // not its "last event". An ignored line is — the hook ran.
             if record.kind != .dismiss, record.ms > 0 {
-                noteHookEvent(record.agent, atMs: min(record.ms, nowMs))
+                noteHookEvent(record, atMs: min(record.ms, nowMs))
             }
-            if record.kind == .ignored {
-                let heard = SettingsModel.Ignored(event: record.event, reason: record.message)
-                latestIgnored[record.agent] = heard
-                if logRead { DebugLog.write("ignored agent=\(record.agent.rawValue) \(heard.phrase)") }
+            if record.kind == .ignored, logRead {
+                let event = Connection.reportEvent(record.event)
+                DebugLog.write("ignored agent=\(record.agent.rawValue) \(event) (\(Connection.reportReason(record.message)))")
             }
         }
         // A pid the log names that is gone ended while nobody watched.

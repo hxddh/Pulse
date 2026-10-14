@@ -35,7 +35,7 @@ enum SurfaceFixtures {
         "row-stalled", "row-your-turn", "row-process-only",
         "row-running-step", "row-stalled-step",
         "header", "notice-setup", "notice-setup-done", "notice-setup-failed", "row-app-only",
-        "detail-blocked", "detail-your-turn", "detail-steps", "detail-stalled", "detail-app-only",
+        "detail-blocked", "detail-your-turn", "detail-timeline", "detail-stalled", "detail-app-only",
         "settings", "settings-login-approval",
     ]
 
@@ -66,15 +66,18 @@ enum SurfaceFixtures {
             Fixture(name: "row-app-only", width: 448, value: .row(rowModel(rowTerminalTab(), lang: lang, appOnly: true))),
             Fixture(name: "detail-blocked", width: 448, value: .detail(detailPermission(lang: lang))),
             Fixture(name: "detail-your-turn", width: 448, value: .detail(detailTurn(lang: lang))),
-            // Up to five recent steps and this turn's duration — the page's
+            // The timeline a replay rebuilt — a raise, its echo, the answer,
+            // an ignored line, steps — and this turn's duration, the page's
             // one clock.
-            Fixture(name: "detail-steps", width: 448, value: .detail(detailSteps(lang: lang))),
+            Fixture(name: "detail-timeline", width: 448, value: .detail(detailTimeline(lang: lang))),
             // A stalled row: its why is the row's own second line, so the
             // page does not say it twice.
             Fixture(name: "detail-stalled", width: 448, value: .detail(detailStalled(lang: lang))),
             // The same landing notice on the detail page.
             Fixture(name: "detail-app-only", width: 448, value: .detail(detailAppOnly(lang: lang))),
-            // Install all / Remove all, and one status line per agent.
+            // Install all / Remove all, and one connection line per agent in
+            // every state: installed, needs update (events, launcher),
+            // failed, not installed — and the agent not on this Mac.
             Fixture(name: "settings", width: 500, value: .settings(settings(lang: lang))),
             // Open at login registered, and macOS waiting for approval.
             Fixture(name: "settings-login-approval", width: 500, value: .settings(settingsLoginApproval(lang: lang))),
@@ -86,6 +89,13 @@ enum SurfaceFixtures {
     /// Tray rows are drawn against now, so their world is built around it.
     static var nowMs: Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
     static let minute: Int64 = 60_000
+
+    /// The agent's own name for the event that means `action` — read from
+    /// its contract, never spelled here (`catalog_check`: a vendor event is
+    /// spelled only in its adapter).
+    static func event(_ agent: AgentID, _ action: HookAction) -> String {
+        agent.spec.hooks.events.first { $0.action == action }?.name ?? ""
+    }
 
     /// A row and what its session said lately — what the store hands a row
     /// face (`StatusStore.facts`).
@@ -118,6 +128,7 @@ enum SurfaceFixtures {
     static func rowPermission() -> Sample {
         var sample = base(.claude, id: "fx-perm")
         sample.row.status = .needsYou(Block(kind: .permission, ask: "Bash: npm run build", sinceMs: nowMs - 8 * minute, tool: "Bash"))
+        sample.facts.stateEvent = event(.claude, .blocked(.permission))
         return sample
     }
 
@@ -127,6 +138,7 @@ enum SurfaceFixtures {
             kind: .question, ask: "Which database should the migration target?",
             sinceMs: nowMs - 30_000, inFront: true
         ))
+        sample.facts.stateEvent = event(.claude, .blocked(.permission))
         return sample
     }
 
@@ -134,6 +146,7 @@ enum SurfaceFixtures {
         var sample = base(.codex, id: "fx-turn", task: "Add an offline queue for login")
         sample.row.status = .yourTurn(sinceMs: nowMs - 3 * minute)
         sample.facts.lastWords = "All 42 tests pass; the queue drains on reconnect."
+        sample.facts.stateEvent = event(.codex, .turn)
         return sample
     }
 
@@ -146,7 +159,9 @@ enum SurfaceFixtures {
     }
 
     static func rowRunning() -> Sample {
-        base(.codex, id: "fx-running", task: "Add retry with jitter to the upload queue")
+        var sample = base(.codex, id: "fx-running", task: "Add retry with jitter to the upload queue")
+        sample.facts.lastEvent = event(.codex, .activity)
+        return sample
     }
 
     /// A session in a Terminal.app tab whose tab script did not land (macOS
@@ -175,8 +190,43 @@ enum SurfaceFixtures {
             steps: steps(endingAt: nowMs - 2 * minute),
             turnStartMs: nowMs - 14 * minute,
             lastEventMs: nowMs - 2 * minute,
-            activityMs: nowMs - 2 * minute
+            activityMs: nowMs - 2 * minute,
+            lastEvent: event(.claude, .activity)
         )
+        return sample
+    }
+
+    /// A Claude session as its hook told it, replayed through the real
+    /// book: a prompt, two steps, a permission and its echo six seconds
+    /// later, the answer, an event Pulse does not install, two more steps.
+    static func rowTimeline() -> Sample {
+        var sample = base(.claude, id: "fx-timeline", task: "Add retry with jitter to the upload queue")
+        func line(_ kind: AttentionKind, _ ago: Int64, _ event: String, tool: String = "", message: String = "") -> AttentionRecord {
+            AttentionRecord(
+                agent: .claude, kind: kind, ms: nowMs - ago, message: message,
+                session: "fx-timeline", cwd: "/Users/me/code/app", pid: 4312, tool: tool, event: event
+            )
+        }
+        let prompt = event(.claude, .prompt)
+        let tool = event(.claude, .activity)
+        let asked = event(.claude, .blocked(.permission))
+        // Claude's `Notification`, which its adapter reads from the payload.
+        let notified = event(.claude, .ignore)
+        let lines = [
+            line(.working, 14 * minute, prompt, message: "Add retry with jitter to the upload queue"),
+            line(.tool, 12 * minute, tool, tool: "Read", message: "Sources/Upload/Queue.swift"),
+            line(.tool, 10 * minute, tool, tool: "Edit", message: "Sources/Upload/Queue.swift"),
+            line(.permission, 8 * minute, asked, tool: "Bash", message: "Bash: swift test"),
+            line(.permission, 8 * minute - 6_000, notified, message: "Claude needs your permission to use Bash"),
+            line(.tool, 6 * minute, tool, tool: "Bash", message: "swift test"),
+            // An event Pulse does not install for Claude.
+            line(.ignored, 5 * minute, "SubagentStop", message: PulseHookReceiver.Ignored.notInstalled.rawValue),
+            line(.tool, 3 * minute, tool, tool: "Edit", message: "Sources/Upload/Backoff.swift"),
+            line(.tool, 2 * minute, tool, tool: "Bash", message: "swift test"),
+        ]
+        var book = SessionBook()
+        for record in lines { book.apply(record, nowMs: nowMs) }
+        sample.facts = book.facts(for: sample.row.key)
         return sample
     }
 
@@ -245,8 +295,8 @@ enum SurfaceFixtures {
         detail(rowTurn(), lang: lang)
     }
 
-    static func detailSteps(lang: ResolvedLanguage) -> DetailModel {
-        detail(rowRunningStep(), lang: lang)
+    static func detailTimeline(lang: ResolvedLanguage) -> DetailModel {
+        detail(rowTimeline(), lang: lang)
     }
 
     static func detailStalled(lang: ResolvedLanguage) -> DetailModel {
@@ -260,24 +310,39 @@ enum SurfaceFixtures {
 
     // MARK: - Settings
 
+    /// Every connection state at once: Claude whole, heard a moment ago,
+    /// with an event it did not use; Codex missing two events; Cursor's
+    /// install failed; Copilot's hook runs an old copy of Pulse; OpenCode is
+    /// here without its hook; Pi is not on this Mac.
+    static func connections() -> [Connection] {
+        let codexEvents = Set(AgentID.codex.spec.hooks.events.map(\.name)).count
+        return [
+            Connection(
+                agent: .claude, install: .complete,
+                lastHeard: Connection.Heard(event: event(.claude, .activity), ms: nowMs - 12_000),
+                lastIgnored: Connection.Ignored(event: "SubagentStop", reason: PulseHookReceiver.Ignored.notInstalled.rawValue, ms: nowMs - 4 * minute)
+            ),
+            Connection(
+                agent: .codex, install: .partial(found: max(0, codexEvents - 2), of: codexEvents),
+                lastHeard: Connection.Heard(event: event(.codex, .turn), ms: nowMs - 3 * minute)
+            ),
+            Connection(agent: .cursor, install: .failed(.invalidJSON)),
+            Connection(agent: .copilot, install: .staleLauncher, lastHeard: Connection.Heard(event: event(.copilot, .activity), ms: nowMs - 2 * 60 * minute)),
+            Connection(agent: .opencode, install: .notInstalled),
+            Connection(agent: .pi, install: .notInstalled),
+        ]
+    }
+
     static func settings(lang: ResolvedLanguage) -> SettingsModel {
-        SettingsModel(
+        let present: Set<AgentID> = [.claude, .codex, .cursor, .copilot, .opencode]
+        return SettingsModel(
             lang: lang,
             launchAtLogin: true,
             notifications: .allowed,
-            hooksStatus: HooksSupport.Status.installed([.claude, .codex, .copilot]).label(lang: lang),
+            hooksStatus: HooksSupport.Status.installed([.claude, .codex, .copilot], failed: [.cursor: .invalidJSON]).label(lang: lang),
             hooksInstalled: true,
-            hookAgents: SettingsModel.hookAgents(
-                installed: [.claude, .codex, .copilot],
-                present: [.claude, .codex, .cursor, .copilot],
-                lastEventMs: [.claude: nowMs - 12_000, .codex: nowMs - 3 * minute],
-                nowMs: nowMs,
-                lang: lang
-            ),
-            absentAgents: SettingsModel.absentAgents(
-                installed: [.claude, .codex, .copilot],
-                present: [.claude, .codex, .cursor, .copilot]
-            ),
+            hookAgents: SettingsModel.hookAgents(connections: connections(), present: present, nowMs: nowMs, lang: lang),
+            absentAgents: SettingsModel.absentAgents(connections: connections(), present: present),
             version: "Pulse \(PulseVersion.semver) · a1b2c3d · 2026-09-29",
             buildWarning: L10n.t(.buildPreview, lang),
             focus: nil

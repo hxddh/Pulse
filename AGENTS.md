@@ -61,7 +61,8 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
 - **Every heard event is one line.** The receiver writes a state line, or an
   `ignored` line that says why not (an event not installed, a payload that is
   not JSON, a blocked event from an agent that cannot report one) — never the
-  payload's words. The reducer skips `ignored`; it is there to be read.
+  payload's words. The reducer changes no state for `ignored`; it goes on its
+  session's timeline and Settings' "last ignored" — it is there to be read.
 - **Replay before the first projection.** At launch `ScanEngine` applies the
   whole log, in order, to `SessionBook`, and only then projects; that
   projection is the banner baseline. Every line carries a `seq` assigned
@@ -91,9 +92,10 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
   `TrayState.project` take values and return values. Side effects live in
   `ScanEngine`, `WaitNotifier` and `StatusStore`.
   The projection carries state only (`AgentRow.Status`); what moves with
-  every tool line — steps, last words, clocks (`SessionFacts`) — is read from
-  the book when a row is drawn, so a projection that finds the same world is
-  equal and lands nothing.
+  every tool line — steps, last words, clocks, the vendor events behind the
+  state and the timeline (`SessionFacts`) — is read from the book when a row
+  is drawn, so a projection that finds the same world is equal and lands
+  nothing.
 - **Install only documented, observe-only hooks, reversibly.** Never a gating
   event (`HookContract.gatingEvents`: PreToolUse, beforeShellExecution, …),
   never anything that returns a decision; an event not installed is not read.
@@ -109,7 +111,7 @@ pointing down only:
 
 | Target | Kind | What it holds |
 | --- | --- | --- |
-| `PulseKit` | library, Foundation only | the agent adapters (`Agents/`), the protocol, `EventLog`, the hook receiver and installer (`JSONSplice`, the ledger), libproc `AgentProcesses`, `SessionBook` → `TrayState`, `WaitLedger`, `WaitingDelivery`, `LandingPlan`, every surface model (`TrayRowModel`, `DetailModel`, `SettingsModel`, `TrayKeys`…), `L10n`, bounded and private IO, the cadence, the debug log (members `package`) |
+| `PulseKit` | library, Foundation only | the agent adapters (`Agents/`), the protocol, `EventLog`, the hook receiver and installer (`JSONSplice`, the ledger), libproc `AgentProcesses`, `SessionBook` → `TrayState`, `WaitLedger`, `WaitingDelivery`, `LandingPlan`, every surface model (`TrayRowModel`, `DetailModel`, `SettingsModel`, `Connection`, `TrayKeys`…), `L10n`, bounded and private IO, the cadence, the debug log (members `package`) |
 | `PulseApp` | library | `ScanEngine` and the watchers, `StatusStore`, `WaitNotifier` + `PulseNotify`, `TerminalFocus`, `StatusItemController`, every view, the login item; owns the resources (`PulseResources`, never `Bundle.module`) |
 | `PulseBar` | executable | `PulseBarMain.main()` — the shipping app |
 | `PulseQA` | executable | fixtures, captures, the preview window, `QADriver` (`@testable import PulseApp`, `PulseKit`) |
@@ -126,9 +128,12 @@ returns rows (each with one `AgentRow.Status` — state only), lamp, title, one
 observed property only when it changed (plain equality: the projection
 carries no step and no clock) → `WaitNotifier` plans one banner per wait from
 the edges and withdraws it when the wait is answered, dismissed or ends.
-`TrayRowModel` says every row's headline and why from the row and its
-`SessionFacts`, read from the book when it is drawn (the tray's
-`TimelineView` clock); the detail page says the same words. Every key inside
+`TrayRowModel` says every row's headline and why — citing the vendor event
+that caused the state — from the row and its `SessionFacts`, read from the
+book when it is drawn (the tray's `TimelineView` clock); the detail page
+says the same words and draws the session's timeline. Settings → Hooks says
+each agent's `Connection` (install complete / partial / stale / failed, the
+event heard last, the last one not used). Every key inside
 Pulse is a `SessionKey`; its `description` is the one string that leaves the
 process (a banner's id and user info).
 
@@ -195,7 +200,31 @@ still publishes, but the build is `preview` / ad-hoc / unnotarized and must
 never be labelled `stable` or Gatekeeper-ready (`PulseDistributionChannel`).
 Release notes and the DMG's note lead with System Settings → Privacy &
 Security → "Open Anyway", with `xattr -dr com.apple.quarantine` as the
-Terminal alternative. Every release carries the DMG's `.sha256`.
+Terminal alternative. Every release carries the DMG's `.sha256` and a
+build-provenance attestation (`actions/attest-build-provenance`, checked
+with `gh attestation verify <dmg> -R hxddh/Pulse`; the release job alone
+holds `id-token` / `attestations: write`). Provenance is not notarization.
+
+Distribution is the DMG only — no Homebrew, no Sparkle, no update check.
+The DMG (`pulse-<ver>-macos-PulseBar.dmg`, volume "Pulse", the app icns as
+volume icon) opens to Pulse.app left, an arrow, an `/Applications` link
+right, and — unnotarized builds only — "首次打开必读 · Read Me First.txt"
+below. `scripts/make_dmg_art.py` draws the background (shapes only, no
+text) and writes `PulseBar/Packaging/DMG/layout.json`, the one source of
+the geometry (`--check` in `gates.sh`); `dmgbuild` with `DMG/settings.py`
+writes the window's `.DS_Store` headlessly. dmgbuild is a hash-pinned
+packaging tool (`DMG/requirements.txt`) that CI installs into a throwaway
+venv and passes as `PULSE_DMGBUILD`; it never ships. The layout is
+cosmetic: dmgbuild missing or failing falls back to a plain `hdiutil` image
+that still holds the app, the link and the guide — package.sh mounts the
+result and fails only when one of those is missing.
+
+When `xcrun -f actool` exists, package.sh compiles the Icon Composer bundle
+`PulseBar/Packaging/Pulse.icon` (from `make_brand.py`) to `Assets.car` and
+adds `CFBundleIconName=Pulse` only then; `CFBundleIconFile=AppIcon` and
+`AppIcon.icns` are always there. An actool failure warns and ships the
+icns alone. `package_check.py` requires the icns, allows `Assets.car`, and
+fails a `CFBundleIconName` without it.
 
 "Open at login" is `SMAppService.mainApp` (works only from a bundle; macOS
 may hold it for approval). Never add the

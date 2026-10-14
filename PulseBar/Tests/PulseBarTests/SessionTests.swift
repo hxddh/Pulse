@@ -804,6 +804,88 @@ struct SessionBookTests {
         #expect(run.book.sessions[SessionKey(.claude, "s1")]?.lastError == "API Error: Rate limit reached")
     }
 
+    // MARK: - Timeline: what each heard line did
+
+    /// The effect of each line of a raise answered, as the reducer decided
+    /// it — rebuilt by a replay, never kept anywhere else.
+    @Test func theTimelineSaysWhatEachLineDid() {
+        var book = SessionBook()
+        let key = SessionKey(.claude, "s1")
+        let lines = [
+            AttentionRecord(agent: .claude, kind: .start, ms: t0, session: "s1", event: "SessionStart"),
+            AttentionRecord(agent: .claude, kind: .working, ms: t0 + second, message: "Fix it", session: "s1", event: "UserPromptSubmit"),
+            AttentionRecord(agent: .claude, kind: .tool, ms: t0 + 2 * second, message: "swift test", session: "s1", tool: "Bash", event: "PostToolUse"),
+            AttentionRecord(agent: .claude, kind: .permission, ms: t0 + 3 * second, message: "Bash: rm -rf build", session: "s1", tool: "Bash", event: "PermissionRequest"),
+            AttentionRecord(agent: .claude, kind: .permission, ms: t0 + 9 * second, message: "Claude needs your permission to use Bash", session: "s1", event: "Notification"),
+            AttentionRecord(agent: .claude, kind: .tool, ms: t0 + 12 * second, message: "rm -rf build", session: "s1", tool: "Bash", event: "PostToolUse"),
+            AttentionRecord(agent: .claude, kind: .ignored, ms: t0 + 13 * second, message: PulseHookReceiver.Ignored.notInstalled.rawValue, session: "s1", event: "SubagentStop"),
+            AttentionRecord(agent: .claude, kind: .turn, ms: t0 + 14 * second, session: "s1", event: "Stop"),
+            AttentionRecord(agent: .claude, kind: .dismiss, ms: t0 + 15 * second, session: "s1", event: AttentionRecord.seenEvent),
+            AttentionRecord(agent: .claude, kind: .end, ms: t0 + 16 * second, session: "s1", event: "SessionEnd"),
+        ]
+        for line in lines { book.apply(line, nowMs: t0 + minute) }
+        let timeline = book.facts(for: key).timeline
+        let events = timeline.map { $0.event }
+        let written = lines.map { $0.event }
+        #expect(events == written)
+        let effects = timeline.map { $0.effect }
+        #expect(effects == [
+            .started, .prompt, .step(tool: "Bash", target: "swift test"), .raised(.permission), .again, .answered,
+            .skipped(reason: PulseHookReceiver.Ignored.notInstalled.rawValue), .yourTurn, .seen, .ended,
+        ])
+        var replayed = SessionBook()
+        for line in lines { replayed.apply(line, nowMs: t0 + minute) }
+        #expect(replayed.facts(for: key) == book.facts(for: key), "a replay rebuilds the same timeline")
+    }
+
+    /// A turn inside a block's grace is held, then lands; a dismissal in
+    /// Pulse and the vendor's own close say so; a turn the person watched
+    /// is not "your turn".
+    @Test func theTimelineSaysHeldDismissedAndWatched() {
+        var book = SessionBook()
+        let key = SessionKey(.claude, "s1")
+        book.apply(AttentionRecord(agent: .claude, kind: .permission, ms: t0, message: "Bash: ls", session: "s1", tool: "Bash", event: "PermissionRequest"), nowMs: t0)
+        book.apply(AttentionRecord(agent: .claude, kind: .turn, ms: t0 + 2 * second, session: "s1", event: "Stop"), nowMs: t0)
+        book.apply(AttentionRecord(agent: .claude, kind: .dismiss, ms: t0 + 3 * second, session: "s1", event: AttentionRecord.dismissEvent), nowMs: t0)
+        book.apply(AttentionRecord(agent: .claude, kind: .working, ms: t0 + minute, session: "s1", event: "UserPromptSubmit"), nowMs: t0 + minute)
+        book.apply(AttentionRecord(agent: .claude, kind: .turn, ms: t0 + 2 * minute, session: "s1", front: true, event: "Stop"), nowMs: t0 + 2 * minute)
+        book.apply(AttentionRecord(agent: .claude, kind: .idle, ms: t0 + 3 * minute, session: "s1", event: "Notification"), nowMs: t0 + 3 * minute)
+        let effects = book.facts(for: key).timeline.map { $0.effect }
+        #expect(effects == [.raised(.permission), .held, .dismissed, .prompt, .turnEnded, .atPrompt])
+    }
+
+    /// The ring keeps the newest `maxTimeline` lines.
+    @Test func theTimelineKeepsTheNewestLines() {
+        var book = SessionBook()
+        for i in 0..<(SessionBook.maxTimeline + 5) {
+            book.apply(AttentionRecord(
+                agent: .claude, kind: .tool, ms: t0 + Int64(i) * second, message: "t\(i)",
+                session: "s1", tool: "Read", event: "PostToolUse"
+            ), nowMs: t0 + minute)
+        }
+        let timeline = book.facts(for: SessionKey(.claude, "s1")).timeline
+        #expect(timeline.count == SessionBook.maxTimeline)
+        #expect(timeline.last?.effect == .step(tool: "Read", target: "t\(SessionBook.maxTimeline + 4)"))
+        #expect(timeline.first?.ms == t0 + 5 * second)
+    }
+
+    /// An `ignored` line goes on the timeline of a session the book holds —
+    /// and changes nothing else: not its clock, not its state.
+    @Test func anIgnoredLineIsHeardNotApplied() {
+        var book = SessionBook()
+        let key = SessionKey(.claude, "s1")
+        book.apply(AttentionRecord(agent: .claude, kind: .working, ms: t0, session: "s1", event: "UserPromptSubmit"), nowMs: t0)
+        let before = book.sessions[key]
+        let ignored = AttentionRecord(agent: .claude, kind: .ignored, ms: t0 + second, message: PulseHookReceiver.Ignored.silent.rawValue, session: "s1", event: "SubagentStop")
+        let changed = book.apply(ignored, nowMs: t0 + second)
+        #expect(!changed)
+        let after = book.sessions[key]
+        #expect(after?.lastEventMs == before?.lastEventMs)
+        #expect(after?.lastEvent == "UserPromptSubmit")
+        #expect(after?.state == before?.state)
+        #expect(after?.timeline.last == SessionBook.Heard(ms: t0 + second, event: "SubagentStop", effect: .skipped(reason: PulseHookReceiver.Ignored.silent.rawValue)))
+    }
+
     /// An `ignored` line records what the receiver heard; it is no state —
     /// it makes no session and moves none.
     @Test func anIgnoredLineIsNoState() {

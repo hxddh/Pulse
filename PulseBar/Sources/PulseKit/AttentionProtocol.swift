@@ -23,7 +23,8 @@ import Foundation
 /// - **ignored** (`ignored`): the receiver heard an event it did not turn
 ///   into state — an event Pulse does not install, a payload that is not a
 ///   JSON object, a blocked event from an agent that cannot report one — and
-///   says why in `message`. The reducer skips it; it is there to be read.
+///   says why in `message`. The reducer changes no state for it — it goes
+///   on its session's timeline; it is there to be read.
 package enum AttentionKind: String, Sendable, CaseIterable {
     case permission, question, waiting
     case turn, failed, idle
@@ -179,6 +180,22 @@ package struct AttentionRecord: Equatable, Sendable {
             event: cols[4],
             seq: seq
         )
+    }
+}
+
+/// A vendor event name as Pulse says it — in a why, the detail page's
+/// timeline, Settings and the report: the `event` column when it is a name
+/// (letters, digits and `_ . : -`, at most 64 characters), else "" — a
+/// hand-edited log or an argument that was a path says nothing rather than
+/// something that is not an event. Writers already clean the column; this
+/// is the reader's guard. Pure.
+package enum EventName {
+    package static func display(_ raw: String) -> String {
+        let name = raw.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, name.count <= 64,
+              name.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || "_.:-".unicodeScalars.contains($0) })
+        else { return "" }
+        return name
     }
 }
 

@@ -185,13 +185,15 @@ package enum HooksInstaller {
         return url.path + (changed ? "" : " (nothing to remove)")
     }
 
-    /// Which of an agent's contract events carry Pulse's command in `text`
-    /// (the config file's contents); nil when the file cannot be read as its
-    /// format. Pure — the status line reads it.
+    /// Which events carry Pulse's command in `text` (the config file's
+    /// contents) — every one, also an event the contract no longer installs;
+    /// for a module, the events its `EVENTS` list hands on. Nil when the file
+    /// cannot be read as its format. Pure — the status line and the
+    /// connection read it.
     package static func installedEvents(_ agent: AgentID, text: String) -> Set<String>? {
         let contract = agent.spec.hooks
-        guard !contract.format.ownsFile else {
-            return containsPulseMarker(text) ? Set(contract.events.map(\.name)) : []
+        if case .module = contract.format {
+            return containsPulseMarker(text) ? moduleEvents(text) : []
         }
         guard let root = try? JSONSerialization.jsonObject(with: Data(JSONSplice.splitBOM(text).body.utf8)) as? [String: Any] else {
             return nil
@@ -203,6 +205,31 @@ package enum HooksInstaller {
             if entries.contains(where: { containsPulseMarker(blob($0)) }) { found.insert(event) }
         }
         return found
+    }
+
+    /// The event names a module's `const EVENTS = …[…]` list holds (both
+    /// modules render one, `HookModules.literal` per name); none when it has
+    /// no such list.
+    package static func moduleEvents(_ text: String) -> Set<String> {
+        guard let start = text.range(of: "const EVENTS = "),
+              let open = text[start.upperBound...].firstIndex(of: "["),
+              let close = text[open...].firstIndex(of: "]")
+        else { return [] }
+        let list = "[" + text[text.index(after: open)..<close] + "]"
+        let names = (try? JSONSerialization.jsonObject(with: Data(list.utf8))) as? [String]
+        return Set(names ?? [])
+    }
+
+    /// Every absolute launcher path `text` (a config, or a module) names:
+    /// the path ending in each `/pulse-hook` token, JSON's `\/` read as `/`.
+    /// A path may hold spaces (`Application Support`), never a quote, a
+    /// backslash or a line break. Pure — a hook that names another path
+    /// than this Pulse's launcher is stale.
+    package static func launcherPaths(in text: String) -> Set<String> {
+        let plain = text.replacingOccurrences(of: "\\/", with: "/")
+        guard let regex = try? NSRegularExpression(pattern: #"/[^"'\\\n]*/pulse-hook(?=$|[\s"'\\])"#) else { return [] }
+        let matches = regex.matches(in: plain, range: NSRange(plain.startIndex..., in: plain))
+        return Set(matches.compactMap { match in Range(match.range, in: plain).map { String(plain[$0]) } })
     }
 
     // MARK: - Rendering

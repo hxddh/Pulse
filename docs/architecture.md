@@ -49,12 +49,38 @@ format's flavor — never by the agent.
   (`ScanQuietTests`). The projection carries state only — a row's
   `AgentRow.Status`, never a step or a clock — so plain equality says "the
   same world" and a burst of tool lines lands nothing. What a session said
-  lately (`SessionFacts`: steps, last words, error, clocks) is read from the
-  book when a row or the detail page is drawn (`StatusStore.facts(for:)`),
+  lately (`SessionFacts`: steps, last words, error, clocks, the vendor
+  events behind its state — `stateEvent`, `lastEvent` — and its timeline)
+  is read from the book when a row or the detail page is drawn
+  (`StatusStore.facts(for:)`),
   on the tray's own clock (`TimelineView`, `TrayChrome.clock`). Settings (open at login,
   "don't suggest hooks") go through `StatusStore.set`, which writes
   `settings.json` only on a change; a login change asks macOS. The language is the system's
   (`ResolvedLanguage.system`), read once.
+
+## Provenance and connections
+
+Every line keeps its vendor event (the v7 `event` column) through the
+reducer: a session holds the event that put it in its current state (a
+re-raise inside the grace keeps the first raise's, a held turn lands with
+its own, a process exit has none) and its last `SessionBook.maxTimeline`
+heard lines, each with the `SessionBook.Effect` the reducer decided as it
+applied it — raised, said again, answered, your turn, held, dismissed,
+seen, a step, an `ignored` line's reason. Nothing is guessed from an event's
+name, and the ring is rebuilt by the launch replay like every other fact.
+The why cites the event (`TrayRowModel.cause`; `EventName.display` refuses a
+column that is not a name); the detail page draws the ring; the report
+carries the last three, a step by its tool only.
+
+Settings' per-agent line is a `Connection`: the install
+`HooksSupport.inspect` reads from the agent's config — the events that carry
+Pulse's command against the adapter's contract (complete or partial), and
+the launcher paths they name against this Pulse's launcher, which must run,
+as must the app `hook-runner.path` names (else stale) — the last install's
+failure, which wins, and the newest line and `ignored` line per agent, kept
+by `ScanEngine` as it applies the log. `inspect` runs at launch, when
+Settings opens and after an install; never on the scan path. Install all
+fixes a partial or stale install.
 
 ## Processes (libproc)
 

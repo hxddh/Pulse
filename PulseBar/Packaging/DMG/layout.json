@@ -1,0 +1,25 @@
+{
+  "_generated_by": "scripts/make_dmg_art.py — edit the script, not this file",
+  "guide_name": "首次打开必读 · Read Me First.txt",
+  "icon_size": 128,
+  "positions": {
+    "Applications": [
+      470,
+      160
+    ],
+    "Pulse.app": [
+      170,
+      160
+    ],
+    "guide": [
+      320,
+      306
+    ]
+  },
+  "text_size": 13,
+  "window": {
+    "compact_height": 290,
+    "height": 400,
+    "width": 640
+  }
+}

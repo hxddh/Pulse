@@ -102,6 +102,40 @@ package enum HooksSupport {
         return !events.isEmpty
     }
 
+    /// How one agent's config carries Pulse's hook, read now: whole, partly
+    /// (not every event of its contract, or one it no longer has), through
+    /// a launcher that is not this Pulse's or cannot run, or not at all.
+    /// Six small reads; Settings opening, an install and the launch call it
+    /// — never the scan path.
+    package static func inspect(_ agent: AgentID) -> Connection.Install {
+        guard let text = try? String(contentsOf: HooksInstaller.configURL(for: agent), encoding: .utf8) else {
+            return .notInstalled
+        }
+        let launcher = HooksInstaller.launcherURL.path
+        return Connection.Install.classify(
+            contract: Set(agent.spec.hooks.events.map(\.name)),
+            installed: HooksInstaller.installedEvents(agent, text: text),
+            launchers: HooksInstaller.launcherPaths(in: text),
+            expected: launcher,
+            launcherRuns: FileManager.default.isExecutableFile(atPath: launcher),
+            runnerRuns: runnerRuns()
+        )
+    }
+
+    /// Every agent's install, read now.
+    package static func inspectAll() -> [AgentID: Connection.Install] {
+        Dictionary(uniqueKeysWithValues: AgentID.allCases.map { ($0, inspect($0)) })
+    }
+
+    /// Whether the app `hook-runner.path` names can run. No file, or an
+    /// empty one, is fine: the launcher then looks in the Applications
+    /// folders itself.
+    package static func runnerRuns() -> Bool {
+        guard let text = try? String(contentsOf: HooksInstaller.runnerPathURL, encoding: .utf8) else { return true }
+        let path = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return path.isEmpty || FileManager.default.isExecutableFile(atPath: path)
+    }
+
     /// Installs and removals run one at a time, on this queue: two clicks
     /// never edit the same config at once.
     package static let installQueue = DispatchQueue(label: "io.github.hxddh.pulse.hooks-install", qos: .userInitiated)

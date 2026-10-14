@@ -4,8 +4,10 @@ import Foundation
 ///
 /// General (open at login) · Notifications (whether macOS allows banners) ·
 /// Hooks — the diagnostics: Install all / Remove all, one line per agent on
-/// this Mac (installed or not, its last event, why an install failed), the
-/// agents that are not here collapsed into one line, and "Copy report". The
+/// this Mac (its `Connection`: installed, needing an update or failed, the
+/// vendor event heard last and when, the last one not used and why, whether
+/// it reports a wait), the agents that are not here collapsed into one line,
+/// and "Copy report". The
 /// version, the kind of build and "Releases…" are the footer. The language
 /// is the system's. `SettingsFace` renders this and sends `Action`s; the
 /// store builds it from `settings` and a few flags — never from a scan.
@@ -96,78 +98,83 @@ package struct SettingsModel: Equatable {
         self.focus = focus
     }
 
-    /// One agent's hook, as the Hooks section says it.
+    /// One agent's connection, as the Hooks section says it: its name and
+    /// state on one line, under it what was heard and whether it reports a
+    /// wait.
     package struct HookAgent: Equatable, Identifiable {
-        package var agent: AgentID
-        /// Installed / not installed, or why the last install failed.
-        package var state: String
-        package var installed: Bool
-        /// "last event 12m ago" / "no event yet"; empty when not installed.
-        package var lastEvent: String
-        /// Said for an agent whose hook never reports a wait.
-        package var note: String?
-        /// The last install or removal failed for this agent (the state
-        /// says why, in words from `L10n`).
-        package var failed = false
+        package enum Tone: Equatable {
+            /// Installed and whole.
+            case ok
+            /// Needs an update, or the last install failed.
+            case warning
+            /// Not installed.
+            case quiet
+        }
 
+        package var connection: Connection
+        /// "Installed" / "Needs update — 9 of 11 events" / "Failed · why" /
+        /// "Not installed".
+        package var state: String
+        package var tone: Tone
+        /// "Heard PermissionRequest · 4m ago" · "Reports when it waits";
+        /// what was heard only when a hook is there to hear.
+        package var detail: String
+        /// "Last ignored SubagentStop — not an installed event · 2m ago".
+        package var ignored: String?
+
+        package var agent: AgentID { connection.agent }
         package var id: AgentID { agent }
+        package var installed: Bool { connection.install.carriesHook }
+
+        package init(_ connection: Connection, nowMs: Int64, lang: ResolvedLanguage) {
+            self.connection = connection
+            state = connection.stateText(lang: lang)
+            switch connection.install {
+            case .complete: tone = .ok
+            case .partial, .staleLauncher, .failed: tone = .warning
+            case .notInstalled: tone = .quiet
+            }
+            let heard = connection.heardText(nowMs: nowMs, lang: lang)
+            detail = [heard, connection.waitsText(lang: lang)].filter { !$0.isEmpty }.joined(separator: " · ")
+            ignored = connection.ignoredText(nowMs: nowMs, lang: lang)
+        }
     }
 
     /// Pure: the Hooks section's lines, in roster order — every agent that
     /// is on this Mac, carries Pulse's hook, or failed its last install. The
     /// rest are `absentAgents`.
     package static func hookAgents(
-        installed: Set<AgentID>,
+        connections: [Connection],
         present: Set<AgentID>,
-        lastEventMs: [AgentID: Int64],
         nowMs: Int64,
-        lang: ResolvedLanguage,
-        failed: [AgentID: HooksInstaller.Failure] = [:]
+        lang: ResolvedLanguage
     ) -> [HookAgent] {
-        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-        return AgentID.priority.compactMap { agent in
-            let isInstalled = installed.contains(agent)
-            let failure = failed[agent]
-            guard isInstalled || present.contains(agent) || failure != nil else { return nil }
-            let state: String
-            if let failure {
-                state = t(.hooksFailed) + " · " + HooksSupport.Status.reason(failure, lang: lang)
-            } else if isInstalled {
-                state = t(.settingsHookInstalled)
-            } else {
-                state = t(.hooksMissing)
-            }
-            var lastEvent = ""
-            if isInstalled {
-                if let ms = lastEventMs[agent], ms > 0 {
-                    lastEvent = nowMs - ms < 60_000
-                        ? t(.settingsHookLastEventNow)
-                        : String(format: t(.settingsHookLastEvent), L10n.duration(Double(nowMs - ms) / 1000, lang))
-                } else {
-                    lastEvent = t(.settingsHookNoEvent)
-                }
-            }
-            return HookAgent(
-                agent: agent,
-                state: state,
-                installed: isInstalled,
-                lastEvent: lastEvent,
-                note: agent.waitingSource == .none ? t(.settingsHookNoWait) : nil,
-                failed: failure != nil
-            )
+        AgentID.priority.compactMap { agent in
+            guard let connection = connections.first(where: { $0.agent == agent }),
+                  hasLine(connection, present: present)
+            else { return nil }
+            return HookAgent(connection, nowMs: nowMs, lang: lang)
         }
     }
 
     /// Pure: the agents with no line of their own — not on this Mac, no
     /// hook, no failure — in roster order.
-    package static func absentAgents(
-        installed: Set<AgentID>,
-        present: Set<AgentID>,
-        failed: [AgentID: HooksInstaller.Failure] = [:]
-    ) -> [AgentID] {
+    package static func absentAgents(connections: [Connection], present: Set<AgentID>) -> [AgentID] {
         AgentID.priority.filter { agent in
-            !installed.contains(agent) && !present.contains(agent) && failed[agent] == nil
+            guard let connection = connections.first(where: { $0.agent == agent }) else { return !present.contains(agent) }
+            return !hasLine(connection, present: present)
         }
+    }
+
+    private static func hasLine(_ connection: Connection, present: Set<AgentID>) -> Bool {
+        if present.contains(connection.agent) || connection.install.carriesHook { return true }
+        if case .failed = connection.install { return true }
+        return false
+    }
+
+    /// "Install all" would update an agent: say so once, under the buttons.
+    package var hooksNeedUpdate: Bool {
+        hookAgents.contains { $0.connection.install.needsUpdate }
     }
 
     /// "Not on this Mac: Pi, OpenCode" — nil when every agent is here.
@@ -179,20 +186,18 @@ package struct SettingsModel: Equatable {
     // MARK: - The report
 
     /// What "Copy report" puts on the clipboard: plain text, English, no
-    /// path, prompt, session id or project — the version, each agent's hook
-    /// and when it last reported, whether macOS allows banners, the login
-    /// item as macOS sees it, and how Pulse reads each listed
-    /// session (the detail page does not say it).
+    /// path, prompt, session id or project — the version, each agent's
+    /// connection (its install, the event heard last, the last one not
+    /// used and why, whether it reports a wait), whether macOS allows
+    /// banners, the login item as macOS sees it, and how Pulse reads each
+    /// listed session with its last few heard lines (the detail page does
+    /// not say it).
     package struct ReportInput: Equatable {
         package var version: String
         package var macOS: String
-        package var installed: Set<AgentID>
+        /// Every agent's connection, in any order.
+        package var connections: [Connection]
         package var present: Set<AgentID>
-        package var failed: [AgentID: HooksInstaller.Failure] = [:]
-        package var lastEventMs: [AgentID: Int64]
-        /// The last event each agent's hook sent that Pulse heard and did not
-        /// turn into state (an `ignored` line): its event and why.
-        package var ignored: [AgentID: Ignored] = [:]
         package var nowMs: Int64
         /// nil: macOS has not been asked yet.
         package var notifyAuthorized: Bool?
@@ -205,11 +210,8 @@ package struct SettingsModel: Equatable {
         package init(
             version: String,
             macOS: String,
-            installed: Set<AgentID>,
+            connections: [Connection],
             present: Set<AgentID>,
-            failed: [AgentID: HooksInstaller.Failure] = [:],
-            lastEventMs: [AgentID: Int64],
-            ignored: [AgentID: Ignored] = [:],
             nowMs: Int64,
             notifyAuthorized: Bool? = nil,
             launchAtLogin: Bool,
@@ -218,11 +220,8 @@ package struct SettingsModel: Equatable {
         ) {
             self.version = version
             self.macOS = macOS
-            self.installed = installed
+            self.connections = connections
             self.present = present
-            self.failed = failed
-            self.lastEventMs = lastEventMs
-            self.ignored = ignored
             self.nowMs = nowMs
             self.notifyAuthorized = notifyAuthorized
             self.launchAtLogin = launchAtLogin
@@ -231,36 +230,24 @@ package struct SettingsModel: Equatable {
         }
     }
 
-    /// One heard event Pulse did not turn into state: the vendor's event name
-    /// (only when it is an identifier — never a path) and the receiver's
-    /// reason (`PulseHookReceiver.Ignored`).
-    package struct Ignored: Equatable, Sendable {
-        package var event: String
-        package var reason: String
-
-        package init(event: String, reason: String) {
-            let identifier = !event.isEmpty && event.count <= 64
-                && event.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || "_.:-".unicodeScalars.contains($0) }
-            self.event = identifier ? event : "?"
-            self.reason = reason
-        }
-
-        package var phrase: String { "\(event) (\(reason))" }
-    }
-
     /// How Pulse reads one session, without naming it: its state, where
     /// its facts come from, how a click lands, whether its process is
-    /// watched, and when it last spoke.
+    /// watched, when it last spoke, and its last few heard lines.
     package struct ReportSession: Equatable {
         package var agent: AgentID
         package var state: String
         package var go: LandingPlan.Precision?
         package var liveProcess: Bool
         package var lastEventMs: Int64
+        /// The last `reportTimeline` heard lines, newest first.
+        package var timeline: [SessionBook.Heard]
 
-        /// `lastEventMs`: the session's newest event (`SessionFacts`); 0 for
-        /// a process-only row.
-        package init(_ row: AgentRow, lastEventMs: Int64 = 0) {
+        /// Heard lines a session's report carries.
+        package static let reportTimeline = 3
+
+        /// `facts`: the session's (`SessionFacts`) — its newest event and
+        /// its timeline; none for a process-only row.
+        package init(_ row: AgentRow, facts: SessionFacts = SessionFacts()) {
             agent = row.agent
             switch row.status {
             case .needsYou: state = "blocked"
@@ -271,7 +258,8 @@ package struct SettingsModel: Equatable {
             }
             go = row.landingPlan.precision
             liveProcess = row.liveProcess
-            self.lastEventMs = lastEventMs
+            lastEventMs = facts.lastEventMs
+            timeline = Array(facts.timeline.suffix(Self.reportTimeline).reversed())
         }
 
         package func line(nowMs: Int64) -> String {
@@ -285,7 +273,36 @@ package struct SettingsModel: Equatable {
             var text = "  \(agent.rawValue): \(state), from \(source), go \(goWord)"
             text += liveProcess ? ", process watched" : ", no process"
             text += lastEventMs > 0 ? ", last event \(max(0, (nowMs - lastEventMs) / 1000))s ago" : ", no event"
+            for heard in timeline {
+                text += "\n    \(max(0, (nowMs - heard.ms) / 1000))s ago · \(Connection.reportEvent(heard.event)) · \(Self.word(heard.effect))"
+            }
             return text
+        }
+
+        /// What a heard line did, in the report's words — a step by its tool
+        /// alone (its target can be a path or a command), an ignored line by
+        /// a reason the receiver writes.
+        package static func word(_ effect: SessionBook.Effect) -> String {
+            switch effect {
+            case .started: return "started"
+            case .prompt: return "prompt"
+            case .step(let tool, _): return "step \(Connection.reportEvent(tool))"
+            case .working: return "working"
+            case .status: return "status"
+            case .raised(let kind): return "raised \(kind.rawValue)"
+            case .again: return "same ask again"
+            case .answered: return "answered"
+            case .yourTurn: return "your turn"
+            case .turnEnded: return "turn ended in front"
+            case .failed: return "turn failed"
+            case .held: return "turn held"
+            case .atPrompt: return "at prompt"
+            case .resolved: return "resolved"
+            case .dismissed: return "dismissed"
+            case .seen: return "seen"
+            case .ended: return "ended"
+            case .skipped(let reason): return "ignored (\(Connection.reportReason(reason)))"
+            }
         }
     }
 
@@ -305,26 +322,8 @@ package struct SettingsModel: Equatable {
             "hooks:",
         ]
         for agent in AgentID.priority {
-            let state: String
-            if let failure = input.failed[agent] {
-                state = "install failed (\(failure.rawValue))"
-            } else if input.installed.contains(agent) {
-                state = "installed"
-            } else if input.present.contains(agent) {
-                state = "not installed"
-            } else {
-                state = "not on this Mac"
-            }
-            var line = "  \(agent.rawValue): \(state)"
-            if input.installed.contains(agent) {
-                if let ms = input.lastEventMs[agent], ms > 0 {
-                    line += ", last event \(max(0, (input.nowMs - ms) / 1000))s ago"
-                } else {
-                    line += ", no event yet"
-                }
-            }
-            if let ignored = input.ignored[agent] { line += ", last ignored: \(ignored.phrase)" }
-            lines.append(line)
+            let connection = input.connections.first { $0.agent == agent } ?? Connection(agent: agent, install: .notInstalled)
+            lines.append(connection.reportLine(present: input.present.contains(agent), nowMs: input.nowMs))
         }
         lines.append(input.sessions.isEmpty ? "sessions: none listed" : "sessions:")
         lines += input.sessions.map { $0.line(nowMs: input.nowMs) }

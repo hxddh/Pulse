@@ -131,9 +131,21 @@ package enum L10n {
         case settingsHookAbsent
         case settingsReportHint
         case settingsHookInstalled
-        case settingsHookLastEvent
-        case settingsHookLastEventNow
         case settingsHookNoEvent
+        case settingsHookHeard
+        case settingsHookHeardUnnamed
+        case settingsHookIgnored
+        case settingsHookPartial
+        case settingsHookStale
+        case settingsHookReportsWaits
+        case settingsHookUpdateHint
+        case ignoredNoEvent
+        case ignoredNotInstalled
+        case ignoredUnparsable
+        case ignoredCannotWait
+        case ignoredNoSession
+        case ignoredSilent
+        case ignoredOther
         case settingsHookNoWait
         case waitingBannerFailed
         case lampRuleBlocked
@@ -144,7 +156,8 @@ package enum L10n {
         case lampRuleIdle
         case details
         case detailBack
-        case explainAsked
+        case explainCause
+        case explainWhen
         case explainAskedFront
         case explainTurn
         case explainProcessOnly
@@ -180,7 +193,23 @@ package enum L10n {
         case setupStepRestart
         case focusAppOnlyAutomation
         case stepStalled
-        case stepHeading
+        case timelineHeading
+        case timelineStarted
+        case timelinePrompt
+        case timelineWorking
+        case timelineStatus
+        case timelineRaised
+        case timelineAgain
+        case timelineAnswered
+        case timelineTurnEnded
+        case timelineFailed
+        case timelineHeld
+        case timelineAtPrompt
+        case timelineResolved
+        case timelineDismissed
+        case timelineSeen
+        case timelineEnded
+        case timelineSkipped
         case stepThisTurn
         case setupFailedAction
         case menuOpenPulse
@@ -271,11 +300,23 @@ extension L10n.Key {
         case .yourTurn: return ("Your turn", "轮到你")
         case .settingsHooksTitle: return ("Agent hooks", "Agent 的 hooks")
         case .settingsHookAbsent: return ("Not on this Mac: %@", "这台 Mac 上没有：%@")
-        case .settingsReportHint: return ("A plain-text report of each hook, notifications and this build — no paths, prompts or sessions", "一份纯文本报告：每个 hook、通知与这个版本——不含路径、提示词或会话")
+        case .settingsReportHint: return ("A plain-text report of each connection, the latest events, notifications and this build — no paths, prompts or sessions", "一份纯文本报告：每个连接、最近的事件、通知与这个版本——不含路径、提示词或会话")
         case .settingsHookInstalled: return ("Installed", "已安装")
-        case .settingsHookLastEvent: return ("last event %@ ago", "最近事件 %@前")
-        case .settingsHookLastEventNow: return ("last event just now", "最近事件：刚刚")
-        case .settingsHookNoEvent: return ("no event yet", "还没有事件")
+        case .settingsHookNoEvent: return ("Nothing heard yet", "还没有听到事件")
+        case .settingsHookHeard: return ("Heard %@ · %@", "最近听到 %@ · %@")
+        case .settingsHookHeardUnnamed: return ("Heard an event · %@", "听到事件 · %@")
+        case .settingsHookIgnored: return ("Last ignored %@ — %@ · %@", "最近未采用 %@——%@ · %@")
+        case .settingsHookPartial: return ("Needs update — %d of %d events", "需要更新——%d / %d 个事件")
+        case .settingsHookStale: return ("Needs update — runs an old copy of Pulse", "需要更新——指向旧的 Pulse")
+        case .settingsHookReportsWaits: return ("Reports when it waits", "会报告它在等你")
+        case .settingsHookUpdateHint: return ("Install all brings every agent that needs an update up to date", "「全部安装」会更新所有需要更新的 Agent")
+        case .ignoredNoEvent: return ("no event named", "没有指明事件")
+        case .ignoredNotInstalled: return ("not an installed event", "不是已安装的事件")
+        case .ignoredUnparsable: return ("its payload is not JSON", "负载不是 JSON")
+        case .ignoredCannotWait: return ("it cannot report waits", "它不报告等待")
+        case .ignoredNoSession: return ("no session", "没有会话")
+        case .ignoredSilent: return ("nothing to show", "没有可显示的内容")
+        case .ignoredOther: return ("not used", "未采用")
         case .settingsHookNoWait: return ("Doesn't report when it waits — running and your turn only", "不会报告它在等你——只显示运行中和轮到你")
         case .waitingBannerFailed: return ("macOS did not show the last “needs you” banner — check Notifications", "macOS 没有显示上一条「需要你」通知——请检查通知设置")
         case .lampRuleBlocked: return ("Red: an agent is waiting on you.", "红：有 Agent 在等你。")
@@ -286,17 +327,18 @@ extension L10n.Key {
         case .lampRuleIdle: return ("Gray: no coding agent is running.", "灰：没有在运行的编码 Agent。")
         case .details: return ("Details", "详情")
         case .detailBack: return ("Back", "返回")
-        case .explainAsked: return ("%@ %@ · %@", "%@ %@ · %@")
+        case .explainCause: return ("%@ (%@)", "%@（%@）")
+        case .explainWhen: return ("%@ · %@", "%@ · %@")
         case .explainAskedFront: return (" — it was in front of you, so no banner yet", "——当时它就在你眼前，所以先不发通知")
-        case .explainTurn: return ("%@ finished its turn · %@", "%@ 的回合结束了 · %@")
+        case .explainTurn: return ("Turn ended", "回合结束")
         case .explainProcessOnly: return ("Started before Pulse — details after its next step", "在 Pulse 之前启动——下一步之后显示详情")
         case .explainStalled: return ("Nothing new for %@", "已经 %@ 没有新动静")
         case .explainStalledUnknown: return ("Running, but its last step has no time", "在运行，但不知道它上一步的时间")
-        case .explainRunning: return ("%@ is working · last step %@", "%@ 在工作 · 上一步：%@")
+        case .explainRunning: return ("Working", "在工作")
         case .explainRunningNoClock: return ("Working — no step reported yet", "在工作——还没有报告任何一步")
-        case .explainKindPermission: return ("asked for permission", "请求权限")
-        case .explainKindInput: return ("asked a question", "提了一个问题")
-        case .explainKindWaiting: return ("is waiting for you", "在等你")
+        case .explainKindPermission: return ("Asked permission", "请求权限")
+        case .explainKindInput: return ("Asked a question", "提了一个问题")
+        case .explainKindWaiting: return ("Waiting for you", "在等你")
         case .detailFolder: return ("Folder", "目录")
         case .processOnly: return ("Process only", "仅进程")
         case .processOnlyN: return ("process only", "仅进程")
@@ -310,8 +352,8 @@ extension L10n.Key {
         case .settingsHooksSection: return ("Hooks", "Hooks")
         case .detailLastMessage: return ("Last message", "最后的消息")
         case .detailErrorHeading: return ("Error", "错误")
-        case .explainIdle: return ("At its prompt · last step %@", "停在提示符 · 上一步：%@")
-        case .explainEnded: return ("The session ended %@", "会话已结束 · %@")
+        case .explainIdle: return ("At its prompt", "停在提示符")
+        case .explainEnded: return ("Session ended", "会话已结束")
         case .explainQuiet: return ("Nothing heard for %@ and no process to watch — moved to recent", "已经 %@ 没有消息，也看不到进程——移到最近")
         case .explainSilent: return ("Nothing heard for %@ — moved to recent", "已经 %@ 没有消息——移到最近")
         case .setupFound: return ("Found %@ on this Mac — connect them so Pulse hears when they need you", "在这台 Mac 上找到 %@——连接后，它们需要你时 Pulse 就会知道")
@@ -322,7 +364,23 @@ extension L10n.Key {
         case .setupStepRestart: return ("Sessions already running appear after their next step", "已在运行的会话会在它们的下一步之后出现")
         case .focusAppOnlyAutomation: return ("Opened the app — to land on the tab itself, allow Pulse in System Settings → Privacy & Security → Automation", "已打开应用——要直接落到那个标签页，请在 系统设置 → 隐私与安全性 → 自动化 中允许 Pulse")
         case .stepStalled: return ("Nothing new for %@ — last step: %@", "已经 %@ 没有新动静——上一步：%@")
-        case .stepHeading: return ("Recent steps", "最近几步")
+        case .timelineHeading: return ("Timeline", "时间线")
+        case .timelineStarted: return ("Started", "开始")
+        case .timelinePrompt: return ("Prompt", "提示")
+        case .timelineWorking: return ("Working", "在工作")
+        case .timelineStatus: return ("Status", "状态")
+        case .timelineRaised: return ("Raised · %@", "变红 · %@")
+        case .timelineAgain: return ("Same ask again", "同一次提问")
+        case .timelineAnswered: return ("Answered", "已回答")
+        case .timelineTurnEnded: return ("Turn ended — you were watching", "回合结束——你当时在看")
+        case .timelineFailed: return ("Turn failed", "回合出错")
+        case .timelineHeld: return ("Turn held — lands after the grace", "回合暂缓——宽限期后落地")
+        case .timelineAtPrompt: return ("At its prompt", "停在提示符")
+        case .timelineResolved: return ("Closed by the agent", "Agent 关闭了提示")
+        case .timelineDismissed: return ("You ignored it", "你忽略了它")
+        case .timelineSeen: return ("You looked", "你看过了")
+        case .timelineEnded: return ("Ended", "结束")
+        case .timelineSkipped: return ("Ignored — %@", "未采用——%@")
         case .stepThisTurn: return ("This turn", "本回合")
         case .setupFailedAction: return ("Open Settings", "打开设置")
         case .menuOpenPulse: return ("Open Pulse", "打开 Pulse")

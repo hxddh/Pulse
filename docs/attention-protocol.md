@@ -101,7 +101,7 @@ record.
 | `ms` | Integer milliseconds since epoch, stamped by the writer |
 | `agent` | One of the six `AgentID` raw values: `claude`, `codex`, `cursor`, `pi`, `copilot`, `opencode` (`cursor-agent` / `cursor_agent` read as `cursor`) |
 | `kind` | One of the kinds below, spelled exactly as listed |
-| `event` | The vendor's own name of the hook event that wrote the line (`PermissionRequest`, `tool_execution_end`, `session.status`); `pulse.dismiss` / `pulse.seen` for the app's own `dismiss`. ≤64 chars. Read by nobody's state — it says where a line came from |
+| `event` | The vendor's own name of the hook event that wrote the line (`PermissionRequest`, `tool_execution_end`, `session.status`); `pulse.dismiss` / `pulse.seen` for the app's own `dismiss`. ≤64 chars. Read by nobody's state — it says where a line came from: the why, the detail page's timeline, Settings' "heard" and the report cite it (only when it is a name: letters, digits, `_ . : -`) |
 | `session` | The vendor's session id; empty allowed (not for `tool`, `status`, `working`) |
 | `cwd` | Absolute project path; empty allowed |
 | `pid` | The agent process the hook ran under: the first ancestor of the hook whose argv matches the agent's catalog process rule. Never the hook's direct parent (usually a `sh -c` that exits with the hook) and never `1` — empty when unknown |
@@ -129,7 +129,7 @@ Readers skip blank lines and `#` comments.
 | | `end` | The session ended |
 | Activity | `tool` | A tool ran (or a reply streamed): the session is working, and — when it names its tool — its last step and the answer to a block raised for that tool |
 | | `status` | Work goes on and no tool ran (a status, a retry, a recoverable error): never a step, never an answer |
-| Heard | `ignored` | The receiver heard an event it did not turn into state: an event Pulse does not install, a payload that is not a JSON object, a blocked event from an agent that cannot report one, activity or a prompt with no session, an event that says nothing Pulse shows. `message` says which (`PulseHookReceiver.Ignored`) — never the payload's words. The reducer skips it |
+| Heard | `ignored` | The receiver heard an event it did not turn into state: an event Pulse does not install, a payload that is not a JSON object, a blocked event from an agent that cannot report one, activity or a prompt with no session, an event that says nothing Pulse shows. `message` says which (`PulseHookReceiver.Ignored`) — never the payload's words. The reducer changes no state for it; it goes on its session's timeline and is Settings' "last ignored" |
 
 `working`, `done`, `dismiss` and `end` clear the session's block; `start`
 does unless the session is working. A `tool` or `status` line keeps a
@@ -150,8 +150,13 @@ as spelled in the table — no alias, no vendor word, no guess from free text.
 ## Reader rules
 
 - Every line applies, in `seq` order, to its session (`SessionKey`: agent +
-  session, or agent + folder when it names none). `ignored` lines are
-  skipped.
+  session, or agent + folder when it names none). `ignored` lines change no
+  state and make no session; one that names a session the reader holds goes
+  on that session's timeline (its last twelve heard lines, with what each
+  did — rebuilt by the replay, kept nowhere else).
+- The `event` column is carried, never read for state: a session keeps the
+  event that put it in its current state (a re-raise inside the grace keeps
+  the first raise's) — the why cites it.
 - A blocked line for an agent with `waiting: .none` (Codex, Cursor) is
   ignored, whoever wrote it.
 - `done`, `dismiss`, `working`, `end` clear that session (`session` empty →

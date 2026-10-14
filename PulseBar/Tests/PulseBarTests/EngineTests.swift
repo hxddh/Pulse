@@ -34,6 +34,7 @@ struct ScanQuietTests {
         [
             ("rows", \StatusStore.rows),
             ("hooksStatus", \StatusStore.hooksStatus),
+            ("hookInstalls", \StatusStore.hookInstalls),
             ("loginItem", \StatusStore.loginItem),
             ("notifyAuthorized", \StatusStore.notifyAuthorized),
             ("presentAgents", \StatusStore.presentAgents),
@@ -351,23 +352,26 @@ struct EventFeedTests {
 
     @Test func theLastEventPerAgentIsKept() {
         let store = StatusStore()
-        let early = AttentionRecord(agent: .copilot, kind: .turn, ms: t0 - 60_000, session: "g1", seq: 1)
+        let early = AttentionRecord(agent: .copilot, kind: .turn, ms: t0 - 60_000, session: "g1", event: "agentStop", seq: 1)
         store.engine.landLog(chunk([early]), nowMs: t0)
         store.engine.landLog(chunk([], gen: "g2"), nowMs: t0 + 1_000)
-        #expect(store.engine.latestHookEventMs[.copilot] == t0 - 60_000)
+        #expect(store.engine.latestHeard[.copilot] == Connection.Heard(event: "agentStop", ms: t0 - 60_000))
         // A dismissal is Pulse's own line, not the agent speaking.
-        store.engine.apply(records: [AttentionRecord(agent: .copilot, kind: .dismiss, ms: t0, session: "g1")], nowMs: t0)
-        #expect(store.engine.latestHookEventMs[.copilot] == t0 - 60_000)
-        // An ignored line is: the hook ran.
-        store.engine.apply(records: [AttentionRecord(agent: .copilot, kind: .ignored, ms: t0 + 500, message: "not an installed event")], nowMs: t0 + 1_000)
-        #expect(store.engine.latestHookEventMs[.copilot] == t0 + 500)
+        store.engine.apply(records: [AttentionRecord(agent: .copilot, kind: .dismiss, ms: t0, session: "g1", event: AttentionRecord.dismissEvent)], nowMs: t0)
+        #expect(store.engine.latestHeard[.copilot]?.ms == t0 - 60_000)
+        #expect(store.engine.latestIgnored[.copilot] == nil)
+        // An ignored line is: the hook ran — and it is the last one not used.
+        let ignored = AttentionRecord(agent: .copilot, kind: .ignored, ms: t0 + 500, message: "not an installed event", event: "subagentStop")
+        store.engine.apply(records: [ignored], nowMs: t0 + 1_000)
+        #expect(store.engine.latestHeard[.copilot] == Connection.Heard(event: "subagentStop", ms: t0 + 500))
+        #expect(store.engine.latestIgnored[.copilot] == Connection.Ignored(event: "subagentStop", reason: "not an installed event", ms: t0 + 500))
     }
 
     /// Settings' "last event" counts tool lines too.
     @Test func aToolLineIsAHookEventToo() {
         let store = StatusStore()
         store.engine.apply(records: [tool("Read", t0 - 5_000)], nowMs: t0)
-        #expect(store.engine.latestHookEventMs[.claude] == t0 - 5_000)
+        #expect(store.engine.latestHeard[.claude]?.ms == t0 - 5_000)
     }
 
     /// A turn held inside a block's grace lands on the tick, with no event

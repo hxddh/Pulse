@@ -1012,7 +1012,7 @@ struct RowWordsTests {
 
     @Test func aHookWaitNamesItsEvidenceAndItsAge() {
         let text = why(blocked())
-        #expect(text.contains("Claude"))
+        #expect(!text.contains("Claude"), "the row's icon already says who")
         #expect(text.contains(L10n.t(.explainKindPermission, .en)))
         #expect(text.contains(L10n.ago(now - 4 * minute, nowMs: now, .en)))
         #expect(!text.hasSuffix(L10n.t(.explainAskedFront, .en)))
@@ -1023,10 +1023,10 @@ struct RowWordsTests {
         #expect(text.hasSuffix(L10n.t(.explainAskedFront, .en)))
     }
 
-    /// The why is plain words — who asked what, and when.
+    /// The why is plain words — what was asked, and when.
     @Test func aWaitIsSaidInPlainWords() {
-        #expect(why(blocked()) == "Claude asked for permission · 4m ago")
-        #expect(why(blocked(), .zh) == "Claude 请求权限 · " + L10n.ago(now - 4 * minute, nowMs: now, .zh))
+        #expect(why(blocked()) == "Asked permission · 4m ago")
+        #expect(why(blocked(), .zh) == "请求权限 · " + L10n.ago(now - 4 * minute, nowMs: now, .zh))
         let process = AgentRow(key: .process(.cursor, pid: 7), status: .processOnly)
         #expect(why(process) == "Started before Pulse — details after its next step")
         #expect(why(process, .zh) == "在 Pulse 之前启动——下一步之后显示详情")
@@ -1040,16 +1040,68 @@ struct RowWordsTests {
 
     @Test func aQuestionSaysInput() {
         let text = why(blocked(kind: .question))
-        #expect(text.contains("Claude"))
-        #expect(text.contains(L10n.t(.explainKindInput, .en)))
+        #expect(text.hasPrefix(L10n.t(.explainKindInput, .en)))
     }
 
     @Test func yourTurnSaysHowToClearItWithoutNowAgo() {
         var row = session(.codex)
         row.status = .yourTurn(sinceMs: now - 2_000)
         let text = why(row, .zh)
-        #expect(text.contains("Codex"))
+        #expect(text.hasPrefix(L10n.t(.explainTurn, .zh)))
         #expect(!text.contains("刚刚前"), "never 'just now ago'")
+    }
+
+    // MARK: - Why: provenance — the vendor event that said so
+
+    /// Each why cites the vendor event that put the row in its state, and
+    /// when: "Asked permission (PermissionRequest) · 4m ago", "Turn ended
+    /// (Stop) · 2m ago" — in both languages.
+    @Test func theWhyCitesTheCausingEvent() {
+        var facts = said
+        facts.stateEvent = "PermissionRequest"
+        #expect(why(blocked(), facts: facts) == "Asked permission (PermissionRequest) · 4m ago")
+        #expect(why(blocked(), .zh, facts: facts) == "请求权限（PermissionRequest） · " + L10n.ago(now - 4 * minute, nowMs: now, .zh))
+        var turn = session(.codex)
+        turn.status = .yourTurn(sinceMs: now - 2 * minute)
+        facts.stateEvent = "Stop"
+        #expect(why(turn, facts: facts) == "Turn ended (Stop) · 2m ago")
+        #expect(why(turn, .zh, facts: facts) == "回合结束（Stop） · " + L10n.ago(now - 2 * minute, nowMs: now, .zh))
+        var running = said
+        running.lastEvent = "PostToolUse"
+        #expect(why(session(), facts: running) == "Working (PostToolUse) · 1m ago")
+        var ended = session()
+        ended.liveProcess = false
+        ended.status = .recent(.ended(atMs: now - 5 * minute))
+        facts.stateEvent = "SessionEnd"
+        #expect(why(ended, facts: facts) == "Session ended (SessionEnd) · 5m ago")
+        facts.stateEvent = ""
+        #expect(why(ended, facts: facts) == "Session ended · 5m ago", "a process exit names no event")
+    }
+
+    /// An event column that is not a name — a hand-edited log, a path — is
+    /// not repeated in the why.
+    @Test func aWhyNeverQuotesWhatIsNotAnEventName() {
+        var facts = said
+        facts.stateEvent = "/Users/me/secret"
+        #expect(why(blocked(), facts: facts) == "Asked permission · 4m ago")
+        facts.stateEvent = "hook event with spaces"
+        #expect(!why(blocked(), facts: facts).contains("hook"))
+    }
+
+    /// The book carries the event into the why: a raise and its echo keep
+    /// the first event; a held turn lands with its own.
+    @Test func theBookCarriesTheEventIntoTheWhy() {
+        var book = SessionBook()
+        let key = SessionKey(.claude, "s1")
+        book.apply(AttentionRecord(agent: .claude, kind: .permission, ms: now - 4 * minute, message: "Bash: npm test", session: "s1", tool: "Bash", event: "PermissionRequest"), nowMs: now)
+        book.apply(AttentionRecord(agent: .claude, kind: .permission, ms: now - 4 * minute + 6_000, message: "Claude needs your permission to use Bash", session: "s1", event: "Notification"), nowMs: now)
+        #expect(book.facts(for: key).stateEvent == "PermissionRequest", "the echo keeps the first raise's event")
+        book.apply(AttentionRecord(agent: .claude, kind: .turn, ms: now - 4 * minute + 9_000, session: "s1", event: "Stop"), nowMs: now)
+        #expect(book.facts(for: key).stateEvent == "PermissionRequest", "held inside the grace")
+        book.settleHeldTurns(nowMs: now)
+        let facts = book.facts(for: key)
+        #expect(facts.stateEvent == "Stop", "the held turn lands with its own event")
+        #expect(facts.lastEvent == "Stop")
     }
 
     @Test func aProcessOnlyRowSaysItIsOnlyAProcess() {
@@ -1118,9 +1170,9 @@ struct RowWordsTests {
         let facts = SessionFacts(steps: [step], turnStartMs: now - 40 * minute, lastEventMs: now - 30 * minute)
         for lang in [ResolvedLanguage.en, .zh] {
             var texts = [why(row, lang, facts: facts), TrayRowModel.stepLine(step, nowMs: now, lang: lang)]
-            texts += [L10n.t(.stepStalled, lang), L10n.t(.stepHeading, lang), L10n.t(.stepThisTurn, lang)]
-            let detail = DetailModel.make(row: row, facts: facts, lang: lang, nowMs: now)
-            texts += detail.steps.flatMap { [$0.label, $0.value] }
+            texts += [L10n.t(.stepStalled, lang), L10n.t(.timelineHeading, lang), L10n.t(.stepThisTurn, lang)]
+            let timeline = SurfaceFixtures.detailTimeline(lang: lang).timeline
+            texts += timeline.flatMap { [$0.time, $0.effect] }
             for text in texts {
                 #expect(!text.lowercased().contains("running"), "\(text)")
                 #expect(!text.contains("正在"), "\(text)")
@@ -1128,15 +1180,35 @@ struct RowWordsTests {
         }
     }
 
-    /// The detail page lists up to five steps, newest first, and this
+    /// The detail page's timeline: what was heard, newest first — the
+    /// event, what it did (steps among it) — rebuilt by the replay, and this
     /// turn's duration as a fact.
-    @Test func theDetailListsRecentStepsAndThisTurn() {
-        let detail = SurfaceFixtures.detailSteps(lang: .en)
-        #expect(detail.steps.count == SessionBook.maxSteps)
-        #expect(detail.steps.first?.value == "Bash · swift test")
-        #expect(detail.steps.last?.value == "Read · Sources/Upload/Queue.swift")
+    @Test func theDetailShowsTheTimelineAndThisTurn() {
+        let detail = SurfaceFixtures.detailTimeline(lang: .en)
+        let lines = detail.timeline.map { "\($0.event) \($0.effect)" }
+        #expect(lines == [
+            "PostToolUse Bash · swift test",
+            "PostToolUse Edit · Sources/Upload/Backoff.swift",
+            "SubagentStop Ignored — not an installed event",
+            "PostToolUse Answered",
+            "Notification Same ask again",
+            "PermissionRequest Raised · Permission",
+            "PostToolUse Edit · Sources/Upload/Queue.swift",
+            "PostToolUse Read · Sources/Upload/Queue.swift",
+            "UserPromptSubmit Prompt",
+        ])
+        #expect(detail.timeline.first?.time == "2m ago")
+        let alerts = detail.timeline.filter { $0.tone == .alert }.count
+        #expect(alerts == 1, "only the raise is red")
         let turn = detail.facts.first { $0.label == L10n.t(.stepThisTurn, .en) }
         #expect(turn?.value == "14m")
+        let zh = SurfaceFixtures.detailTimeline(lang: .zh)
+        let zhEffects = zh.timeline.map { $0.effect }
+        let raised = "变红 · " + L10n.waitKind(.permission, .zh)
+        #expect(zhEffects.contains(raised))
+        let zhEvents = zh.timeline.map { $0.event }
+        let enEvents = detail.timeline.map { $0.event }
+        #expect(zhEvents == enEvents, "event names are the vendor's, in any language")
     }
 
     @Test func aStalledRowWithNoClockSaysSoRatherThanGuess() {
@@ -1145,7 +1217,7 @@ struct RowWordsTests {
 
     @Test func aRunningRowSaysItIsWorking() {
         let text = why(session())
-        #expect(text.hasPrefix("Claude is working"), "\(text)")
+        #expect(text.hasPrefix("Working"), "\(text)")
         #expect(why(session(), facts: SessionFacts()) == L10n.t(.explainRunningNoClock, .en))
     }
 
@@ -1161,7 +1233,7 @@ struct RowWordsTests {
         var row = session()
         row.liveProcess = false
         row.status = .recent(.ended(atMs: now - 5 * minute))
-        #expect(why(row).hasPrefix("The session ended"))
+        #expect(why(row).hasPrefix("Session ended"))
         row.status = .recent(.atPrompt)
         #expect(why(row).hasPrefix("At its prompt"))
         row.status = .recent(.quiet)
@@ -1392,10 +1464,10 @@ struct RowWordsTests {
     /// start time), and a stalled row's why — already the row's second
     /// line — is not repeated.
     @Test func theDetailSaysEachThingOnce() {
-        let steps = SurfaceFixtures.detailSteps(lang: .en)
+        let steps = SurfaceFixtures.detailTimeline(lang: .en)
         let labels = steps.facts.map { $0.label }
         #expect(labels == [L10n.t(.stepThisTurn, .en), L10n.t(.detailFolder, .en)], "one clock, then the folder")
-        let running = SurfaceFixtures.rowRunningStep()
+        let running = SurfaceFixtures.rowTimeline()
         let headline = TrayRowModel.headline(running.row, facts: running.facts, lang: .en, nowMs: SurfaceFixtures.nowMs)
         #expect(steps.headline == headline)
         #expect(steps.why != nil, "a running row's why is not its second line (the step)")

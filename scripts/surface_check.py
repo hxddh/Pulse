@@ -38,6 +38,7 @@ VIEWS = [
     # One session in full, its facts; the lamp's shape.
     ("SessionDetailView.swift", "SessionDetailFace"),
     ("SessionDetailView.swift", "FactGrid"),
+    ("SessionDetailView.swift", "TimelineGrid"),
     ("PulseTheme.swift", "LampShapeView"),
     # Settings (its Hooks section is the diagnostics).
     ("SettingsViews.swift", "SettingsFace"),
@@ -48,7 +49,7 @@ VIEWS = [
 PURE_FILES = [
     "AgentRow.swift", "TrayRowModel.swift", "TrayModels.swift", "SettingsModel.swift",
     "TrayState.swift", "WaitLedger.swift", "WaitingDelivery.swift", "SessionBook.swift",
-    "L10n.swift",
+    "L10n.swift", "Connection.swift",
 ]
 QA_PURE_FILES = ["SurfaceFixtures.swift"]
 STORE = re.compile(r"\b(StatusStore|store|AppServices)\b")

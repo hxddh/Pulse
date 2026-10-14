@@ -56,8 +56,13 @@ import Foundation
 ///   `dismiss` the same block said again right after (same kind, inside the
 ///   first raise's grace, no work since) stays cleared; after the vendor's
 ///   `done` it is raised again.
-/// - **`ignored`** lines are skipped: they record what the receiver heard,
-///   not a state.
+/// - **`ignored`** lines change no state: they record what the receiver
+///   heard. One that names a session the book holds goes on its timeline.
+/// - **Every line says where it came from**: the session keeps the vendor
+///   event that put it in its current state (`stateEvent` — the why cites
+///   it), its newest event (`lastEvent`) and its last `maxTimeline` heard
+///   lines with what each did (`timeline`, the detail page's), all rebuilt
+///   by the launch replay like everything else here.
 /// - **An exit ends a session**: a process exit (kqueue) or a pid found dead
 ///   ends every live session that pid ran. Nothing here guesses "running".
 package struct SessionBook: Equatable {
@@ -80,6 +85,8 @@ package struct SessionBook: Equatable {
     package struct HeldTurn: Equatable, Sendable {
         package var ms: Int64
         package var front: Bool
+        /// The vendor event of the held turn — the why's when it lands.
+        package var event = ""
     }
 
     /// The block a dismissal in Pulse (a `dismiss` line) cleared last, and
@@ -98,6 +105,66 @@ package struct SessionBook: Equatable {
         package var tool: String
         package var target: String
         package var ms: Int64
+    }
+
+    /// One line a session heard, as its timeline says it: when, the
+    /// vendor's own event name (`AttentionRecord.event`, unsanitized —
+    /// `EventName.display` cleans it where it is drawn) and what the line
+    /// did to the session.
+    package struct Heard: Hashable, Sendable {
+        package var ms: Int64
+        package var event: String
+        package var effect: Effect
+
+        package init(ms: Int64, event: String, effect: Effect) {
+            self.ms = ms
+            self.event = event
+            self.effect = effect
+        }
+    }
+
+    /// What one heard line did, decided by the reducer as it applied it —
+    /// never guessed from the event's name.
+    package enum Effect: Hashable, Sendable {
+        /// The session started or resumed (`start`).
+        case started
+        /// A prompt started a turn (`working`).
+        case prompt
+        /// A tool ran: a step (the tool, its target).
+        case step(tool: String, target: String)
+        /// Activity that named no tool.
+        case working
+        /// Work goes on, no tool ran (`status`).
+        case status
+        /// A block was raised: the lamp went red.
+        case raised(AttentionKind)
+        /// The same block said again (a re-raise inside the grace, or the
+        /// echo of a dismissed one): nothing new.
+        case again
+        /// The line ended the block: it was answered in the vendor's prompt.
+        case answered
+        /// The turn ended and nobody watched: your turn.
+        case yourTurn
+        /// The turn ended in front of the person (or at its prompt with
+        /// nothing owed).
+        case turnEnded
+        /// The turn ended on an error.
+        case failed
+        /// A turn inside a block's grace: held, lands when the grace ends.
+        case held
+        /// It sat at its prompt; nothing new (`idle` after a seen turn).
+        case atPrompt
+        /// The vendor said its prompt closed (`done`).
+        case resolved
+        /// Set aside in Pulse (`pulse.dismiss`).
+        case dismissed
+        /// Its finished turn was looked at from Pulse (`pulse.seen`).
+        case seen
+        /// The session ended.
+        case ended
+        /// Heard, and not turned into state — the receiver's reason
+        /// (`PulseHookReceiver.Ignored` raw value).
+        case skipped(reason: String)
     }
 
     package struct Session: Equatable, Sendable {
@@ -148,6 +215,13 @@ package struct SessionBook: Equatable {
         /// again. A vendor's own "resolved" `done` sets none — the same ask
         /// after it is a new ask.
         package var clearedBlock: ClearedBlock?
+        /// The vendor event of the line that put the session in its current
+        /// state ("" for a process exit) — what the why cites.
+        package var stateEvent = ""
+        /// The vendor event of the newest line.
+        package var lastEvent = ""
+        /// The last `maxTimeline` lines it heard, oldest first.
+        package var timeline: [Heard] = []
 
         package var isEnded: Bool {
             if case .ended = state { return true }
@@ -168,16 +242,24 @@ package struct SessionBook: Equatable {
     package static let maxSteps = 5
     /// A step's target is at most this many characters.
     package static let stepTargetLimit = 120
+    /// Heard lines kept per session — the detail page's timeline.
+    package static let maxTimeline = 12
 
     package init() {}
 
     // MARK: - Events
 
-    /// One event line, in `seq` order. Returns whether anything changed.
+    /// One event line, in `seq` order. Returns whether anything but the
+    /// timeline changed — an `ignored` line, or one that moves nothing, is
+    /// heard and changes nothing.
     @discardableResult
     package mutating func apply(_ record: AttentionRecord, nowMs: Int64) -> Bool {
         let kind = record.kind
-        guard kind != .ignored, record.ms > 0, record.ms <= nowMs + Self.clockFutureToleranceMs else { return false }
+        guard record.ms > 0, record.ms <= nowMs + Self.clockFutureToleranceMs else { return false }
+        if kind == .ignored {
+            hearIgnored(record)
+            return false
+        }
         let agent = record.agent
         // No fake Waiting: an agent whose hooks cannot report a block is
         // never blocked, whoever wrote the line.
@@ -197,7 +279,7 @@ package struct SessionBook: Equatable {
             for key in sessions.keys.sorted() {
                 guard let session = sessions[key], session.agent == agent, session.session.isEmpty else { continue }
                 if !folder.isEmpty, key != folderKey, session.cwd != redacted { continue }
-                changed = resolve(key, at: ms, dismissal: dismissal) || changed
+                changed = resolve(key, record: record) || changed
             }
             return changed
         }
@@ -210,16 +292,18 @@ package struct SessionBook: Equatable {
         // A held turn whose grace this event's clock has passed goes first.
         Self.settleHeldTurn(&session, nowMs: ms)
         note(record, ms: ms, into: &session)
+        let prior = session.state
+        let event = record.event
 
         switch kind {
         case .start:
             // A start mid-work (a resume, a compaction) says nothing about
             // the work; otherwise the session is at its prompt.
-            if session.state != .working { Self.set(&session, .idle, at: ms) }
+            if session.state != .working { Self.set(&session, .idle, at: ms, event: event) }
         case .working:
             session.activityMs = max(session.activityMs, ms)
             Self.prompt(record.message, at: ms, into: &session)
-            Self.answer(&session, at: ms)
+            Self.answer(&session, at: ms, event: event)
         case .tool, .status:
             session.activityMs = max(session.activityMs, ms)
             session.toolMs = max(session.toolMs, ms)
@@ -231,13 +315,13 @@ package struct SessionBook: Equatable {
                 case .working:
                     break
                 case .blocked(let block):
-                    if Self.answers(record, block) { Self.answer(&session, at: ms) }
+                    if Self.answers(record, block) { Self.answer(&session, at: ms, event: event) }
                 case .idle, .yourTurn, .ended:
                     // A turn whose prompt Pulse did not see starts here;
                     // the error of the last one is over.
                     session.turnStartMs = ms
                     session.lastError = ""
-                    Self.set(&session, .working, at: ms)
+                    Self.set(&session, .working, at: ms, event: event)
                 }
             }
         case .permission, .question, .waiting:
@@ -247,28 +331,93 @@ package struct SessionBook: Equatable {
             if !message.isEmpty {
                 if kind == .failed { session.lastError = message } else { session.message = message }
             }
-            Self.turn(&session, at: ms, front: record.front == true)
+            Self.turn(&session, at: ms, front: record.front == true, event: event)
         case .idle:
             // Sat at its prompt a while: news only if Pulse had not seen the
             // turn end (still working or blocked — an Esc on a prompt fires
             // no Stop — or a session met just now).
             switch session.state {
             case .working, .blocked:
-                Self.turn(&session, at: ms, front: record.front == true)
+                Self.turn(&session, at: ms, front: record.front == true, event: event)
             case .idle where before == nil:
-                Self.turn(&session, at: ms, front: record.front == true)
+                Self.turn(&session, at: ms, front: record.front == true, event: event)
             case .idle, .yourTurn, .ended:
                 break
             }
         case .done, .dismiss:
-            _ = Self.clear(&session, at: ms, dismissal: dismissal)
+            _ = Self.clear(&session, at: ms, dismissal: dismissal, event: event)
         case .end:
-            Self.set(&session, .ended(atMs: ms), at: ms)
+            Self.set(&session, .ended(atMs: ms), at: ms, event: event)
         case .ignored:
             return false
         }
+        Self.hear(&session, Heard(ms: ms, event: event, effect: Self.effect(of: record, prior: prior, now: session)))
         sessions[key] = session
-        return session != before
+        guard let before else { return true }
+        var unheard = session
+        unheard.timeline = before.timeline
+        return unheard != before
+    }
+
+    /// An `ignored` line: no state. When it names a session the book holds
+    /// it goes on that session's timeline — never one it would make.
+    private mutating func hearIgnored(_ record: AttentionRecord) {
+        let spelled = record.session.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = SessionKey(record.agent, spelled, cwd: record.cwd)
+        guard var session = sessions[key] else { return }
+        Self.hear(&session, Heard(ms: record.ms, event: record.event, effect: .skipped(reason: record.message)))
+        sessions[key] = session
+    }
+
+    /// One heard line on the session's timeline; the oldest beyond
+    /// `maxTimeline` goes.
+    private static func hear(_ session: inout Session, _ heard: Heard) {
+        session.timeline.append(heard)
+        if session.timeline.count > maxTimeline { session.timeline.removeFirst(session.timeline.count - maxTimeline) }
+    }
+
+    /// What one applied line did, from the state before it (`prior`, after
+    /// a held turn settled) and after it. Pure.
+    private static func effect(of record: AttentionRecord, prior: State, now session: Session) -> Effect {
+        var wasBlocked = false
+        if case .blocked = prior { wasBlocked = true }
+        var isBlocked = false
+        if case .blocked = session.state { isBlocked = true }
+        switch record.kind {
+        case .start:
+            return .started
+        case .working:
+            return wasBlocked && !isBlocked ? .answered : .prompt
+        case .tool:
+            if wasBlocked && !isBlocked { return .answered }
+            guard let step = stepOf(record) else { return .working }
+            return .step(tool: step.tool, target: step.target)
+        case .status:
+            return .status
+        case .permission, .question, .waiting:
+            // Not raised: the echo of a dismissed block. A re-raise of the
+            // open block inside its grace (`raise` merges it): said again.
+            guard case .blocked = session.state else { return .again }
+            if case .blocked(let was) = prior, was.kind == record.kind,
+               abs(record.ms - was.sinceMs) < stopGraceMs {
+                return .again
+            }
+            return .raised(record.kind)
+        case .turn, .failed, .idle:
+            if isBlocked, session.heldTurn != nil { return .held }
+            if record.kind == .failed { return .failed }
+            if record.kind == .idle, session.state == prior { return .atPrompt }
+            if case .yourTurn = session.state { return .yourTurn }
+            return .turnEnded
+        case .done:
+            return .resolved
+        case .dismiss:
+            return record.event == AttentionRecord.seenEvent ? .seen : .dismissed
+        case .end:
+            return .ended
+        case .ignored:
+            return .skipped(reason: record.message)
+        }
     }
 
     /// A session an event names for the first time — unless the event says
@@ -297,6 +446,7 @@ package struct SessionBook: Equatable {
         }
         if !record.landing.isEmpty { session.landing = record.landing }
         if session.startedMs == 0 || ms < session.startedMs { session.startedMs = ms }
+        if ms >= session.lastEventMs { session.lastEvent = record.event }
         session.lastEventMs = max(session.lastEventMs, ms)
     }
 
@@ -315,12 +465,18 @@ package struct SessionBook: Equatable {
     /// A `tool` line that names its tool is a step. Lines are applied in
     /// order, so the last `maxSteps` are the newest.
     private static func step(_ record: AttentionRecord, at ms: Int64, into session: inout Session) {
+        guard let step = stepOf(record) else { return }
+        session.steps.append(step)
+        if session.steps.count > maxSteps { session.steps.removeFirst(session.steps.count - maxSteps) }
+    }
+
+    /// The step a `tool` line names; nil when it names no tool.
+    private static func stepOf(_ record: AttentionRecord) -> Step? {
         let tool = record.tool.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !tool.isEmpty else { return }
+        guard !tool.isEmpty else { return nil }
         var target = TitleHeuristics.firstLine(record.message, limit: stepTargetLimit)
         if target.caseInsensitiveCompare(tool) == .orderedSame { target = "" }
-        session.steps.append(Step(tool: String(tool.prefix(64)), target: target, ms: ms))
-        if session.steps.count > maxSteps { session.steps.removeFirst(session.steps.count - maxSteps) }
+        return Step(tool: String(tool.prefix(64)), target: target, ms: record.ms)
     }
 
     /// A blocked event. A re-raise of the same kind inside the grace is the
@@ -349,8 +505,12 @@ package struct SessionBook: Equatable {
             return
         }
         var held: HeldTurn?
+        // The event that raised the block: a re-raise of the same block
+        // keeps the first one's, as it keeps its clock.
+        var cause = record.event
         if case .blocked(let open) = session.state {
             if open.kind == kind, abs(ms - open.sinceMs) < Self.stopGraceMs {
+                cause = session.stateEvent
                 if askSpecificity(block.ask, tool: block.tool) <= askSpecificity(open.ask, tool: open.tool) {
                     block.ask = open.ask
                     if !open.tool.isEmpty { block.tool = open.tool }
@@ -367,7 +527,7 @@ package struct SessionBook: Equatable {
             // out of order); a raise after it is a new block.
             if let turn = session.heldTurn, turn.ms >= ms { held = turn }
         }
-        Self.set(&session, .blocked(block), at: block.sinceMs)
+        Self.set(&session, .blocked(block), at: block.sinceMs, event: cause)
         session.heldTurn = held
     }
 
@@ -391,40 +551,47 @@ package struct SessionBook: Equatable {
         return 2
     }
 
-    /// A new state from `ms`. A held turn belongs to the block it waits on
-    /// and goes with it.
-    private static func set(_ session: inout Session, _ state: State, at ms: Int64) {
+    /// A new state from `ms`, put there by the vendor event `event` ("" for
+    /// a process exit). A held turn belongs to the block it waits on and
+    /// goes with it.
+    private static func set(_ session: inout Session, _ state: State, at ms: Int64, event: String) {
         session.state = state
         session.stateSinceMs = ms
+        session.stateEvent = event
         if case .blocked = state { return }
         session.heldTurn = nil
     }
 
     /// A turn event: held while a block is inside its grace, else the turn
     /// is over.
-    private static func turn(_ session: inout Session, at ms: Int64, front: Bool) {
+    private static func turn(_ session: inout Session, at ms: Int64, front: Bool, event: String) {
         if case .blocked(let block) = session.state, ms - block.sinceMs < stopGraceMs {
             // Held, not dropped: the later of two held turns is the one.
             if (session.heldTurn?.ms ?? .min) <= ms {
-                session.heldTurn = HeldTurn(ms: ms, front: front)
+                session.heldTurn = HeldTurn(ms: ms, front: front, event: event)
             }
             return
         }
-        endTurn(&session, at: ms, front: front)
+        endTurn(&session, at: ms, front: front, event: event)
     }
 
     /// The turn is over: your turn, or nothing owed when the person watched
     /// it finish.
-    private static func endTurn(_ session: inout Session, at ms: Int64, front: Bool) {
-        set(&session, front ? .idle : .yourTurn(sinceMs: ms), at: ms)
+    private static func endTurn(_ session: inout Session, at ms: Int64, front: Bool, event: String) {
+        set(&session, front ? .idle : .yourTurn(sinceMs: ms), at: ms, event: event)
+    }
+
+    /// A held turn lands.
+    private static func endTurn(_ session: inout Session, held: HeldTurn) {
+        endTurn(&session, at: held.ms, front: held.front, event: held.event)
     }
 
     /// Work goes on (a prompt, a tool, a `done` for a block). A turn held
     /// for the block that ended no earlier than this still ends it.
-    private static func answer(_ session: inout Session, at ms: Int64) {
+    private static func answer(_ session: inout Session, at ms: Int64, event: String) {
         let held = session.heldTurn
-        Self.set(&session, .working, at: ms)
-        if let held, held.ms >= ms { endTurn(&session, at: held.ms, front: held.front) }
+        Self.set(&session, .working, at: ms, event: event)
+        if let held, held.ms >= ms { endTurn(&session, held: held) }
     }
 
     /// Apply a held turn once `nowMs` is past its block's grace. Returns
@@ -434,7 +601,7 @@ package struct SessionBook: Equatable {
         guard let held = session.heldTurn, case .blocked(let block) = session.state,
               nowMs - block.sinceMs >= stopGraceMs
         else { return false }
-        endTurn(&session, at: held.ms, front: held.front)
+        endTurn(&session, held: held)
         return true
     }
 
@@ -457,7 +624,7 @@ package struct SessionBook: Equatable {
     /// prompt). Anything else is left as it is. A `done` stamped before the
     /// state began is about an earlier one (a dismissal written while a new
     /// ask was being raised) and changes nothing.
-    private static func clear(_ session: inout Session, at ms: Int64, dismissal: Bool) -> Bool {
+    private static func clear(_ session: inout Session, at ms: Int64, dismissal: Bool, event: String) -> Bool {
         if case .blocked = session.state, ms < session.stateSinceMs { return false }
         if case .yourTurn = session.state, ms < session.stateSinceMs { return false }
         switch session.state {
@@ -470,22 +637,30 @@ package struct SessionBook: Equatable {
                 ? ClearedBlock(kind: block.kind, ask: block.ask, sinceMs: block.sinceMs, clearedMs: ms)
                 : nil
             if let held = session.heldTurn {
-                endTurn(&session, at: held.ms, front: held.front)
+                endTurn(&session, held: held)
             } else {
-                Self.set(&session, .working, at: ms)
+                Self.set(&session, .working, at: ms, event: event)
             }
             return true
         case .yourTurn:
-            Self.set(&session, .idle, at: ms)
+            Self.set(&session, .idle, at: ms, event: event)
             return true
         case .idle, .working, .ended:
             return false
         }
     }
 
-    private mutating func resolve(_ key: SessionKey, at ms: Int64, dismissal: Bool) -> Bool {
-        guard var session = sessions[key], Self.clear(&session, at: ms, dismissal: dismissal) else { return false }
+    /// An empty resolution, for one session-less session: cleared, heard.
+    private mutating func resolve(_ key: SessionKey, record: AttentionRecord) -> Bool {
+        let ms = record.ms
+        guard var session = sessions[key],
+              Self.clear(&session, at: ms, dismissal: record.kind == .dismiss, event: record.event)
+        else { return false }
+        if ms >= session.lastEventMs { session.lastEvent = record.event }
         session.lastEventMs = max(session.lastEventMs, ms)
+        let effect: Effect = record.kind == .done ? .resolved
+            : record.event == AttentionRecord.seenEvent ? .seen : .dismissed
+        Self.hear(&session, Heard(ms: ms, event: record.event, effect: effect))
         sessions[key] = session
         return true
     }
@@ -510,7 +685,7 @@ package struct SessionBook: Equatable {
         var changed = false
         for (key, session) in sessions where session.pid == pid && !session.isEnded {
             var copy = session
-            Self.set(&copy, .ended(atMs: max(atMs, session.lastEventMs)), at: max(atMs, session.lastEventMs))
+            Self.set(&copy, .ended(atMs: max(atMs, session.lastEventMs)), at: max(atMs, session.lastEventMs), event: "")
             sessions[key] = copy
             changed = true
         }
@@ -532,7 +707,7 @@ package struct SessionBook: Equatable {
         var changed = false
         for (key, session) in sessions where session.pid > 0 && !session.isEnded && gone(session) {
             var copy = session
-            Self.set(&copy, .ended(atMs: session.lastEventMs), at: session.lastEventMs)
+            Self.set(&copy, .ended(atMs: session.lastEventMs), at: session.lastEventMs, event: "")
             sessions[key] = copy
             changed = true
         }
@@ -557,7 +732,10 @@ package struct SessionBook: Equatable {
             steps: session.steps,
             turnStartMs: session.turnStartMs,
             lastEventMs: session.lastEventMs,
-            activityMs: session.activityMs
+            activityMs: session.activityMs,
+            stateEvent: session.stateEvent,
+            lastEvent: session.lastEvent,
+            timeline: session.timeline
         )
     }
 

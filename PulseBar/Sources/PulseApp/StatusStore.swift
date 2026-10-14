@@ -34,6 +34,10 @@ final class StatusStore {
     /// through `set(_:_:)` so the change is saved and applied.
     var settings = PulseSettings()
     var hooksStatus: HooksSupport.Status = .unknown
+    /// How each agent's config carries Pulse's hook (`HooksSupport.inspect`)
+    /// — read at launch, when Settings opens and after an install; never on
+    /// the scan path.
+    var hookInstalls: [AgentID: Connection.Install] = [:]
     /// Agents whose vendor folder is on this Mac (`HooksInstaller.vendorPresent`)
     /// — read at launch and when the tray opens; never on the scan path.
     var presentAgents: Set<AgentID> = []
@@ -103,7 +107,7 @@ final class StatusStore {
     func start() {
         DebugLog.write("start begin \(PulseVersion.fingerprint)")
         HooksSupport.seedAssets()
-        land(\.hooksStatus, HooksSupport.probeStatus())
+        probeHooks()
         refreshPresentAgents()
         if let loaded = PulseSettings.loadIfPresent() {
             land(\.settings, loaded)
@@ -140,6 +144,30 @@ final class StatusStore {
     /// Not observed: the views redraw it on their clock (`TimelineView`).
     func facts(for key: SessionKey) -> SessionFacts {
         previewFixtureActive ? fixtureFacts[key] ?? SessionFacts() : engine.book.facts(for: key)
+    }
+
+    /// What the agents' configs carry now: the status line and each
+    /// agent's install.
+    func probeHooks() {
+        land(\.hooksStatus, HooksSupport.probeStatus())
+        land(\.hookInstalls, HooksSupport.inspectAll())
+    }
+
+    /// Every agent's connection: its install (the last failure wins), the
+    /// vendor event heard last and the last one not used — the engine's,
+    /// so a redraw reads no file.
+    var connections: [Connection] {
+        let failures = hooksStatus.failures
+        return AgentID.priority.map { agent in
+            Connection.make(
+                agent: agent,
+                // Not read yet: the status set says whether it is wired.
+                probed: hookInstalls[agent] ?? (hooksStatus.isInstalled(for: agent) ? .complete : nil),
+                failure: failures[agent],
+                heard: engine.latestHeard[agent],
+                ignored: engine.latestIgnored[agent]
+            )
+        }
     }
 
     /// Which agents are on this Mac: six directory checks.
@@ -413,10 +441,11 @@ final class StatusStore {
         // `Task` inherits this class's main-actor isolation, so the assignment
         // lands on main while the hook installer stays off it.
         Task { [weak self] in
-            let status = await Task.detached(priority: .userInitiated) {
-                HooksSupport.run(job, previous: previous)
+            let (status, installs) = await Task.detached(priority: .userInitiated) {
+                (HooksSupport.run(job, previous: previous), HooksSupport.inspectAll())
             }.value
             self?.land(\.hooksStatus, status)
+            self?.land(\.hookInstalls, installs)
             done(status)
         }
     }

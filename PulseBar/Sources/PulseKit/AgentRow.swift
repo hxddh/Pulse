@@ -81,10 +81,11 @@ package struct Block: Hashable, Sendable {
     }
 }
 
-/// What a session said lately: its last words and error, its steps and its
-/// clocks — the facts that move with every tool line. They are read from
-/// the book when a row or the detail page is drawn (`SessionBook.facts`),
-/// never carried by the projection, so a burst of tool lines lands nothing.
+/// What a session said lately: its last words and error, its steps, its
+/// clocks, the vendor events behind its state and its timeline — the facts
+/// that move with every line. They are read from the book when a row or the
+/// detail page is drawn (`SessionBook.facts`), never carried by the
+/// projection, so a burst of tool lines lands nothing.
 package struct SessionFacts: Equatable, Sendable {
     /// The first line of the agent's latest message, as its turn carried it.
     package var lastWords: String
@@ -98,6 +99,14 @@ package struct SessionFacts: Equatable, Sendable {
     package var lastEventMs: Int64
     /// The newest activity (a tool ran, a prompt); 0 none.
     package var activityMs: Int64
+    /// The vendor event of the line that put the session in its current
+    /// state ("" for a process exit, or unknown) — what the why cites.
+    package var stateEvent: String
+    /// The vendor event of its newest line.
+    package var lastEvent: String
+    /// The last `SessionBook.maxTimeline` lines it heard, oldest first —
+    /// the detail page's timeline.
+    package var timeline: [SessionBook.Heard]
 
     package init(
         lastWords: String = "",
@@ -105,7 +114,10 @@ package struct SessionFacts: Equatable, Sendable {
         steps: [SessionBook.Step] = [],
         turnStartMs: Int64 = 0,
         lastEventMs: Int64 = 0,
-        activityMs: Int64 = 0
+        activityMs: Int64 = 0,
+        stateEvent: String = "",
+        lastEvent: String = "",
+        timeline: [SessionBook.Heard] = []
     ) {
         self.lastWords = lastWords
         self.lastError = lastError
@@ -113,6 +125,9 @@ package struct SessionFacts: Equatable, Sendable {
         self.turnStartMs = turnStartMs
         self.lastEventMs = lastEventMs
         self.activityMs = activityMs
+        self.stateEvent = stateEvent
+        self.lastEvent = lastEvent
+        self.timeline = timeline
     }
 
     /// The newest step; nil when the agent's hook names no tool (Cursor,
