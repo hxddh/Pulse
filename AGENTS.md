@@ -13,7 +13,7 @@ CHANGELOG.
 | [`README.md`](README.md) | You want to know what the product is |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You change anything the user sees — it is the behaviour spec |
 | [`docs/architecture.md`](docs/architecture.md) | You need who owns which state, how processes are read, how a click lands, or the version identity |
-| [`docs/attention-protocol.md`](docs/attention-protocol.md) | You touch the event log (`events.tsv`, Attention Protocol v7) or a hook's line |
+| [`docs/attention-protocol.md`](docs/attention-protocol.md) | You touch the event log (`events.tsv`, Attention Protocol v8) or a hook's line |
 | [`docs/vendor-formats.md`](docs/vendor-formats.md) | You touch a hook receiver, the installer or any per-agent fact — each contract has a pinned source (`vendor-formats.json`), a test and a weekly drift sentinel |
 
 The tests are the spec's proof: a behaviour is pinned by a test in the file of
@@ -37,13 +37,23 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
   extension event that reports a block (`waiting: .hooks`). Codex and Cursor
   are `waiting: .none`: the receiver writes an `ignored` line instead of a
   blocked one, the reducer refuses one whoever wrote it, and the product says
-  "doesn't report when it waits". **Red means blocked** —
+  "doesn't report when it waits". A request nobody can be shown (Claude's
+  `dontAsk`, `claude -p` without a permission host) and a notice that may
+  be another session's (Claude's `agent_needs_input`) are `ignored` lines
+  too. **Red means blocked** —
   `permission`, `question`, `waiting`. A finished turn (`turn`) is "your
   turn": a quiet tray count, never red, never a banner, never a row of its own.
+- **A subagent is not the person.** A line carries the vendor's subagent id
+  (`sub`) when a subagent wrote it. It never answers a block the main agent
+  (or another subagent) raised, never revives a turn that has ended, and its
+  prompt is never the person's prompt (no title, no turn clock); its steps
+  are marked as its own. A Pi subagent (`--mode json`) sends nothing.
 - **No quota, cost or reset HUD.** Tokens, context, cost, model and plan are
   not shown and no source reads a `usage` / `token_count` / `rate_limits` /
   `cost` field. What a row says comes from the events only; Pulse reads no
-  vendor file (no session store, no transcript).
+  vendor file (no session store, no transcript) — besides the hook configs
+  the installer edits and, read-only for Settings, the vendor settings
+  that silence hooks (`HookContract.offSwitches`).
 - **No judgment transfer, no blind approve.** Pulse never answers a
   permission request; the answer is always given in the vendor's own prompt.
   The hook receiver never holds — it appends one line and exits. No rules
@@ -53,16 +63,16 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
 - **No network.** Pulse makes no network connection; "Releases…" opens the
   releases page in the browser.
 - **Pulse keeps no record of its own.** The hooks write the one event log
-  (`events.tsv`, append-only, v7); beside it only `settings.json`, the
+  (`events.tsv`, append-only, v8); beside it only `settings.json`, the
   hook-install ledger and `debug.log` outlive a launch. The app appends only a
   `dismiss` (a wait set aside, a finished turn looked at). Banner bookkeeping
-  (`WaitLedger`) is in memory. A log that is not v7 is treated as absent and
+  (`WaitLedger`) is in memory. A log that is not v8 is treated as absent and
   started over — never read or migrated.
 - **Every heard event is one line.** The receiver writes a state line, or an
   `ignored` line that says why not (an event not installed, a payload that is
-  not JSON, a blocked event from an agent that cannot report one) — never the
-  payload's words. The reducer changes no state for `ignored`; it goes on its
-  session's timeline and Settings' "last ignored" — it is there to be read.
+  not JSON, a blocked event from an agent that cannot report one, a vendor
+  prompt that does not block) — never the payload's words. The reducer changes no state for `ignored`; it goes on its
+  session's timeline and Settings' "last not used" — it is there to be read.
 - **Replay before the first projection.** At launch `ScanEngine` applies the
   whole log, in order, to `SessionBook`, and only then projects; that
   projection is the banner baseline. Every line carries a `seq` assigned
@@ -97,10 +107,26 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
   is drawn, so a projection that finds the same world is equal and lands
   nothing.
 - **Install only documented, observe-only hooks, reversibly.** Never a gating
-  event (`HookContract.gatingEvents`: PreToolUse, beforeShellExecution, …),
-  never anything that returns a decision; an event not installed is not read.
-  Every install is reversible byte-for-byte (`hook-installs.json`). Codex is
-  `hooks.json` only — `config.toml` is never touched.
+  event (`HookContract.gatingEvents`: PreToolUse, beforeShellExecution, an
+  event whose hook takes the vendor's place — Elicitation, WorktreeCreate,
+  MessageDisplay — …), never anything whose decision the vendor reads; an
+  event not installed is not read. Async neutralizes decision output: the
+  vendor reads no decision from an `async` entry, so an event whose only
+  control is a decision (Claude's `PermissionDenied` `retry`,
+  `SubagentStop`) is observe-only installed async. One documented exception
+  (owner decision): Copilot's `agentStop`/`postToolUse` are synchronous and
+  could return a decision; Pulse's hook appends one line and prints nothing,
+  so it never decides. A plugin or extension Pulse owns reads the vendor's
+  event stream only (OpenCode's bus, Pi's events) — never a hook that can
+  change a tool, a message or a permission — and its handlers never throw,
+  never return a decision and never block. Every install is
+  reversible byte-for-byte (`hook-installs.json`). Codex is `hooks.json`
+  only — `config.toml` is never touched, not even read. No environment
+  variable is followed for where a vendor reads its config (a GUI app cannot
+  see the shell's): a folder a variable can move (Pi's `PI_CODING_AGENT_DIR`,
+  OpenCode's `OPENCODE_CONFIG_DIR` / `XDG_CONFIG_HOME`, Copilot's
+  `COPILOT_HOME`) is said in Settings when the default is missing, never
+  guessed.
 - **QA code never ships.** Fixtures, captures and the preview window live in
   the `PulseQA` executable; the app is `PulseBar` alone.
 
@@ -177,7 +203,8 @@ contracts and their sources, no gating event, libproc only, AppleScript only
 in `TerminalFocus`, no network API, no token / usage / cost reads),
 `make_agent_icons --check`, `surface_check` (views render values, the pure
 models stay in `PulseKit` and it imports no UI framework, QA files stay in
-`PulseQA`, a why never says "hook", a step never says "running") and
+`PulseQA`, a why never says "hook", a step never says "running", and the
+one live line — "Now: …", `nowLine` — reads only `SessionFacts.running`) and
 a `Bundle.module` grep. `vendor_drift.py` runs weekly
 (`vendor-drift.yml`). A gate earns its place by guarding a real fact.
 

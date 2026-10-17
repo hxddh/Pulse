@@ -216,8 +216,8 @@ struct SettingsFace: View {
                     .foregroundStyle(PulseTheme.warning)
             }
             // One line per agent: its name and state, then — quietly — what
-            // was heard, whether it reports a wait, and the last event not
-            // used.
+            // it reports, what was heard (and any caveat), and the last
+            // event not used.
             ForEach(model.hookAgents) { line in
                 LabeledContent {
                     Text(line.state)
@@ -225,9 +225,12 @@ struct SettingsFace: View {
                 } label: {
                     Label {
                         Text(line.agent.displayName)
-                        Text(line.detail)
-                        if let ignored = line.ignored {
-                            Text(ignored)
+                        Text(line.capability)
+                        if !line.detail.isEmpty {
+                            Text(line.detail)
+                        }
+                        if let notUsed = line.notUsed {
+                            Text(notUsed)
                         }
                     } icon: {
                         AgentIconView(id: line.agent)

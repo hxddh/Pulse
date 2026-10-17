@@ -127,6 +127,31 @@ package enum HooksSupport {
         Dictionary(uniqueKeysWithValues: AgentID.allCases.map { ($0, inspect($0)) })
     }
 
+    /// What else one agent's config says, read now and read only: a vendor
+    /// setting that silences every hook (`HookContract.offSwitches` —
+    /// Claude's settings and its managed settings, never a transcript), and
+    /// when the file Pulse edits last changed. A home-relative path is under
+    /// `HooksInstaller.homeURL`, an absolute one is the system's.
+    package static func config(_ agent: AgentID) -> Connection.Config {
+        let fm = FileManager.default
+        func url(_ path: String) -> URL {
+            path.hasPrefix("/") ? URL(fileURLWithPath: path) : HooksInstaller.homeURL.appendingPathComponent(path)
+        }
+        let offBy = Connection.offBy(
+            agent.spec.hooks.offSwitches,
+            read: { try? String(contentsOf: url($0), encoding: .utf8) },
+            list: { (try? fm.contentsOfDirectory(atPath: url($0).path)) ?? [] }
+        )
+        let modified = (try? fm.attributesOfItem(atPath: HooksInstaller.configURL(for: agent).path))?[.modificationDate] as? Date
+        let changedMs = modified.map { Int64($0.timeIntervalSince1970 * 1000) } ?? 0
+        return Connection.Config(offBy: offBy, changedMs: changedMs)
+    }
+
+    /// Every agent's `config`, read now.
+    package static func configAll() -> [AgentID: Connection.Config] {
+        Dictionary(uniqueKeysWithValues: AgentID.allCases.map { ($0, config($0)) })
+    }
+
     /// Whether the app `hook-runner.path` names can run. No file, or an
     /// empty one, is fine: the launcher then looks in the Applications
     /// folders itself.

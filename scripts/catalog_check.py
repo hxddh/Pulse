@@ -249,7 +249,9 @@ def check_hooks(text: str, roster: list[Agent], problems: list[str]) -> None:
         if agent.waiting == "hooks" and not set(agent.hook_events) & answer_events:
             problems.append(f"hooks — {agent.raw}: can raise a block but installs no event that answers it "
                             f"(one of {sorted(answer_events)})")
-    for raw, needed in (("copilot", "postToolUse"), ("codex", "PostToolUse"), ("claude", "PostToolUse"), ("pi", "tool_execution_end")):
+    for raw, needed in (("copilot", "postToolUse"), ("codex", "PostToolUse"), ("claude", "PostToolUse"), ("pi", "tool_execution_end"),
+                        ("opencode", "message.part.updated"), ("opencode", "session.tool.success"),
+                        ("cursor", "afterShellExecution")):
         agent = next((a for a in roster if a.raw == raw), None)
         if agent and needed not in agent.hook_events:
             problems.append(f"hooks — {raw}: {needed} is its per-tool activity (the answer to a block, the stall rule)")
@@ -282,10 +284,22 @@ def check_hooks(text: str, roster: list[Agent], problems: list[str]) -> None:
         if source == "repo":
             if not str(hooks.get("repo", "")).startswith("https://github.com/"):
                 problems.append(f"hooks — {agent.raw}: repo must be a https://github.com/ URL")
-            if not SHA.match(str(hooks.get("commit", ""))):
-                problems.append(f"hooks — {agent.raw}: commit must be the full 40-hex SHA that was read")
-            if not hooks.get("watch"):
-                problems.append(f"hooks — {agent.raw}: watch must list the vendor files that define the hooks")
+            # One pin (commit + watch), or one per release line the adapter
+            # supports at once (pins: line, branch, commit, watch).
+            pins = hooks.get("pins")
+            if pins is None:
+                pins = [{"line": "", "commit": hooks.get("commit"), "watch": hooks.get("watch")}]
+            elif "commit" in hooks or "watch" in hooks or not isinstance(pins, list) or not pins:
+                problems.append(f"hooks — {agent.raw}: pins is a non-empty list, and replaces commit / watch")
+                pins = []
+            for pin in pins:
+                label = f"{agent.raw}{' ' + str(pin.get('line')) if pin.get('line') else ''}"
+                if not SHA.match(str(pin.get("commit", ""))):
+                    problems.append(f"hooks — {label}: commit must be the full 40-hex SHA that was read")
+                if not pin.get("watch"):
+                    problems.append(f"hooks — {label}: watch must list the vendor files that define the hooks")
+                if "pins" in hooks and not (pin.get("line") and pin.get("branch")):
+                    problems.append(f"hooks — {label}: each pin names its line and the branch it follows")
         elif source == "docs":
             if not hooks.get("urls"):
                 problems.append(f"hooks — {agent.raw}: docs hooks list the URLs read")

@@ -43,10 +43,10 @@ struct ReportTests {
         let text = SettingsModel.report(input())
         #expect(text.hasPrefix("Pulse report"))
         #expect(text.contains("Pulse 25.0.0 · preview"))
-        #expect(text.contains("  claude: installed, heard Stop 42s ago, reports waits"), "\(text)")
-        #expect(text.contains("  opencode: installed, nothing heard yet, reports waits"), "\(text)")
-        #expect(text.contains("  codex: not installed, doesn't report waits"), "\(text)")
-        #expect(text.contains("  cursor: needs update (3 of 5 events), heard stop 9s ago, doesn't report waits"), "\(text)")
+        #expect(text.contains("  claude: installed, heard Stop 42s ago, capabilities: waits steps words titles"), "\(text)")
+        #expect(text.contains("  opencode: installed, nothing heard yet, capabilities: waits steps titles"), "\(text)")
+        #expect(text.contains("  codex: not installed, capabilities: steps words titles"), "\(text)")
+        #expect(text.contains("  cursor: needs update (3 of 5 events), heard stop 9s ago, capabilities: steps words"), "\(text)")
         #expect(text.contains("  copilot: install failed (unwritable)\n"), "\(text)")
         #expect(text.contains("  pi: not on this Mac\n"), "\(text)")
         for agent in AgentID.allCases {
@@ -58,7 +58,7 @@ struct ReportTests {
         var stale = input()
         stale.connections = [Connection(agent: .claude, install: .staleLauncher)]
         let text = SettingsModel.report(stale)
-        #expect(text.contains("  claude: needs update (stale launcher), nothing heard yet, reports waits"), "\(text)")
+        #expect(text.contains("  claude: needs update (stale launcher), nothing heard yet, capabilities: waits steps words titles"), "\(text)")
         #expect(text.contains("  pi: not on this Mac"), "an agent with no connection given is not installed: \(text)")
     }
 
@@ -86,16 +86,18 @@ struct ReportTests {
     /// an ignored line, all under a secret session id in a secret folder.
     func secretFacts() -> (AgentRow, SessionFacts) {
         let key = SessionKey(.claude, "secret-session")
-        func line(_ kind: AttentionKind, _ ms: Int64, _ event: String, tool: String = "", message: String = "") -> AttentionRecord {
+        func line(_ kind: AttentionKind, _ ms: Int64, _ event: String, tool: String = "", message: String = "", failed: Bool = false) -> AttentionRecord {
             AttentionRecord(
                 agent: .claude, kind: kind, ms: ms, message: message,
-                session: "secret-session", cwd: "/Users/me/secret-project", tool: tool, event: event
+                session: "secret-session", cwd: "/Users/me/secret-project", tool: tool, event: event,
+                failed: failed
             )
         }
         var book = SessionBook()
         for record in [
             line(.working, now - 60_000, "UserPromptSubmit", message: "a private prompt"),
             line(.tool, now - 50_000, "PostToolUse", tool: "Read", message: "/Users/me/secret-project/private.swift"),
+            line(.tool, now - 45_000, "PostToolUseFailure", tool: "Edit", message: "/Users/me/secret-project/token.swift", failed: true),
             line(.permission, now - 40_000, "PermissionRequest", tool: "Bash", message: "Bash: cat /Users/me/secret-token"),
             line(.ignored, now - 30_000, "/Users/me/secret", message: "a private reason"),
             line(.tool, now - 20_000, "PostToolUse", tool: "Bash", message: "cat /Users/me/secret-token"),
@@ -123,7 +125,11 @@ struct ReportTests {
             lastIgnored: Connection.Ignored(event: "/Users/me/secret", reason: "a private reason", ms: now - 1_000)
         )]
         let text = SettingsModel.report(withSession)
+        #expect(text.contains("steps 3 (1 failed)"), "counts, never targets: \(text)")
+        #expect(text.contains("capabilities: waits steps words titles"), "\(text)")
         #expect(!text.contains("/"), "not even a folder: \(text)")
+        #expect(!text.contains(".swift"), "no file name from a step's target: \(text)")
+        #expect(!text.contains("cat "), "no command from a step's target: \(text)")
         #expect(!text.contains("secret"), "\(text)")
         #expect(!text.contains("private"), "\(text)")
         #expect(!text.contains("token"), "\(text)")
@@ -137,7 +143,7 @@ struct ReportTests {
         let text = SettingsModel.report(chosen)
         let expected = [
             "    20s ago · PostToolUse · answered",
-            "    30s ago · ? · ignored (other)",
+            "    30s ago · ? · not used (other)",
             "    40s ago · PermissionRequest · raised permission",
         ].joined(separator: "\n")
         #expect(text.contains(expected), "\(text)")
@@ -173,7 +179,7 @@ struct ReportTests {
         heard.connections = [
             Connection(
                 agent: .claude, install: .complete,
-                lastIgnored: Connection.Ignored(event: "SubagentStop", reason: PulseHookReceiver.Ignored.notInstalled.rawValue, ms: now - 3_000)
+                lastIgnored: Connection.Ignored(event: "PreCompact", reason: PulseHookReceiver.Ignored.notInstalled.rawValue, ms: now - 3_000)
             ),
             Connection(
                 agent: .cursor, install: .complete,
@@ -181,8 +187,8 @@ struct ReportTests {
             ),
         ]
         let text = SettingsModel.report(heard)
-        #expect(text.contains("last ignored SubagentStop (not an installed event) 3s ago"), "\(text)")
-        #expect(text.contains("last ignored ? (payload is not a JSON object) 5s ago"), "\(text)")
+        #expect(text.contains("last not used PreCompact (not an installed event) 3s ago"), "\(text)")
+        #expect(text.contains("last not used ? (payload is not a JSON object) 5s ago"), "\(text)")
         #expect(!text.contains("secret"), "\(text)")
     }
 
@@ -275,21 +281,24 @@ struct ConnectionTests {
         let claude = Connection(
             agent: .claude, install: .complete,
             lastHeard: Connection.Heard(event: "PermissionRequest", ms: now - 4 * 60_000),
-            lastIgnored: Connection.Ignored(event: "SubagentStop", reason: PulseHookReceiver.Ignored.notInstalled.rawValue, ms: now - 2 * 60_000)
+            lastIgnored: Connection.Ignored(event: "PreCompact", reason: PulseHookReceiver.Ignored.notInstalled.rawValue, ms: now - 2 * 60_000)
         )
         let line = SettingsModel.HookAgent(claude, nowMs: now, lang: .en)
         #expect(line.state == "Installed")
         #expect(line.tone == .ok)
-        #expect(line.detail == "Heard PermissionRequest · 4m ago · Reports when it waits")
-        #expect(line.ignored == "Last ignored SubagentStop — not an installed event · 2m ago")
+        #expect(line.capability == "Reports waits, steps, last words, titles")
+        #expect(line.detail == "Heard PermissionRequest · 4m ago")
+        #expect(line.notUsed == "Last not used PreCompact — not an installed event · 2m ago")
         let zh = SettingsModel.HookAgent(claude, nowMs: now, lang: .zh)
-        #expect(zh.detail == "最近听到 PermissionRequest · " + L10n.ago(now - 4 * 60_000, nowMs: now, .zh) + " · 会报告它在等你")
-        #expect(zh.ignored == "最近未采用 SubagentStop——不是已安装的事件 · " + L10n.ago(now - 2 * 60_000, nowMs: now, .zh))
+        #expect(zh.capability == "报告等待、步骤、最后一句话和标题")
+        #expect(zh.detail == "最近听到 PermissionRequest · " + L10n.ago(now - 4 * 60_000, nowMs: now, .zh))
+        #expect(zh.notUsed == "最近未采用 PreCompact——不是已安装的事件 · " + L10n.ago(now - 2 * 60_000, nowMs: now, .zh))
 
         let codex = SettingsModel.HookAgent(Connection(agent: .codex, install: .partial(found: 9, of: 11)), nowMs: now, lang: .en)
         #expect(codex.state == "Needs update — 9 of 11 events")
         #expect(codex.tone == .warning)
-        #expect(codex.detail == "Nothing heard yet · " + L10n.t(.settingsHookNoWait, .en))
+        #expect(codex.detail == "Nothing heard yet")
+        #expect(codex.capability == "Reports turns, steps, last words, titles — not waits")
         #expect(SettingsModel.HookAgent(Connection(agent: .codex, install: .partial(found: 9, of: 11)), nowMs: now, lang: .zh).state == "需要更新——9 / 11 个事件")
 
         let stale = SettingsModel.HookAgent(Connection(agent: .pi, install: .staleLauncher), nowMs: now, lang: .en)
@@ -299,8 +308,9 @@ struct ConnectionTests {
         let missing = SettingsModel.HookAgent(Connection(agent: .opencode, install: .notInstalled), nowMs: now, lang: .en)
         #expect(missing.state == L10n.t(.hooksMissing, .en))
         #expect(missing.tone == .quiet)
-        #expect(missing.detail == L10n.t(.settingsHookReportsWaits, .en), "nothing to hear without a hook")
-        #expect(missing.ignored == nil)
+        #expect(missing.detail == "", "nothing to hear without a hook")
+        #expect(missing.capability == "Reports waits, steps, titles", "what it reports, whatever the install")
+        #expect(missing.notUsed == nil)
     }
 
     /// A reason the receiver never writes is not repeated: its words could
@@ -351,7 +361,7 @@ struct ConnectionTests {
             if case .partial = install { return true }
             return false
         }
-        let ignored = model.hookAgents.contains { $0.ignored != nil }
+        let ignored = model.hookAgents.contains { $0.notUsed != nil }
         #expect(installs.contains(.complete))
         #expect(partial)
         #expect(installs.contains(.staleLauncher))
@@ -360,6 +370,26 @@ struct ConnectionTests {
         #expect(model.absentAgents == [.pi])
         #expect(model.hooksNeedUpdate)
         #expect(ignored)
+    }
+
+    /// The caveats capture: every line says what its agent reports, then
+    /// its state — turned off, untrusted, nothing heard yet, a missing
+    /// config folder — in calm tones: only a silenced or untrusted install
+    /// is a warning.
+    @Test func theCaveatsFixtureSaysEachCaveatUnderItsCapability() {
+        let model = SurfaceFixtures.settingsCaveats(lang: .en)
+        let said = model.hookAgents.allSatisfy { $0.capability.hasPrefix("Reports ") }
+        #expect(said)
+        let tones = Dictionary(uniqueKeysWithValues: model.hookAgents.map { ($0.agent, $0.tone) })
+        #expect(tones[.claude] == .warning)
+        #expect(tones[.codex] == .warning)
+        #expect(tones[.copilot] == .ok, "nothing heard yet is not a fault")
+        #expect(tones[.cursor] == .ok)
+        let pi = model.hookAgents.first { $0.agent == .pi }
+        #expect(pi?.detail.contains("PI_CODING_AGENT_DIR") == true)
+        let cursor = model.hookAgents.first { $0.agent == .cursor }
+        #expect(cursor?.notUsed?.hasPrefix("Last not used ") == true)
+        #expect(cursor?.capability == "Reports turns, steps, last words — not waits")
     }
 
     /// A module carries the events its list names.
@@ -374,6 +404,145 @@ struct ConnectionTests {
             #expect(HooksInstaller.installedEvents(agent, text: fewer)?.count == names.count - 1, "\(agent.rawValue)")
         }
     }
+
+    /// Pi on this Mac without `~/.pi/agent` may read another folder
+    /// (`PI_CODING_AGENT_DIR`), which a GUI app cannot see: Settings says
+    /// where Pulse installs, and Pi gets its line even with no vendor
+    /// folder. Only an agent whose folder can move says it.
+    @Test func aMissingMovableConfigFolderIsSaid() throws {
+        let now: Int64 = 1_800_000_000_000
+        #expect(Connection.configDirMissing(agent: .pi, present: true, exists: { _ in false }))
+        #expect(!Connection.configDirMissing(agent: .pi, present: true, exists: { $0 == ".pi/agent" }))
+        #expect(!Connection.configDirMissing(agent: .pi, present: false, exists: { _ in false }), "not on this Mac: nothing to say")
+        #expect(!Connection.configDirMissing(agent: .claude, present: true, exists: { _ in false }), "Claude's folder does not move")
+        let pi = Connection.make(agent: .pi, probed: .notInstalled, failure: nil, heard: nil, ignored: nil, configDirMissing: true)
+        #expect(pi.configDirMissing)
+        let claude = Connection.make(agent: .claude, probed: .notInstalled, failure: nil, heard: nil, ignored: nil, configDirMissing: true)
+        #expect(!claude.configDirMissing, "an agent without a movable folder never carries it")
+        let line = SettingsModel.HookAgent(pi, nowMs: now, lang: .en)
+        #expect(line.detail.contains("Pulse installs to ~/.pi/agent, which isn't there yet — a Pi set to another folder (PI_CODING_AGENT_DIR) won't load it"))
+        let zh = SettingsModel.HookAgent(pi, nowMs: now, lang: .zh)
+        #expect(zh.detail.contains("PI_CODING_AGENT_DIR"))
+        let lines = SettingsModel.hookAgents(connections: [pi], present: [], nowMs: now, lang: .en)
+        let agents = lines.map(\.agent)
+        #expect(agents == [.pi], "said even with no ~/.pi")
+        #expect(SettingsModel.absentAgents(connections: [pi], present: []).contains(.pi) == false)
+        #expect(pi.reportLine(present: true, nowMs: now).contains("installs to ~/.pi/agent, not there"))
+        #expect(Connection(agent: .pi, install: .complete).configDirText(lang: .en) == nil)
+    }
+
+    /// A vendor setting that silences every hook is read, never written:
+    /// a managed policy first, then the person's own `disableAllHooks`. A
+    /// key that is not JSON `true`, or a file that is not a JSON object,
+    /// says nothing.
+    @Test func aSettingThatSilencesHooksIsRead() {
+        let switches = AgentID.claude.spec.hooks.offSwitches
+        let managedFolder = Claude.managedSettingsFolder
+        func off(_ files: [String: String]) -> Connection.Caveat? {
+            Connection.offBy(
+                switches,
+                read: { files[$0] },
+                list: { folder in files.keys.filter { $0.hasPrefix(folder + "/") }.map { String($0.dropFirst(folder.count + 1)) } }
+            )
+        }
+        #expect(off([:]) == nil)
+        #expect(off([".claude/settings.json": #"{"disableAllHooks": true}"#]) == .turnedOff)
+        #expect(off([".claude/settings.json": #"{"disableAllHooks": false}"#]) == nil)
+        #expect(off([".claude/settings.json": #"{"disableAllHooks": "true"}"#]) == nil, "only JSON true")
+        #expect(off([".claude/settings.json": "// not JSON"]) == nil)
+        #expect(off([Claude.managedSettings: #"{"allowManagedHooksOnly": true}"#]) == .managedOnly)
+        #expect(off([managedFolder + "/10-hooks.json": #"{"allowManagedHooksOnly": true}"#]) == .managedOnly)
+        #expect(off([managedFolder + "/10-hooks.txt": #"{"allowManagedHooksOnly": true}"#]) == nil, "only *.json drop-ins")
+        #expect(off([
+            ".claude/settings.json": #"{"disableAllHooks": true}"#,
+            Claude.managedSettings: #"{"disableAllHooks": true}"#,
+        ]) == .managedOnly, "the policy is the more specific reason")
+        #expect(AgentID.codex.spec.hooks.offSwitches.isEmpty, "config.toml is never read")
+    }
+
+    /// Codex runs a hook only once trusted, bound to its text: a whole
+    /// install that a Codex started since the file changed has not spoken
+    /// through waits to be trusted. Anything heard since, no Codex since, or
+    /// an agent that is not trust-bound: nothing to say.
+    @Test func anUntrustedCodexHookIsSaid() {
+        let changed: Int64 = 1_800_000_000_000
+        let config = Connection.Config(changedMs: changed)
+        func caveat(_ agent: AgentID, _ install: Connection.Install = .complete, heard: Int64? = nil, running: [Int64]) -> Connection.Caveat? {
+            Connection.caveat(agent: agent, install: install, config: config, heardMs: heard, runningSince: running)
+        }
+        #expect(caveat(.codex, running: [changed + 5_000]) == .untrusted)
+        #expect(caveat(.codex, running: [0]) == .untrusted, "a start time not read counts")
+        #expect(caveat(.codex, heard: changed + 1_000, running: [changed + 5_000]) == nil, "heard since the change")
+        #expect(caveat(.codex, running: [changed - 5_000]) == .neverHeard, "only a Codex that read the changed file is untrusted")
+        #expect(caveat(.codex, running: []) == .neverHeard, "no Codex ran: nothing heard, nothing to trust")
+        #expect(caveat(.codex, heard: changed - 60_000, running: []) == nil, "heard before; its own file is the person's too")
+        #expect(caveat(.codex, .partial(found: 5, of: 7), running: [changed + 5_000]) == nil, "Install all says that")
+        #expect(caveat(.claude, running: [changed + 5_000]) == .neverHeard, "Claude's hooks need no trust")
+        #expect(AgentID.codex.spec.hooks.trustBound)
+        #expect(!AgentID.claude.spec.hooks.trustBound)
+        let silenced = Connection.caveat(
+            agent: .claude, install: .complete, config: Connection.Config(offBy: .turnedOff), heardMs: nil, runningSince: []
+        )
+        #expect(silenced == .turnedOff)
+        #expect(Connection.caveat(agent: .claude, install: .notInstalled, config: Connection.Config(offBy: .turnedOff), heardMs: nil, runningSince: []) == nil)
+    }
+
+    /// A whole install nothing was heard through says so — for any agent:
+    /// no line from it at all, or, in a file Pulse owns whole (its last
+    /// change is Pulse's install), none since it was written. A file the
+    /// person edits too (Claude's settings) changes for reasons of its own,
+    /// so a line heard before its change still counts. Said on the state
+    /// line, not as a warning, and in the report.
+    @Test func anInstallNothingWasHeardThroughIsSaid() {
+        let changed: Int64 = 1_800_000_000_000
+        let config = Connection.Config(changedMs: changed)
+        func caveat(_ agent: AgentID, heard: Int64?) -> Connection.Caveat? {
+            Connection.caveat(agent: agent, install: .complete, config: config, heardMs: heard, runningSince: [])
+        }
+        for agent in AgentID.allCases {
+            #expect(caveat(agent, heard: nil) == .neverHeard, "\(agent.rawValue)")
+            #expect(caveat(agent, heard: changed + 1) == nil, "\(agent.rawValue)")
+        }
+        #expect(caveat(.copilot, heard: changed - 1) == .neverHeard, "Pulse's own file: nothing since the install")
+        #expect(caveat(.opencode, heard: changed - 1) == .neverHeard)
+        #expect(caveat(.claude, heard: changed - 1) == nil, "the person's settings change for reasons of their own")
+        #expect(Connection.caveat(agent: .copilot, install: .partial(found: 8, of: 10), config: config, heardMs: nil, runningSince: []) == nil)
+        let now = changed + 60_000
+        let copilot = Connection.make(agent: .copilot, probed: .complete, failure: nil, heard: nil, ignored: nil, config: config)
+        #expect(copilot.caveat == .neverHeard)
+        let line = SettingsModel.HookAgent(copilot, nowMs: now, lang: .en)
+        #expect(line.state == "Installed — nothing heard yet")
+        #expect(line.tone == .ok, "not a fault: it may not have run yet")
+        #expect(line.detail == "", "said once — on the state line")
+        #expect(SettingsModel.HookAgent(copilot, nowMs: now, lang: .zh).state == "已安装——还没有听到事件")
+        let report = copilot.reportLine(present: true, nowMs: now)
+        #expect(report.contains("nothing heard through it since it was installed"))
+        #expect(!report.contains("nothing heard yet"), "said once")
+    }
+
+    /// The words: an installed hook that may not run says why on its state
+    /// line, as a warning, in both languages and in the report.
+    @Test func aCaveatIsSaidOnTheLine() {
+        let now: Int64 = 1_800_000_000_000
+        let codex = Connection.make(
+            agent: .codex, probed: .complete, failure: nil, heard: nil, ignored: nil,
+            config: Connection.Config(changedMs: now - 60_000), runningSince: [now - 30_000]
+        )
+        #expect(codex.caveat == .untrusted)
+        let line = SettingsModel.HookAgent(codex, nowMs: now, lang: .en)
+        #expect(line.state == "Installed — Codex hasn't run it since it changed: trust it in Codex (/hooks)")
+        #expect(line.tone == .warning)
+        #expect(SettingsModel.HookAgent(codex, nowMs: now, lang: .zh).state.contains("/hooks"))
+        #expect(codex.reportLine(present: true, nowMs: now).contains("untrusted?"))
+
+        let claude = Connection(agent: .claude, install: .complete, caveat: .turnedOff)
+        #expect(SettingsModel.HookAgent(claude, nowMs: now, lang: .en).state == "Installed — but hooks are turned off in Claude's settings (disableAllHooks)")
+        #expect(claude.reportLine(present: true, nowMs: now).contains("disableAllHooks"))
+        let policy = Connection(agent: .claude, install: .partial(found: 9, of: 13), caveat: .managedOnly)
+        let partial = SettingsModel.HookAgent(policy, nowMs: now, lang: .en)
+        #expect(partial.state == "Needs update — 9 of 13 events")
+        #expect(partial.detail.contains("a managed policy keeps Claude from running it"))
+    }
 }
 
 /// The hooks section is where an agent's missing hook is fixed, one deep
@@ -381,12 +550,11 @@ struct ConnectionTests {
 @Suite("Hooks section")
 struct HooksSectionTests {
     /// No setting makes Codex or Cursor report a wait, so their line offers
-    /// no "connect" action — it says what they do not report.
+    /// no "connect" action — its capability line says what they report, and
+    /// that waits are not among it.
     @Test func aWaitingNoneAgentSaysWhatItDoesNotReport() {
-        #expect(L10n.t(.settingsHookNoWait, .en) == "Doesn't report when it waits — running and your turn only")
-        #expect(L10n.t(.settingsHookNoWait, .zh).hasPrefix("不会报告它在等你"))
         for lang in [ResolvedLanguage.en, .zh] {
-            let copy = L10n.t(.settingsHookNoWait, lang)
+            let copy = L10n.t(.capReportsNoWaits, lang)
             #expect(!copy.localizedCaseInsensitiveContains("bridge"))
             #expect(!copy.contains("桥"))
         }
@@ -397,8 +565,34 @@ struct HooksSectionTests {
         #expect(lines.count == AgentID.allCases.count)
         for line in lines {
             let none = AgentID.waitingNoneAgents.contains(line.agent)
-            #expect(line.detail.hasSuffix(L10n.t(none ? .settingsHookNoWait : .settingsHookReportsWaits, .en)), "\(line.agent.rawValue)")
+            #expect(line.capability.hasSuffix("— not waits") == none, "\(line.agent.rawValue): \(line.capability)")
+            #expect(line.capability.hasPrefix("Reports waits") == !none, "\(line.agent.rawValue): \(line.capability)")
         }
+        let cursor = lines.first { $0.agent == .cursor }
+        #expect(cursor?.capability == "Reports turns, steps, last words — not waits")
+        let zh = SettingsModel.HookAgent(Connection(agent: .cursor, install: .complete), nowMs: 0, lang: .zh)
+        #expect(zh.capability == "报告回合、步骤和最后一句话——不报告等待")
+    }
+
+    /// What each agent reports is read from its adapter, not written per
+    /// agent here: waits from its waiting source, steps from a per-tool
+    /// event, titles from a prompt or name event, last words declared.
+    @Test func eachAgentsCapabilitiesComeFromItsAdapter() {
+        let table: [AgentID: AgentCapabilities] = [
+            .claude: AgentCapabilities(waits: true, steps: true, lastWords: true, titles: true),
+            .codex: AgentCapabilities(waits: false, steps: true, lastWords: true, titles: true),
+            .cursor: AgentCapabilities(waits: false, steps: true, lastWords: true, titles: false),
+            .copilot: AgentCapabilities(waits: true, steps: true, lastWords: false, titles: true),
+            .opencode: AgentCapabilities(waits: true, steps: true, lastWords: false, titles: true),
+            .pi: AgentCapabilities(waits: true, steps: true, lastWords: true, titles: true),
+        ]
+        for agent in AgentID.allCases {
+            let can = agent.spec.capabilities
+            #expect(can == table[agent], "\(agent.rawValue)")
+            #expect(can.waits == (agent.waitingSource == .hooks))
+            #expect(can.steps == agent.reportsToolActivity)
+        }
+        #expect(AgentID.claude.spec.capabilities.reportWords == ["waits", "steps", "words", "titles"])
     }
 
     @Test func waitingNoneAgentsCoverEveryWaitingNoneContract() {

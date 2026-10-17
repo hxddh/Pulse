@@ -10,10 +10,14 @@ a QA file (fixtures, captures, the preview window) moves back into the app
 library — the shipping app links `PulseApp`, the QA driver is `PulseQA` — if
 a pure model leaves the kernel (`PulseKit`, Foundation only), if
 a row's why (`L10n` `explain*` and `step*`, either language) says "hook": the
-tray speaks plain words ("Claude asked for permission · 4m ago"), or if a
-step string says it is still going: a step is what a hook reported, a past
-step ("Bash · swift test · 12m ago"), never "running" / "正在" — neither in
-the `step*` copy nor in the words `TrayRowModel.stepText` / `stepLine` build.
+tray speaks plain words ("Asked permission · 4m ago"), or if a step string
+says it is still going: a step is what a hook reported, a past step ("Bash ·
+swift test · 12m ago"), never "running" / "正在" — neither in the `step*`
+copy nor in the words `TrayRowModel.stepText` / `stepLine` / `nowLine`
+build. The one live line ("Now: Bash · npm test · 3m", `stepNow`) has its
+own word and its own path: `nowLine` is called only with the tool the agent
+said started and has not finished (`facts.running`), never with a finished
+step — so nothing claims a tool runs from a step that ended.
 """
 import re
 import sys
@@ -126,7 +130,7 @@ def main() -> int:
     if not steps:
         errors.append("L10n.swift: no step* strings found")
     words = code_only((KIT / "TrayRowModel.swift").read_text())
-    for name in ("stepText", "stepLine"):
+    for name in ("stepText", "stepLine", "nowLine"):
         body = re.search(r"static func " + name + r"\b.*?\n    \}\n", words, re.S)
         if body is None:
             errors.append(f"TrayRowModel.swift: static func {name} not found")
@@ -135,6 +139,11 @@ def main() -> int:
     for key, value in steps:
         if RUNNING_WORDS.search(value):
             errors.append(f"{key}: a step says it is still going — a step is a past step, never \"running\" or \"正在\"")
+    # The live line reads only the agent's own "started, not finished".
+    calls = re.findall(r"(?<!func )\bnowLine\((\w+)", words)
+    live_from_running = re.search(r"\blet\s+live\s*=\s*facts\.running\b", words)
+    if not calls or any(arg != "live" for arg in calls) or not live_from_running:
+        errors.append("TrayRowModel.swift: nowLine must be called only with `live`, bound from `facts.running` — never a finished step")
     fixtures = (QA / "SurfaceFixtures.swift").read_text()
     names = re.search(r"static let names = \[(.*?)\]", fixtures, re.S)
     listed = re.findall(r'"([a-z0-9-]+)"', names.group(1)) if names else []

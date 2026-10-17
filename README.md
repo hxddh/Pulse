@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`30.0.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v30.0.0) · macOS 14+
+**版本：`31.0.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v31.0.0) · macOS 14+
 
 开着 Claude Code 写代码，切去开会，回来发现它二十分钟前就停在一个授权提示上。Pulse 把这件事变成余光可见：
 
@@ -57,17 +57,32 @@ macOS 拦下而丢失。把 Pulse 换到别的位置时，打开一次新位置�
 只支持六个。每个都走厂商自己文档里的 hook / 插件 / 扩展，**只装不能改变 Agent 决定的观察型事件**
 （从不装 PreToolUse 这类能拦截的 hook，也从不返回任何决定），移除时每个文件逐字节还原。
 
-| Agent | 上一步 | 会不会报告「需要你」 |
-| --- | --- | --- |
-| Claude Code | `PostToolUse` | 会（PermissionRequest、权限 / 提问通知） |
-| Copilot CLI | `postToolUse` | 会（`permission_prompt` / `elicitation_dialog`） |
-| OpenCode | — | 会（插件：`permission.asked` / `question.asked`） |
-| Pi | `tool_execution_end` | 会（扩展：`ui_prompt_start`） |
-| Codex | `PostToolUse` | **不会** —— 它的 PermissionRequest 在自己的自动审查之前触发，装了就是假等待 |
-| Cursor（编辑器与 `cursor-agent`） | — | **不会** —— 没有不拦截的等待事件 |
+| Agent | 上一步 | 最后一句话 | 标题 | 会不会报告「需要你」 |
+| --- | --- | --- | --- | --- |
+| Claude Code | `PostToolUse` | 有 | 有 | 会（PermissionRequest、权限 / 提问通知） |
+| Copilot CLI | `postToolUse` | — | 有 | 会（`permission_prompt` / `elicitation_dialog`） |
+| OpenCode（1.x 与 2.x） | 插件：1.x 工具分片完成、2.x `session.tool.success` | — | 有 | 会（1.x `permission.asked` / `question.asked`，2.x `permission.asked` / `form.created`） |
+| Pi | `tool_execution_end` | 有 | 有 | 会（扩展：`ui_prompt_start`） |
+| Codex | `PostToolUse` | 有 | 有 | **不会** —— 它的 PermissionRequest 在自己的自动审查之前触发，装了就是假等待 |
+| Cursor（编辑器与 `cursor-agent`） | `afterShellExecution` / `afterFileEdit` / `afterMCPExecution` | 有 | — | **不会** —— 没有不拦截的等待事件 |
 
-不会报告的两个只显示「运行中」与「轮到你」，Pulse 如实这样写，不伪造红灯。每个事件装在哪、变成什么、出处在哪，
+设置 → Hooks 的每个 Agent 下面有一行同样的能力（「报告等待、步骤、最后一句话和标题」），由适配器的契约得出。
+不会报告的两个只显示「运行中」与「轮到你」，Pulse 如实这样写（「报告回合、步骤……——不报告等待」），不伪造红灯。每个事件装在哪、变成什么、出处在哪，
 见 [`docs/vendor-formats.md`](docs/vendor-formats.md)。
+
+Pi 的扩展装在 `~/.pi/agent/extensions/`。如果你用 `PI_CODING_AGENT_DIR` 让 Pi 读别的文件夹，Pulse 看不到这个
+环境变量（菜单栏 App 读不到 shell 的环境），装的扩展不会被加载；`~/.pi/agent` 不存在时设置 → Hooks 会写明这一点。
+Pi 的 `/login` 登录等待与恢复会话时「工作目录不存在」的确认不经过扩展事件，Pulse 看不到。
+
+OpenCode 的插件只有一个文件 `~/.config/opencode/plugins/pulse.js`，1.x（`opencode-ai`）和 2.x（`@opencode/cli`）
+都会加载它；它只读事件总线，从不挂能改工具、消息或权限的钩子。用 `OPENCODE_CONFIG_DIR` 或 `XDG_CONFIG_HOME` 让
+OpenCode 读别的文件夹时，Pulse 同样看不到；`~/.config/opencode` 不存在而 OpenCode 在运行时，设置 → Hooks 会写明。
+
+Copilot CLI 的 hook 装在 `~/.copilot/hooks/pulse.json`，直接运行启动器（`exec` + `args`，不经过 shell）。
+设了 `COPILOT_HOME` 时 Copilot 改读 `$COPILOT_HOME/hooks/`，Pulse 看不到。打开了会话沙箱时，用户级 hook 在沙箱里
+运行：要在 `~/.copilot/settings.json` 的 `sandbox.userPolicy` 里放行 `~/Library/Application Support/Pulse`，
+否则 hook 写不进事件日志 —— 设置 → Hooks 会显示「已安装——还没有听到事件」。它的 `agentStop` 与 `postToolUse`
+是同步 hook、本可以返回决定：Pulse 的 hook 只追加一行、什么也不输出，所以从不做决定（一个经过确认的例外）。
 
 ## 隐私
 

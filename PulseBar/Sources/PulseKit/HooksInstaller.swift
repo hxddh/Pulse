@@ -76,6 +76,13 @@ package enum HooksInstaller {
         return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
 
+    /// Whether a home-relative folder exists (`.pi/agent`).
+    package static func homeFolderExists(_ relative: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        let path = homeURL.appendingPathComponent(relative).path
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+
     // MARK: - Install / uninstall
 
     /// Why one agent's install or removal did not happen. The UI says it in
@@ -249,8 +256,11 @@ package enum HooksInstaller {
                 // and warns when either is asked otherwise.
                 body.append(("timeout", String(min(hookTimeoutSeconds, cap))))
             } else {
-                body.append(("timeout", String(hookTimeoutSeconds)))
-                // Async: the vendor runs it in the background and ignores any
+                // A vendor cap on an async event's timeout (Codex's
+                // `Interrupt`, 3 s): written at the cap, never clamped.
+                let cap = flavor.timeoutCaps[event.name] ?? hookTimeoutSeconds
+                body.append(("timeout", String(min(hookTimeoutSeconds, cap))))
+                // Async: the vendor runs it in the background and reads no
                 // decision it could return.
                 if flavor.async { body.append(("async", "true")) }
             }
@@ -274,14 +284,22 @@ package enum HooksInstaller {
     /// (the OpenCode plugin, the Pi extension).
     package static func ownedFile(_ agent: AgentID, _ contract: HookContract) -> String {
         switch contract.format {
-        case .ownedJSON(let commandKey, let timeoutKey):
+        case .ownedJSON(let command, let timeoutKey):
             var hooks: [String: Any] = [:]
             for event in contract.events {
-                let entry: [String: Any] = [
-                    "type": "command",
-                    commandKey: hookCommand(agent: agent, event: event.name),
-                    timeoutKey: hookTimeoutSeconds,
-                ]
+                var entry: [String: Any] = ["type": "command", timeoutKey: hookTimeoutSeconds]
+                switch command {
+                case .shell(let key):
+                    entry[key] = hookCommand(agent: agent, event: event.name)
+                case .exec:
+                    // The launcher itself, no shell: nothing in its path is
+                    // interpreted, and a space needs no quoting.
+                    entry["exec"] = launcherURL.path
+                    entry["args"] = [agent.rawValue, event.name]
+                }
+                // The vendor's filter (Copilot's notification types, its
+                // compaction trigger): only those reach the hook.
+                if let matcher = event.matcher { entry["matcher"] = matcher }
                 hooks[event.name] = [entry]
             }
             let root: [String: Any] = ["version": 1, "hooks": hooks]

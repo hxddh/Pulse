@@ -50,7 +50,8 @@ package enum Lamp: String, CaseIterable, Equatable, Sendable {
         case .waiting: return .a11yWaiting
         case .running: return .a11yRunning
         case .stalled: return .a11yStalled
-        case .idle, .processOnly: return .a11yIdle
+        case .processOnly: return .a11yProcessOnly
+        case .idle: return .a11yIdle
         }
     }
 }
@@ -71,13 +72,17 @@ package struct Block: Hashable, Sendable {
     /// The tool the block is about, when the raise named it (`Bash` from
     /// Claude's `Bash: npm test`); "" when unknown. Only that tool answers it.
     package var tool: String
+    /// The subagent that raised it; "" the main agent. Only that subagent's
+    /// own lines answer it (`SessionBook`).
+    package var sub: String
 
-    package init(kind: AttentionKind, ask: String = "", sinceMs: Int64 = 0, inFront: Bool = false, tool: String = "") {
+    package init(kind: AttentionKind, ask: String = "", sinceMs: Int64 = 0, inFront: Bool = false, tool: String = "", sub: String = "") {
         self.kind = kind
         self.ask = ask
         self.sinceMs = sinceMs
         self.inFront = inFront
         self.tool = tool
+        self.sub = sub
     }
 }
 
@@ -93,6 +98,8 @@ package struct SessionFacts: Equatable, Sendable {
     package var lastError: String
     /// Up to `SessionBook.maxSteps` recent steps, oldest first.
     package var steps: [SessionBook.Step]
+    /// The tool said to have started and not yet finished; nil none.
+    package var running: SessionBook.Step?
     /// When the current turn started (its prompt); 0 unknown.
     package var turnStartMs: Int64
     /// The newest event of any kind; 0 none.
@@ -107,31 +114,49 @@ package struct SessionFacts: Equatable, Sendable {
     /// The last `SessionBook.maxTimeline` lines it heard, oldest first —
     /// the detail page's timeline.
     package var timeline: [SessionBook.Heard]
+    /// Steps the current turn took (its subagents' among them), and how
+    /// many failed.
+    package var turnSteps: Int
+    package var turnFailedSteps: Int
+    /// The latest turn ended on an error.
+    package var failedTurn: Bool
+    /// The person stopped the run, and nothing has moved it since.
+    package var stopped: Bool
 
     package init(
         lastWords: String = "",
         lastError: String = "",
         steps: [SessionBook.Step] = [],
+        running: SessionBook.Step? = nil,
         turnStartMs: Int64 = 0,
         lastEventMs: Int64 = 0,
         activityMs: Int64 = 0,
         stateEvent: String = "",
         lastEvent: String = "",
-        timeline: [SessionBook.Heard] = []
+        timeline: [SessionBook.Heard] = [],
+        turnSteps: Int = 0,
+        turnFailedSteps: Int = 0,
+        failedTurn: Bool = false,
+        stopped: Bool = false
     ) {
         self.lastWords = lastWords
         self.lastError = lastError
         self.steps = steps
+        self.running = running
         self.turnStartMs = turnStartMs
         self.lastEventMs = lastEventMs
         self.activityMs = activityMs
         self.stateEvent = stateEvent
         self.lastEvent = lastEvent
         self.timeline = timeline
+        self.turnSteps = turnSteps
+        self.turnFailedSteps = turnFailedSteps
+        self.failedTurn = failedTurn
+        self.stopped = stopped
     }
 
-    /// The newest step; nil when the agent's hook names no tool (Cursor,
-    /// OpenCode) or none has run.
+    /// The newest step; nil when the agent's hook names no tool or none
+    /// has run.
     package var lastStep: SessionBook.Step? { steps.last }
 
     /// The newest clock, in ms; 0 unknown.

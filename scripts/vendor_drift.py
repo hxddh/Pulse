@@ -50,10 +50,17 @@ def main() -> int:
     # Only the hook contract is pinned.
     pins = [(f"{raw} hooks", entry["hooks"]) for raw, entry in sorted(agents.items())
             if isinstance(entry.get("hooks"), dict)]
+    # A hooks block pins one commit, or one per release line it supports
+    # (`pins`: each with the branch that line is released from).
+    lines = []
     for raw, entry in pins:
         if entry.get("source") != "repo" or (only and raw.split()[0] not in only):
             continue
-        repo, pin, watch = entry["repo"], entry["commit"], entry["watch"]
+        for item in entry.get("pins") or [{"commit": entry["commit"], "watch": entry["watch"]}]:
+            label = f"{raw} {item['line']}" if item.get("line") else raw
+            lines.append((label, entry["repo"], item["commit"], item["watch"], item.get("branch")))
+    for raw, repo, pin, watch, branch in lines:
+        head = f"origin/{branch}" if branch else "HEAD"
         try:
             if repo not in clones:
                 target = work / repo.rstrip("/").split("/")[-2] / repo.rstrip("/").split("/")[-1]
@@ -62,7 +69,7 @@ def main() -> int:
                     git("clone", "--quiet", "--filter=blob:none", "--no-checkout", repo, str(target))
                 clones[repo] = target
             clone = clones[repo]
-            log = git("log", "--format=%h %cs %s", f"{pin}..HEAD", "--", *watch, cwd=clone).strip()
+            log = git("log", "--format=%h %cs %s", f"{pin}..{head}", "--", *watch, cwd=clone).strip()
         except subprocess.CalledProcessError as error:
             failed.append(f"{raw}: {repo} — {error.stderr.strip() or error}")
             continue
@@ -70,13 +77,13 @@ def main() -> int:
             failed.append(f"{raw}: {repo} — timed out")
             continue
         if log:
-            lines = log.splitlines()
+            found = log.splitlines()
             drifted.append(raw)
-            print(f"::warning::{raw}: {len(lines)} commit(s) since {pin[:12]} touch its hook files")
-            for line in lines[:20]:
+            print(f"::warning::{raw}: {len(found)} commit(s) on {head} since {pin[:12]} touch its hook files")
+            for line in found[:20]:
                 print(f"    {line}")
-            if len(lines) > 20:
-                print(f"    … {len(lines) - 20} more")
+            if len(found) > 20:
+                print(f"    … {len(found) - 20} more")
         else:
             print(f"{raw}: unchanged since {pin[:12]}")
 

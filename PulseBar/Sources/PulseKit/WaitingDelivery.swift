@@ -99,7 +99,8 @@ package struct WaitingDelivery: Equatable {
 
 /// One "needs you" banner's words, as a value: who and where in the title
 /// (`Claude · Pulse`), the session's task in the subtitle, and in the body
-/// what it asks (`Permission · Bash: npm run build`). Each session is its own
+/// what it asks (`Asked permission · Bash: npm run build`) — the words the
+/// row, the why and the timeline use for the same wait. Each session is its own
 /// thread in Notification Center, so a second ask from the same session
 /// stacks with its first and never with another session's. Pure.
 package struct WaitingBanner: Equatable {
@@ -118,7 +119,7 @@ package struct WaitingBanner: Equatable {
         return WaitingBanner(title: title, subtitle: task, body: body(row, lang: lang), threadID: thread(row.key))
     }
 
-    /// `Permission · Approve shell command` — the reason and the ask; the
+    /// `Asked permission · Approve shell command` — the wait and the ask; the
     /// reason alone when the agent did not say.
     package static func body(_ row: AgentRow, lang: ResolvedLanguage) -> String {
         var bits = [row.wait.map { L10n.waitKind($0.kind, lang) } ?? L10n.t(.needsYou, lang)]

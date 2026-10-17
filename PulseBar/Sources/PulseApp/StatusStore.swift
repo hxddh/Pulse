@@ -38,9 +38,17 @@ final class StatusStore {
     /// — read at launch, when Settings opens and after an install; never on
     /// the scan path.
     var hookInstalls: [AgentID: Connection.Install] = [:]
+    /// What else each agent's config says — a vendor setting that silences
+    /// hooks, when the file Pulse edits last changed (`HooksSupport.config`)
+    /// — read with `hookInstalls`.
+    var hookConfigs: [AgentID: Connection.Config] = [:]
     /// Agents whose vendor folder is on this Mac (`HooksInstaller.vendorPresent`)
     /// — read at launch and when the tray opens; never on the scan path.
     var presentAgents: Set<AgentID> = []
+    /// Agents on this Mac (a vendor folder, or a live process) whose movable
+    /// config folder Pulse installs into is missing
+    /// (`Connection.configDirMissing`) — read with `presentAgents`.
+    var configDirMissing: Set<AgentID> = []
     /// The agents the setup card just connected: the card shows what is
     /// left to do until "Got it". nil otherwise; not saved.
     var setupConnected: Set<AgentID>?
@@ -151,13 +159,16 @@ final class StatusStore {
     func probeHooks() {
         land(\.hooksStatus, HooksSupport.probeStatus())
         land(\.hookInstalls, HooksSupport.inspectAll())
+        land(\.hookConfigs, HooksSupport.configAll())
     }
 
     /// Every agent's connection: its install (the last failure wins), the
-    /// vendor event heard last and the last one not used — the engine's,
-    /// so a redraw reads no file.
+    /// vendor event heard last and the last one not used, and why a whole
+    /// install may say nothing — the engine's and the last probe's, so a
+    /// redraw reads no file.
     var connections: [Connection] {
         let failures = hooksStatus.failures
+        let processes = engine.processes
         return AgentID.priority.map { agent in
             Connection.make(
                 agent: agent,
@@ -165,14 +176,28 @@ final class StatusStore {
                 probed: hookInstalls[agent] ?? (hooksStatus.isInstalled(for: agent) ? .complete : nil),
                 failure: failures[agent],
                 heard: engine.latestHeard[agent],
-                ignored: engine.latestIgnored[agent]
+                ignored: engine.latestIgnored[agent],
+                configDirMissing: configDirMissing.contains(agent),
+                config: hookConfigs[agent] ?? Connection.Config(),
+                runningSince: processes.filter { $0.agent == agent }.map(\.startedMs)
             )
         }
     }
 
-    /// Which agents are on this Mac: six directory checks.
+    /// Which agents are on this Mac: six directory checks — and, for an
+    /// agent whose config folder can be moved, whether the default one
+    /// Pulse installs into is there.
     func refreshPresentAgents() {
-        land(\.presentAgents, Set(AgentID.priority.filter(HooksInstaller.vendorPresent)))
+        let present = Set(AgentID.priority.filter(HooksInstaller.vendorPresent))
+        land(\.presentAgents, present)
+        let running = Set(engine.processes.map(\.agent))
+        land(\.configDirMissing, Set(AgentID.priority.filter { agent in
+            Connection.configDirMissing(
+                agent: agent,
+                present: present.contains(agent) || running.contains(agent),
+                exists: HooksInstaller.homeFolderExists
+            )
+        }))
     }
 
     // MARK: - Settings
@@ -275,7 +300,8 @@ final class StatusStore {
     func trayRowModel(_ row: AgentRow, at date: Date = Date()) -> TrayRowModel {
         TrayRowModel.make(TrayRowModel.Input(
             row: row, facts: facts(for: row.key), lang: lang,
-            nowMs: Self.ms(date), notice: rowActionNotices[row.key]
+            nowMs: Self.ms(date), notice: rowActionNotices[row.key],
+            connected: connected(row.agent)
         ))
     }
 
@@ -283,8 +309,19 @@ final class StatusStore {
     func detailModel(_ row: AgentRow, at date: Date = Date()) -> DetailModel {
         DetailModel.make(
             row: row, facts: facts(for: row.key), lang: lang,
-            nowMs: Self.ms(date), notice: rowActionNotices[row.key]
+            nowMs: Self.ms(date), notice: rowActionNotices[row.key],
+            connected: connected(row.agent)
         )
+    }
+
+    /// Pulse's hook is in the agent's config (the last probe; a status not
+    /// read yet counts as connected, so nothing is claimed missing).
+    private func connected(_ agent: AgentID) -> Bool {
+        if let install = hookInstalls[agent] { return install.carriesHook }
+        switch hooksStatus {
+        case .unknown, .working: return true
+        case .missing, .installed, .failed: return hooksStatus.isInstalled(for: agent)
+        }
     }
 
     private static func ms(_ date: Date) -> Int64 { Int64(date.timeIntervalSince1970 * 1000) }

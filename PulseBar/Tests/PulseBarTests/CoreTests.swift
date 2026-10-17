@@ -321,6 +321,37 @@ final class AgentProcessesTests: XCTestCase {
         XCTAssertEqual(AgentProcesses.commandLine(path: "", argv: ["pi", "--model", "x"]), "pi --model x")
     }
 
+    /// Pi sets `process.title` (`pi`, or `pi-rpc` for RPC mode), which on
+    /// macOS overwrites its argv: the kernel reports `node` with argv
+    /// `["pi", "", …]`. The renamed argv[0] is then the program — the
+    /// scan, the hook's walk and the reused-pid check all see Pi.
+    func testARetitledPiUnderNodeIsPi() {
+        let node = "/opt/homebrew/bin/node"
+        let title = AgentProcesses.commandLine(path: node, argv: ["pi", "", ""])
+        XCTAssertEqual(title, "/opt/homebrew/bin/node pi")
+        XCTAssertEqual(AgentProcesses.match(args: title), .pi)
+        let rpc = AgentProcesses.commandLine(path: node, argv: ["pi-rpc", ""])
+        XCTAssertEqual(rpc, "/opt/homebrew/bin/node pi-rpc")
+        XCTAssertEqual(AgentProcesses.match(args: rpc), .pi)
+        XCTAssertEqual(AgentProcesses.match(args: AgentProcesses.commandLine(path: "/Users/me/.bun/bin/bun", argv: ["pi"])), .pi)
+        // The renaming rule applies only to an interpreter whose arguments
+        // are gone: a bare REPL, a real script, another program.
+        XCTAssertEqual(AgentProcesses.commandLine(path: node, argv: ["node"]), node)
+        XCTAssertNil(AgentProcesses.match(args: AgentProcesses.commandLine(path: node, argv: ["node", "", ""])))
+        XCTAssertEqual(AgentProcesses.commandLine(path: node, argv: ["pi", "/x/cli.js"]), "/opt/homebrew/bin/node /x/cli.js")
+        XCTAssertEqual(AgentProcesses.commandLine(path: "/usr/bin/vim", argv: ["pi", ""]), "/usr/bin/vim")
+        XCTAssertNil(AgentProcesses.match(args: AgentProcesses.commandLine(path: node, argv: ["pip", ""])), "the deny list still reads it")
+        let identity = AgentProcesses.Identity(args: title, startedMs: 0)
+        XCTAssertTrue(AgentProcesses.stillRuns(agent: .pi, since: 0, identity: identity))
+        let parents: [Int32: Int32] = [500: 400, 400: 1]
+        let argv: [Int32: String] = [500: "/bin/sh -c x", 400: title]
+        XCTAssertEqual(
+            HookLanding.agentPID(agent: .pi, start: 500, parentOf: { parents[$0] }, argumentsOf: { argv[$0] }),
+            400,
+            "the hook's walk finds the retitled Pi"
+        )
+    }
+
     /// Pi's deny list reads the program, never its arguments:
     /// `pi ./pipeline.ts` is Pi. Other agents' argument-level denials stay.
     func testPisDenyListReadsOnlyTheProgram() {

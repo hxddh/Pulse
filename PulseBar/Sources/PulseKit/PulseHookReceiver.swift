@@ -7,7 +7,7 @@ import Foundation
 /// for the two modules, as the last argument). Each agent's adapter
 /// (`Agents/`) maps its own event names and payload onto a `HookAction`;
 /// nothing else is read — not the protocol's kind words, not plain text.
-/// Every event it hears is one v7 line in the event log (`EventLog` — the
+/// Every event it hears is one v8 line in the event log (`EventLog` — the
 /// only file it writes), and it exits 0 at once. An event it does not turn
 /// into state — one Pulse does not install, a payload that is not a JSON
 /// object, a blocked event from an agent whose hooks cannot report one
@@ -29,6 +29,17 @@ package enum PulseHookReceiver {
         case noSession = "no session"
         /// A known event that says nothing Pulse shows.
         case silent = "says nothing Pulse shows"
+        /// A prompt the vendor shows that does not block the agent (Pi's
+        /// `custom` view): not a wait.
+        case notABlock = "a prompt that does not block"
+        /// A request nobody can be shown — the run has no prompt (Claude's
+        /// `-p` without a permission host, its `dontAsk` mode): the vendor
+        /// denies it itself. Not a wait.
+        case noPrompt = "no prompt can be shown"
+        /// A notice that may be about another session than the one whose
+        /// hook heard it (Claude's `agent_needs_input`, raised in the agent
+        /// view's terminal for a background session): not this one's wait.
+        case otherSession = "may be about another session"
     }
 
     /// Always returns 0 — vendor hooks must never be broken by Pulse.
@@ -38,7 +49,9 @@ package enum PulseHookReceiver {
     /// the agent's pid and the landing handles; tests pass a fixed answer,
     /// and `front` whether the prompt's window is frontmost — an AppKit
     /// question, so the app passes it (`PromptVisibility.promptIsFrontmost`);
-    /// unknown otherwise.
+    /// unknown otherwise. `parent` is the hook's own parent pid
+    /// (`getppid()`): a pid the adapter's module claims is taken only when
+    /// it is this one (`claimedPID`).
     @discardableResult
     package static func run(
         arguments: [String],
@@ -47,7 +60,9 @@ package enum PulseHookReceiver {
         logURL: URL? = nil,
         nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
         locate: (AgentID, [String: String]) -> (pid: Int32, landing: String) = HookLanding.current,
-        front: () -> Bool? = { nil }
+        front: () -> Bool? = { nil },
+        parent: Int32 = getppid(),
+        argumentsOf: (AgentID, Int32) -> [String]? = HookLanding.agentArguments
     ) -> Int32 {
         let args = Array(arguments.drop(while: { $0 != "--hook" }).dropFirst())
         let agentRaw = (args.first ?? "claude").lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
@@ -59,32 +74,63 @@ package enum PulseHookReceiver {
         }
         let event = args.count > 1 && !args[1].hasPrefix("{") ? args[1] : ""
         var written: AttentionRecord
+        var claimed: Int32 = 0
         if var payload = parsePayload(stdin: stdin, trailingArg: args.count > 1 ? args.last : nil) {
             if let msg = payload["msg"] as? [String: Any], payload["type"] == nil {
                 payload.merge(msg) { current, _ in current }
             }
             written = record(agent: agent, event: event, payload: payload, nowMs: nowMs)
+            claimed = claimedPID(agent: agent, payload: payload, parent: parent)
         } else {
             // Its raw text would become a ghost wait whose ask is broken
             // JSON: it is heard, and said to be unreadable — nothing else.
             written = ignored(.unparsable, agent: agent, event: event, context: HookContext(payload: [:]), nowMs: nowMs)
         }
+        let located = locate(agent, environment)
+        let pid = claimed > 1 ? claimed : located.pid
+        // A block raised in a run nobody sits at (`AgentProcessRule
+        // .cannotPrompt`, read from the agent process's own argv): the
+        // vendor denies it itself, and no lamp turns red for it.
+        if written.kind.isBlocking, pid > 1, !agent.spec.process.promptlessFlags.isEmpty,
+           let argv = argumentsOf(agent, pid), agent.spec.process.cannotPrompt(argv: argv) {
+            written = AttentionRecord(
+                agent: agent, kind: .ignored, ms: nowMs, message: Ignored.noPrompt.rawValue,
+                session: written.session, cwd: written.cwd, event: written.event
+            )
+        }
         // Was the prompt's own window in front as this was raised? A turn
         // the user watched finish is not owed to them, and a blocked prompt
         // already on screen needs no banner.
         if written.kind.isOpen { written.front = front() }
-        let located = locate(agent, environment)
-        written.pid = located.pid > 1 ? located.pid : 0
+        written.pid = pid > 1 ? pid : 0
         written.landing = cleanField(located.landing, limit: 240)
         EventLog.append(written, at: logURL, nowMs: nowMs)
         return 0
     }
 
-    /// The v7 line one vendor event becomes, before the hook's own facts
+    /// The pid an adapter's own module says the agent runs as (Pi's
+    /// extension sends `process.pid`) — taken only for an adapter whose
+    /// module spawns the hook directly (`AgentSpec.reportsOwnPID`), and only
+    /// when it is the hook's own parent: a payload cannot name another
+    /// process. 0 otherwise. Pure.
+    package static func claimedPID(agent: AgentID, payload: [String: Any], parent: Int32) -> Int32 {
+        guard agent.spec.reportsOwnPID, parent > 1 else { return 0 }
+        let claimed: Int32
+        if let number = payload["pid"] as? Int, let value = Int32(exactly: number) {
+            claimed = value
+        } else if let text = payload["pid"] as? String, let value = Int32(text) {
+            claimed = value
+        } else {
+            return 0
+        }
+        return claimed == parent ? claimed : 0
+    }
+
+    /// The v8 line one vendor event becomes, before the hook's own facts
     /// (front, pid, landing) and its `seq` are added — a state, or an
     /// `ignored` line saying why not. Pure.
     package static func record(agent: AgentID, event rawEvent: String, payload: [String: Any], nowMs: Int64) -> AttentionRecord {
-        let context = HookContext(payload: payload)
+        let context = HookContext(payload: payload, sessionKeys: agent.spec.sessionKeys)
         let event = rawEvent.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let reading = interpret(agent: agent, event: event, payload: payload) else {
             return ignored(event.isEmpty ? .noEvent : .notInstalled, agent: agent, event: event, context: context, nowMs: nowMs)
@@ -94,13 +140,27 @@ package enum PulseHookReceiver {
         if case .blocked = reading.action, agent.waitingSource == .none {
             return ignored(.cannotWait, agent: agent, event: event, context: context, nowMs: nowMs)
         }
-        let tool = cleanField(string(payload, keys: ["tool_name", "toolName"]), limit: 64)
+        // The adapter's own name for the tool (Cursor's shell, an MCP
+        // server's tool), else the payload's.
+        let tool = toolLabel(reading.tool ?? string(payload, keys: ["tool_name", "toolName"]))
         let kind: AttentionKind
         var message = ""
         var toolColumn = ""
+        var failed = false
+        var tookMs: Int64 = 0
+        /// The tool's target, as a step says it: the adapter's own reading
+        /// when it has one, else `Tool: target` without the tool.
+        func target() -> String {
+            if let target = reading.target { return target }
+            let descriptor = toolDescriptor(from: payload)
+            guard !tool.isEmpty, descriptor.hasPrefix(tool + ": ") else { return "" }
+            return String(descriptor.dropFirst(tool.count + 2))
+        }
         switch reading.action {
         case .ignore:
             return ignored(.silent, agent: agent, event: event, context: context, nowMs: nowMs)
+        case .skip(let reason):
+            return ignored(reason, agent: agent, event: event, context: context, nowMs: nowMs)
         case .activity:
             // A tool with no session cannot be matched to anything, and
             // would make a row of its own.
@@ -109,15 +169,35 @@ package enum PulseHookReceiver {
             }
             kind = .tool
             toolColumn = tool
-            let descriptor = toolDescriptor(from: payload)
-            if !tool.isEmpty, descriptor.hasPrefix(tool + ": ") {
-                message = String(descriptor.dropFirst(tool.count + 2))
-            }
+            // A reply that names no tool (Cursor's `afterAgentResponse`):
+            // its words are the turn's last words so far.
+            message = tool.isEmpty && !reading.words.isEmpty ? condenseOneLine(reading.words, limit: 200) : target()
+            failed = reading.failed
+            tookMs = max(0, reading.tookMs)
         case .status:
             guard !context.session.isEmpty else {
                 return ignored(.noSession, agent: agent, event: event, context: context, nowMs: nowMs)
             }
             kind = .status
+            if reading.note.isEmpty {
+                // A tool that has started (Pi's `tool_execution_start`):
+                // what runs now. Never a step and never an answer.
+                toolColumn = tool
+                message = target()
+            } else {
+                // The adapter's own words (a compaction, an auto-mode
+                // denial): no tool runs.
+                message = reading.note
+            }
+        case .title:
+            guard !context.session.isEmpty else {
+                return ignored(.noSession, agent: agent, event: event, context: context, nowMs: nowMs)
+            }
+            kind = .title
+            // The vendor's name for the session; empty: the name was cleared.
+            message = condenseOneLine(reading.name ?? string(payload, keys: ["session_name"]), limit: 200)
+        case .stopped:
+            kind = .stopped
         case .prompt:
             // Session-scoped only: an agent-wide clear from one terminal
             // must not clear another's.
@@ -129,6 +209,10 @@ package enum PulseHookReceiver {
             message = TitleHeuristics.promptTitle(string(payload, keys: ["prompt"]), limit: 200)
         case .start:
             kind = .start
+            // A session the vendor has already named (a resume), or the
+            // prompt a one-shot run was started with (Copilot's
+            // `initialPrompt`).
+            message = condenseOneLine(reading.name ?? string(payload, keys: ["session_name"]), limit: 200)
         case .blocked(let blocked):
             kind = blocked.isBlocking ? blocked : .waiting
             message = reading.ask.isEmpty ? genericMessage(from: payload, blocked: true) : reading.ask
@@ -154,7 +238,10 @@ package enum PulseHookReceiver {
             session: cleanField(context.session, limit: 80),
             cwd: cleanField(context.cwd, limit: 240),
             tool: toolColumn,
-            event: cleanField(event, limit: 64)
+            event: cleanField(event, limit: 64),
+            sub: cleanField(reading.sub, limit: 80),
+            failed: failed,
+            tookMs: tookMs
         )
     }
 
@@ -297,7 +384,7 @@ package enum PulseHookReceiver {
     /// object it encodes. Everything here still passes through `cleanField`,
     /// which redacts credentials and bounds the field.
     package static func toolDescriptor(from payload: [String: Any]) -> String {
-        let tool = string(payload, keys: ["tool_name", "toolName"])
+        let tool = toolLabel(string(payload, keys: ["tool_name", "toolName"]))
         guard !tool.isEmpty else { return "" }
         guard let input = toolInput(payload) else { return tool }
         for key in ["command", "file_path", "url", "path", "notebook_path", "pattern", "query"] {
@@ -307,6 +394,24 @@ package enum PulseHookReceiver {
             return "\(tool): \(target)"
         }
         return tool
+    }
+
+    /// The tool column's name for a vendor's tool, at most 64 characters:
+    /// an MCP tool (`mcp__<server>__<tool>`, Claude's and Codex's spelling)
+    /// is "server · tool", the server shortened first so the tool's own
+    /// name survives the bound; any other name as it is, bounded. Pure.
+    package static func toolLabel(_ raw: String) -> String {
+        let limit = 64
+        let parts = raw.components(separatedBy: "__")
+        guard parts.count >= 3, parts[0] == "mcp" else { return cleanField(raw, limit: limit) }
+        let server = cleanField(parts[1], limit: limit)
+        let name = cleanField(parts.dropFirst(2).joined(separator: "__"), limit: limit)
+        guard !server.isEmpty, !name.isEmpty else { return cleanField(raw, limit: limit) }
+        let joiner = " · "
+        let room = limit - joiner.count - name.count
+        guard room >= 2 else { return name }
+        let shown = server.count > room ? String(server.prefix(room - 1)) + "…" : server
+        return shown + joiner + name
     }
 
     /// A tool call's arguments: `tool_input` / `toolArgs` as an object, or
@@ -342,7 +447,7 @@ package enum PulseHookReceiver {
         return ""
     }
 
-    /// One field of a v7 line: credentials redacted, every tab and line
+    /// One field of a v8 line: credentials redacted, every tab and line
     /// break — `\n`, `\r`, VT, FF, NEL, U+2028, U+2029 — a space
     /// (`AttentionProtocol.flatten`), bounded.
     package static func cleanField(_ value: String, limit: Int) -> String {
@@ -360,11 +465,15 @@ package struct HookContext: Equatable {
     /// to name a session that has no id; never written, never read.
     package var transcript: String
 
-    package init(payload: [String: Any]) {
-        session = String(PulseHookReceiver.string(payload, keys: [
-            "session_id", "sessionId", "sessionID", "thread_id", "threadId",
-            "conversation_id", "conversationId",
-        ]).prefix(80))
+    /// The keys that name a session, in the order they are trusted —
+    /// unless an adapter orders them its own way (`AgentSpec.sessionKeys`).
+    package static let sessionKeys = [
+        "session_id", "sessionId", "sessionID", "thread_id", "threadId",
+        "conversation_id", "conversationId",
+    ]
+
+    package init(payload: [String: Any], sessionKeys: [String] = HookContext.sessionKeys) {
+        session = String(PulseHookReceiver.string(payload, keys: sessionKeys).prefix(80))
         transcript = PulseHookReceiver.string(payload, keys: [
             "transcript_path", "transcriptPath", "session_file", "sessionFile", "rollout_path",
         ])

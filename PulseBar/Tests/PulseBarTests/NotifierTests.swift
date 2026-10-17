@@ -402,7 +402,7 @@ final class NotificationCopyTests: XCTestCase {
         let banner = WaitingBanner.make(row, lang: .en)
         XCTAssertEqual(banner.title, "Claude · app")
         XCTAssertEqual(banner.subtitle, "Fix the flaky login test")
-        XCTAssertEqual(banner.body, "Permission · Bash: npm run build")
+        XCTAssertEqual(banner.body, "Asked permission · Bash: npm run build", "the words the row and the timeline use")
         XCTAssertEqual(banner.threadID, "pulse.waiting.claude|s1")
         var other = row
         other.key = "claude|s2"
