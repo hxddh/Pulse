@@ -374,6 +374,32 @@ struct ConnectionTests {
             #expect(HooksInstaller.installedEvents(agent, text: fewer)?.count == names.count - 1, "\(agent.rawValue)")
         }
     }
+
+    /// Pi on this Mac without `~/.pi/agent` may read another folder
+    /// (`PI_CODING_AGENT_DIR`), which a GUI app cannot see: Settings says
+    /// where Pulse installs, and Pi gets its line even with no vendor
+    /// folder. Only an agent whose folder can move says it.
+    @Test func aMissingMovableConfigFolderIsSaid() throws {
+        let now: Int64 = 1_800_000_000_000
+        #expect(Connection.configDirMissing(agent: .pi, present: true, exists: { _ in false }))
+        #expect(!Connection.configDirMissing(agent: .pi, present: true, exists: { $0 == ".pi/agent" }))
+        #expect(!Connection.configDirMissing(agent: .pi, present: false, exists: { _ in false }), "not on this Mac: nothing to say")
+        #expect(!Connection.configDirMissing(agent: .claude, present: true, exists: { _ in false }), "Claude's folder does not move")
+        let pi = Connection.make(agent: .pi, probed: .notInstalled, failure: nil, heard: nil, ignored: nil, configDirMissing: true)
+        #expect(pi.configDirMissing)
+        let claude = Connection.make(agent: .claude, probed: .notInstalled, failure: nil, heard: nil, ignored: nil, configDirMissing: true)
+        #expect(!claude.configDirMissing, "an agent without a movable folder never carries it")
+        let line = SettingsModel.HookAgent(pi, nowMs: now, lang: .en)
+        #expect(line.detail.contains("Pulse installs to ~/.pi/agent, which isn't there yet — a Pi set to another folder (PI_CODING_AGENT_DIR) won't load it"))
+        let zh = SettingsModel.HookAgent(pi, nowMs: now, lang: .zh)
+        #expect(zh.detail.contains("PI_CODING_AGENT_DIR"))
+        let lines = SettingsModel.hookAgents(connections: [pi], present: [], nowMs: now, lang: .en)
+        let agents = lines.map(\.agent)
+        #expect(agents == [.pi], "said even with no ~/.pi")
+        #expect(SettingsModel.absentAgents(connections: [pi], present: []).contains(.pi) == false)
+        #expect(pi.reportLine(present: true, nowMs: now).contains("installs to ~/.pi/agent, not there"))
+        #expect(Connection(agent: .pi, install: .complete).configDirText(lang: .en) == nil)
+    }
 }
 
 /// The hooks section is where an agent's missing hook is fixed, one deep

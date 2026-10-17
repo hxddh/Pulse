@@ -60,13 +60,15 @@ format's flavor — never by the agent.
 
 ## Provenance and connections
 
-Every line keeps its vendor event (the v7 `event` column) through the
+Every line keeps its vendor event (the v8 `event` column) through the
 reducer: a session holds the event that put it in its current state (a
 re-raise inside the grace keeps the first raise's, a held turn lands with
 its own, a process exit has none) and its last `SessionBook.maxTimeline`
 heard lines, each with the `SessionBook.Effect` the reducer decided as it
 applied it — raised, said again, answered, your turn, held, dismissed,
-seen, a step, an `ignored` line's reason. Nothing is guessed from an event's
+seen, stopped, named, a step (or a failed one), a subagent's own lifecycle,
+an `ignored` line's reason — and which subagent said it (`Heard.sub`, the
+v8 `sub` column; the detail page marks it "Subagent · …"). Nothing is guessed from an event's
 name, and the ring is rebuilt by the launch replay like every other fact.
 The why cites the event (`TrayRowModel.cause`; `EventName.display` refuses a
 column that is not a name); the detail page draws the ring; the report
@@ -89,12 +91,16 @@ parent, TTY and start time (`PROC_PIDTBSDINFO`), path and argv
 (`proc_pidpath`, `KERN_PROCARGS2`, one `KERN_ARGMAX` buffer per pass) and the
 working directory (`PROC_PIDVNODEPATHINFO`), and matches each against the
 catalog's process rules: the program itself (an interpreter adds its
-script), on path-segment boundaries, deny lists first (`pi` is not `pip`,
+script; an interpreter whose arguments are all empty adds its argv[0] —
+Node's `process.title = "pi"` overwrites argv in place on macOS, leaving
+`node` with `["pi", "", …]`), on path-segment boundaries, deny lists first (`pi` is not `pip`,
 `pinentry-mac` is not Pi, Cursor's worker daemon is not a session). A
 wrapper and its child are one family. It never runs `ps` or `lsof`. A
 `DispatchSource` exit source per session pid (`ProcessExitWatch`) ends a
 session the moment its process exits; `AgentProcesses.stillRuns` catches a
-reused pid.
+reused pid. The hook finds its agent's pid by walking its own parent chain
+with the same rules — or, for a module that spawns it directly and says
+its pid (Pi), takes that pid when it is the hook's own parent.
 
 ## Views
 
@@ -118,7 +124,7 @@ every surface is a value with a fixture in
 
 ## Landing — how ↩, a click or a banner reaches the prompt
 
-The hook records where its session lives (the v7 `landing` column, most
+The hook records where its session lives (the v8 `landing` column, most
 specific first): `tmux:%3;tmuxsock:<socket>;iterm:w0t1p0:<uuid>;tty:/dev/ttys004;term:<TERM_PROGRAM>;app:<__CFBundleIdentifier>`.
 `LandingPlan.make(handle:cwd:pid:hostApp:)` (pure, once per projection)
 turns it into ordered steps; `TerminalFocus.land` (on the click) runs them

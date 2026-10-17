@@ -85,23 +85,44 @@ package enum HookAction: Equatable, Sendable {
     /// The agent has sat at its prompt a while (Claude's `idle_prompt`):
     /// your turn only if the turn's end was not seen (`AttentionKind.idle`).
     case idle
+    /// The person stopped the run at the agent's own prompt (Pi's aborted
+    /// `agent_settled`): the turn is over and nothing is owed — a `stopped`
+    /// line, never "your turn" with the partial words.
+    case stopped
+    /// The vendor's own name for the session (Pi's session name): a
+    /// `title` line — the row's title, no state.
+    case title
     /// The block was answered in the vendor's own prompt.
     case resolved
     /// The session ended.
     case end
     /// A known event that says nothing Pulse shows.
     case ignore
+    /// A known event that is heard and not turned into state, for a reason
+    /// of its own (Pi's `custom` prompt is a view, not a block).
+    case skip(PulseHookReceiver.Ignored)
 }
 
 /// One event read by an agent's adapter: the action and, for a block, what
-/// is being asked.
+/// is being asked; for a tool, whether it failed and how long it took; and
+/// which subagent spoke (`AgentSpec.subagentKeys`, filled by
+/// `AgentSpec.reading` for every event).
 package struct HookReading: Equatable, Sendable {
     package var action: HookAction
     package var ask: String
+    /// The vendor's subagent id; "" for the main agent.
+    package var sub: String
+    /// The tool the event reports failed.
+    package var failed: Bool
+    /// How long the tool ran, in ms; 0 unknown.
+    package var tookMs: Int64
 
-    package init(action: HookAction, ask: String = "") {
+    package init(action: HookAction, ask: String = "", sub: String = "", failed: Bool = false, tookMs: Int64 = 0) {
         self.action = action
         self.ask = ask
+        self.sub = sub
+        self.failed = failed
+        self.tookMs = tookMs
     }
 }
 
@@ -186,12 +207,32 @@ package struct HookContract: Sendable {
     /// Events Pulse listens to, in the vendor's spelling, each with what it
     /// means.
     package let events: [HookEvent]
+    /// Where the vendor reads `path` from when nothing moved it, and the
+    /// environment variable that can move it (Pi's `PI_CODING_AGENT_DIR`).
+    /// Pulse honours no environment — a GUI app cannot read the shell's —
+    /// so when this folder is missing on a Mac where the agent is present,
+    /// Settings says where Pulse installs (`Connection.configDirMissing`).
+    package let relocation: Relocation?
 
-    package init(format: HookFormat, path: String, home: String, events: [HookEvent]) {
+    /// A config folder the vendor lets an environment variable move.
+    package struct Relocation: Sendable, Equatable {
+        /// Home-relative folder (`.pi/agent`).
+        package let dir: String
+        /// The variable that moves it.
+        package let variable: String
+
+        package init(dir: String, variable: String) {
+            self.dir = dir
+            self.variable = variable
+        }
+    }
+
+    package init(format: HookFormat, path: String, home: String, events: [HookEvent], relocation: Relocation? = nil) {
         self.format = format
         self.path = path
         self.home = home
         self.events = events
+        self.relocation = relocation
     }
 
     /// The installed event of this name; nil for one Pulse does not install
@@ -209,6 +250,7 @@ package struct HookContract: Sendable {
         "beforeShellExecution", "beforeMCPExecution", "beforeReadFile", "beforeSubmitPrompt",
         "permissionRequest", "tool.execute.before", "tool_call", "tool_result", "permission.ask",
         "before_agent_start", "input", "turn_end", "message_end", "user_bash",
+        "session_before_switch", "session_before_fork", "session_before_compact", "session_before_tree",
     ]
 
     /// Observe-only events that fire once per tool call, after it ran
@@ -285,6 +327,14 @@ package struct AgentSpec: Sendable {
     /// hooks as its own (xAI's Grok Build runs `~/.claude/settings.json`'s):
     /// such a call is not this agent speaking, and writes nothing.
     package let foreignCallers: [String]
+    /// Payload keys that name the subagent an event came from (Claude's
+    /// and Codex's `agent_id`, Copilot's `agentId`); absent or empty for
+    /// the main agent. The line's `sub` column.
+    package let subagentKeys: [String]
+    /// The adapter's own module sends the agent's pid (`pid`) and spawns
+    /// the hook directly: the receiver takes it only when it is the hook's
+    /// own parent (`PulseHookReceiver.claimedPID`).
+    package let reportsOwnPID: Bool
     /// The reading of an event whose meaning is in its payload; nil leaves
     /// the event's own action (`HookEvent.action`). Called only for an
     /// installed event.
@@ -298,6 +348,8 @@ package struct AgentSpec: Sendable {
         process: AgentProcessRule,
         hooks: HookContract,
         foreignCallers: [String] = [],
+        subagentKeys: [String] = [],
+        reportsOwnPID: Bool = false,
         read: @escaping @Sendable (_ event: String, _ payload: [String: Any]) -> HookReading? = { _, _ in nil }
     ) {
         self.id = id
@@ -307,14 +359,21 @@ package struct AgentSpec: Sendable {
         self.process = process
         self.hooks = hooks
         self.foreignCallers = foreignCallers
+        self.subagentKeys = subagentKeys
+        self.reportsOwnPID = reportsOwnPID
         self.read = read
     }
 
     /// What one installed event means, payload read; nil for an event Pulse
-    /// does not install — it writes nothing.
+    /// does not install — it writes nothing. The subagent that spoke is
+    /// read here for every event (`subagentKeys`).
     package func reading(_ event: String, payload: [String: Any]) -> HookReading? {
         guard let hook = hooks.event(named: event) else { return nil }
-        return self.read(event, payload) ?? HookReading(action: hook.action)
+        var reading = self.read(event, payload) ?? HookReading(action: hook.action)
+        if reading.sub.isEmpty, !subagentKeys.isEmpty {
+            reading.sub = PulseHookReceiver.string(payload, keys: subagentKeys)
+        }
+        return reading
     }
 }
 

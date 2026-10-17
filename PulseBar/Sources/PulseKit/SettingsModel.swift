@@ -135,7 +135,8 @@ package struct SettingsModel: Equatable {
             case .notInstalled: tone = .quiet
             }
             let heard = connection.heardText(nowMs: nowMs, lang: lang)
-            detail = [heard, connection.waitsText(lang: lang)].filter { !$0.isEmpty }.joined(separator: " · ")
+            detail = [heard, connection.waitsText(lang: lang), connection.configDirText(lang: lang) ?? ""]
+                .filter { !$0.isEmpty }.joined(separator: " · ")
             ignored = connection.ignoredText(nowMs: nowMs, lang: lang)
         }
     }
@@ -167,7 +168,7 @@ package struct SettingsModel: Equatable {
     }
 
     private static func hasLine(_ connection: Connection, present: Set<AgentID>) -> Bool {
-        if present.contains(connection.agent) || connection.install.carriesHook { return true }
+        if present.contains(connection.agent) || connection.install.carriesHook || connection.configDirMissing { return true }
         if case .failed = connection.install { return true }
         return false
     }
@@ -274,7 +275,8 @@ package struct SettingsModel: Equatable {
             text += liveProcess ? ", process watched" : ", no process"
             text += lastEventMs > 0 ? ", last event \(max(0, (nowMs - lastEventMs) / 1000))s ago" : ", no event"
             for heard in timeline {
-                text += "\n    \(max(0, (nowMs - heard.ms) / 1000))s ago · \(Connection.reportEvent(heard.event)) · \(Self.word(heard.effect))"
+                let by = heard.sub.isEmpty ? "" : "subagent "
+                text += "\n    \(max(0, (nowMs - heard.ms) / 1000))s ago · \(Connection.reportEvent(heard.event)) · \(by)\(Self.word(heard.effect))"
             }
             return text
         }
@@ -287,6 +289,7 @@ package struct SettingsModel: Equatable {
             case .started: return "started"
             case .prompt: return "prompt"
             case .step(let tool, _): return "step \(Connection.reportEvent(tool))"
+            case .failedStep(let tool, _): return "failed step \(Connection.reportEvent(tool))"
             case .working: return "working"
             case .status: return "status"
             case .raised(let kind): return "raised \(kind.rawValue)"
@@ -300,6 +303,9 @@ package struct SettingsModel: Equatable {
             case .resolved: return "resolved"
             case .dismissed: return "dismissed"
             case .seen: return "seen"
+            case .stopped: return "stopped"
+            case .named: return "named"
+            case .subagent: return "subagent lifecycle"
             case .ended: return "ended"
             case .skipped(let reason): return "ignored (\(Connection.reportReason(reason)))"
             }

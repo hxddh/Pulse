@@ -41,6 +41,10 @@ final class StatusStore {
     /// Agents whose vendor folder is on this Mac (`HooksInstaller.vendorPresent`)
     /// — read at launch and when the tray opens; never on the scan path.
     var presentAgents: Set<AgentID> = []
+    /// Agents on this Mac (a vendor folder, or a live process) whose movable
+    /// config folder Pulse installs into is missing
+    /// (`Connection.configDirMissing`) — read with `presentAgents`.
+    var configDirMissing: Set<AgentID> = []
     /// The agents the setup card just connected: the card shows what is
     /// left to do until "Got it". nil otherwise; not saved.
     var setupConnected: Set<AgentID>?
@@ -165,14 +169,26 @@ final class StatusStore {
                 probed: hookInstalls[agent] ?? (hooksStatus.isInstalled(for: agent) ? .complete : nil),
                 failure: failures[agent],
                 heard: engine.latestHeard[agent],
-                ignored: engine.latestIgnored[agent]
+                ignored: engine.latestIgnored[agent],
+                configDirMissing: configDirMissing.contains(agent)
             )
         }
     }
 
-    /// Which agents are on this Mac: six directory checks.
+    /// Which agents are on this Mac: six directory checks — and, for an
+    /// agent whose config folder can be moved, whether the default one
+    /// Pulse installs into is there.
     func refreshPresentAgents() {
-        land(\.presentAgents, Set(AgentID.priority.filter(HooksInstaller.vendorPresent)))
+        let present = Set(AgentID.priority.filter(HooksInstaller.vendorPresent))
+        land(\.presentAgents, present)
+        let running = Set(engine.processes.map(\.agent))
+        land(\.configDirMissing, Set(AgentID.priority.filter { agent in
+            Connection.configDirMissing(
+                agent: agent,
+                present: present.contains(agent) || running.contains(agent),
+                exists: HooksInstaller.homeFolderExists
+            )
+        }))
     }
 
     // MARK: - Settings

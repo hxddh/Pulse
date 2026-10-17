@@ -1,13 +1,13 @@
 import Darwin
 import Foundation
 
-/// The one event log: `events.tsv`, append-only, one numbered v7 line per
+/// The one event log: `events.tsv`, append-only, one numbered v8 line per
 /// hook event (`AttentionRecord`), in the order the hooks wrote them.
 ///
-/// - **Only a v7 log is read.** A file whose first line is not a v7 header
+/// - **Only a v8 log is read.** A file whose first line is not a v8 header
 ///   (`AttentionProtocol.Header`) is treated as absent: a read finds it
 ///   empty, and the next writer (`append`, `ensureExists` at launch) empties
-///   it and starts a fresh v7 log — a new `gen`, numbering from 1 — under the
+///   it and starts a fresh v8 log — a new `gen`, numbering from 1 — under the
 ///   same lock. It is never read and never migrated.
 /// - **Writers append** under an exclusive `flock` (`append`): the hook
 ///   receiver and the app's own `dismiss`. The appender numbers the line —
@@ -88,8 +88,8 @@ package enum EventLog {
 
     /// One read.
     package struct Chunk: Equatable, Sendable {
-        /// The file's header; nil when there is no v7 log (a missing or
-        /// empty file, or one that is not v7) — an empty log.
+        /// The file's header; nil when there is no v8 log (a missing or
+        /// empty file, or one that is not v8) — an empty log.
         package var header: AttentionProtocol.Header?
         /// The header line exactly as read.
         package var headerLine: String
@@ -136,7 +136,7 @@ package enum EventLog {
 
     /// Append one record, numbered under the lock (its `seq` is ignored and
     /// assigned). Creates the file with its header — and starts it over when
-    /// it is not a v7 log; compacts it first when the line would take it past
+    /// it is not a v8 log; compacts it first when the line would take it past
     /// `maxBytes`. Returns whether the line is in the file. `url` nil is the
     /// real log; a test passes its own file.
     @discardableResult
@@ -146,7 +146,7 @@ package enum EventLog {
             guard size >= 0 else { return false }
             let header = size > 0 ? currentHeader(fd, size: size) : nil
             if size > 0, header == nil {
-                DebugLog.write("events: not a v7 log — started over")
+                DebugLog.write("events: not a v8 log — started over")
                 guard ftruncate(fd, 0) == 0 else { return false }
                 size = 0
             }
@@ -182,7 +182,7 @@ package enum EventLog {
         } ?? false
     }
 
-    /// Create the file with its header if it is missing, empty or not a v7
+    /// Create the file with its header if it is missing, empty or not a v8
     /// log (then it is emptied first, unread) — what the watcher needs
     /// before it can open it.
     package static func ensureExists(at url: URL? = nil, nowMs: Int64) {
@@ -191,14 +191,14 @@ package enum EventLog {
             guard size >= 0 else { return false }
             if size > 0 {
                 if currentHeader(fd, size: size) != nil { return true }
-                DebugLog.write("events: not a v7 log — started over")
+                DebugLog.write("events: not a v8 log — started over")
                 guard ftruncate(fd, 0) == 0 else { return false }
             }
             return writeAll(fd, AttentionProtocol.Header(next: 1, gen: generation(nowMs: nowMs)).line)
         }
     }
 
-    /// The open file's v7 header, or nil.
+    /// The open file's v8 header, or nil.
     private static func currentHeader(_ fd: Int32, size: Int) -> AttentionProtocol.Header? {
         guard let head = readRange(fd, from: 0, count: min(size, 512)) else { return nil }
         return AttentionProtocol.Header(line: headerLine(head))
@@ -218,7 +218,7 @@ package enum EventLog {
 
     /// The records after `cursor`, or the whole file when the cursor is
     /// nil, names another header, or is past the end. A missing file, or one
-    /// that is not a v7 log, is an empty log (`Chunk.empty`). Nil when the
+    /// that is not a v8 log, is an empty log (`Chunk.empty`). Nil when the
     /// file could not be read — the caller keeps what it had.
     package static func read(at url: URL? = nil, after cursor: Cursor?) -> Chunk? {
         let target = url ?? path
@@ -268,7 +268,7 @@ package enum EventLog {
     /// and the byte after the last complete line. Lines end at `\n` bytes
     /// only — a U+2028 or a lone `\r` inside a field never splits a record.
     /// Lossy: one invalid byte never hides the file. Comments, blanks and
-    /// lines that are not v7 records are skipped.
+    /// lines that are not v8 records are skipped.
     package static func parse(_ data: Data, from start: Int, skipFirstLine: Bool = false) -> (records: [AttentionRecord], end: Int) {
         let bytes = [UInt8](data)
         guard let lastBreak = bytes.lastIndex(of: 0x0A) else { return ([], start) }
@@ -338,25 +338,40 @@ package enum EventLog {
         for (group, positions) in members {
             var open: Int?
             var openTool = ""
+            var openSub = ""
             for position in positions {
                 let record = records[position]
+                let sub = record.sub.trimmingCharacters(in: .whitespacesAndNewlines)
+                // A subagent's line answers only its own block (as
+                // `SessionBook` does): its tool, its `done`, its end; a
+                // main-agent line answers the main agent's and a subagent's
+                // alike.
+                let own = !sub.isEmpty && sub == openSub
                 switch record.kind {
                 case .permission, .question, .waiting:
                     if open == nil {
                         open = position
                         openTool = record.tool.isEmpty ? AttentionProtocol.blockedTool(record.message) : record.tool
+                        openSub = sub
                     }
-                case .working, .done, .dismiss, .end, .start:
+                case .working, .start:
+                    if sub.isEmpty { open = nil }
+                case .done, .end, .stopped:
+                    if sub.isEmpty || own { open = nil }
+                case .dismiss:
                     open = nil
                 case .tool:
-                    if openTool.isEmpty || record.tool.isEmpty
+                    if sub.isEmpty || own, openTool.isEmpty || record.tool.isEmpty
                         || record.tool.caseInsensitiveCompare(openTool) == .orderedSame {
                         open = nil
                     }
-                case .status, .turn, .failed, .idle, .ignored:
-                    // Work going on is never an answer; a turn inside a
-                    // block's grace is held, not an answer: keep the block
-                    // (keeping too much is only bytes).
+                case .turn, .failed, .idle:
+                    // A turn inside a block's grace is held, not an answer:
+                    // keep the block (keeping too much is only bytes). A
+                    // subagent's end of turn ends its own ask.
+                    if own { open = nil }
+                case .status, .title, .ignored:
+                    // Work going on is never an answer.
                     break
                 }
             }
@@ -365,10 +380,15 @@ package enum EventLog {
         let live = Set(members.keys.filter { nowMs - (newest[$0] ?? 0) <= retentionMs })
         // What a replay needs to rebuild a session's own facts, whatever the
         // budget: its first line that is not a block (its first clock), the
-        // prompt its title came from — the first `working` line whose text
-        // says something (`SessionBook`'s rule) — and its latest prompt (the
-        // current turn's clock). None of them raises anything: a block is
-        // kept only by the rules above, with what answers it.
+        // prompt its title came from — the first main-agent `working` line
+        // whose text says something (`SessionBook`'s rule) — its latest
+        // prompt (the current turn's clock) and the line its vendor name
+        // came from (the latest `title`, or `start` that carries a name).
+        // None of them raises anything: a block is kept only by the rules
+        // above, with what answers it.
+        func person(_ record: AttentionRecord) -> Bool {
+            record.sub.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
         var anchors: [SessionKey: Set<Int>] = [:]
         for (group, positions) in members {
             var kept = Set<Int>()
@@ -376,14 +396,21 @@ package enum EventLog {
                 kept.insert(first)
             }
             if let title = positions.first(where: { position in
-                guard records[position].kind == .working else { return false }
+                guard records[position].kind == .working, person(records[position]) else { return false }
                 let text = TitleHeuristics.promptTitle(records[position].message)
                 return !text.isEmpty && TitleHeuristics.isMeaningful(text)
             }) {
                 kept.insert(title)
             }
-            if let latest = positions.last(where: { records[$0].kind == .working }) {
+            if let latest = positions.last(where: { records[$0].kind == .working && person(records[$0]) }) {
                 kept.insert(latest)
+            }
+            if let named = positions.last(where: { position in
+                let record = records[position]
+                guard person(record) else { return false }
+                return record.kind == .title || (record.kind == .start && !record.message.isEmpty)
+            }) {
+                kept.insert(named)
             }
             anchors[group] = kept
         }
@@ -429,9 +456,9 @@ package enum EventLog {
         switch record.kind {
         case .start, .working:
             return true
-        case .turn, .failed, .idle, .tool, .status:
+        case .turn, .failed, .idle, .tool, .status, .stopped:
             return !record.session.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .permission, .question, .waiting, .done, .dismiss, .end, .ignored:
+        case .permission, .question, .waiting, .done, .dismiss, .end, .title, .ignored:
             return false
         }
     }

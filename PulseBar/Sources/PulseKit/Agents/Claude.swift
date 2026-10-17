@@ -44,6 +44,9 @@ extension AgentSpec {
         // Grok Build runs these hooks by default and marks its calls; Pulse
         // does not support Grok, and its events never land on a Claude row.
         foreignCallers: ["GROK_HOOK_EVENT", "GROK_SESSION_ID"],
+        // Inside a subagent (the Task tool) every event carries the
+        // subagent's `agent_id`; the main agent's carry none.
+        subagentKeys: ["agent_id"],
         read: { Claude.read($0, $1) }
     )
 }
@@ -52,6 +55,10 @@ extension AgentSpec {
 package enum Claude {
     package static func read(_ event: String, _ payload: [String: Any]) -> HookReading? {
         switch event {
+        case "PostToolUseFailure":
+            // The tool ran and failed: still the answer to a block raised
+            // for it, and a step marked failed.
+            return HookReading(action: .activity, failed: true)
         case "PermissionRequest":
             // AskUserQuestion comes through PermissionRequest; it is a
             // question — no allow/deny answers it.

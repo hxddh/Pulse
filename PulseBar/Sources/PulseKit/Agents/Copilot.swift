@@ -33,6 +33,8 @@ extension AgentSpec {
                 HookEvent("errorOccurred", .status),
             ]
         ),
+        // A subagent's events carry its `agentId`; the main agent's none.
+        subagentKeys: ["agentId"],
         read: { Copilot.read($0, $1) }
     )
 }
@@ -41,6 +43,9 @@ extension AgentSpec {
 package enum Copilot {
     package static func read(_ event: String, _ payload: [String: Any]) -> HookReading? {
         switch event {
+        case "postToolUseFailure":
+            // The tool ran and failed: a step marked failed.
+            return HookReading(action: .activity, failed: true)
         case "errorOccurred":
             // An unrecoverable error ends the turn; a recoverable one is work
             // going on — not a tool that ran, so never an answer.

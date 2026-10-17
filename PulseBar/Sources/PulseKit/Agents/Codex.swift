@@ -2,7 +2,8 @@ import Foundation
 
 extension AgentSpec {
     /// Codex `hooks.json` (openai/codex codex-rs/hooks). Pulse never touches
-    /// `config.toml`. No event's meaning is in its payload.
+    /// `config.toml`. No event's action is in its payload; only the
+    /// subagent that spoke (`agent_id`) is.
     package static let codex = AgentSpec(
         id: .codex,
         displayName: "Codex",
@@ -37,6 +38,8 @@ extension AgentSpec {
                 HookEvent("PostToolUse", .activity),
                 HookEvent("Stop", .turn),
             ]
-        )
+        ),
+        // A subagent's events carry its `agent_id`; the main agent's none.
+        subagentKeys: ["agent_id"]
     )
 }

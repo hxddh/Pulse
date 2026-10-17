@@ -38,6 +38,7 @@ struct ScanQuietTests {
             ("loginItem", \StatusStore.loginItem),
             ("notifyAuthorized", \StatusStore.notifyAuthorized),
             ("presentAgents", \StatusStore.presentAgents),
+            ("configDirMissing", \StatusStore.configDirMissing),
             ("rowActionNotices", \StatusStore.rowActionNotices),
             ("settings", \StatusStore.settings),
             ("settingsFocus", \StatusStore.settingsFocus),

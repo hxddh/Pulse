@@ -98,12 +98,25 @@ package struct Connection: Equatable, Sendable {
     package var install: Install
     package var lastHeard: Heard?
     package var lastIgnored: Ignored?
+    /// The agent is on this Mac, but the folder its contract can be moved
+    /// from (`HookContract.relocation`, Pi's `~/.pi/agent`) is not there:
+    /// it may read another folder (`PI_CODING_AGENT_DIR`), which Pulse —
+    /// a GUI app, blind to the shell's environment — never follows. Settings
+    /// says where Pulse installs.
+    package var configDirMissing: Bool
 
-    package init(agent: AgentID, install: Install, lastHeard: Heard? = nil, lastIgnored: Ignored? = nil) {
+    package init(
+        agent: AgentID,
+        install: Install,
+        lastHeard: Heard? = nil,
+        lastIgnored: Ignored? = nil,
+        configDirMissing: Bool = false
+    ) {
         self.agent = agent
         self.install = install
         self.lastHeard = lastHeard
         self.lastIgnored = lastIgnored
+        self.configDirMissing = configDirMissing
     }
 
     /// One agent's connection: what its config says (`probed`; nil when not
@@ -113,10 +126,31 @@ package struct Connection: Equatable, Sendable {
         probed: Install?,
         failure: HooksInstaller.Failure?,
         heard: Heard?,
-        ignored: Ignored?
+        ignored: Ignored?,
+        configDirMissing: Bool = false
     ) -> Connection {
         let install = failure.map(Install.failed) ?? probed ?? .notInstalled
-        return Connection(agent: agent, install: install, lastHeard: heard, lastIgnored: ignored)
+        return Connection(
+            agent: agent, install: install, lastHeard: heard, lastIgnored: ignored,
+            configDirMissing: configDirMissing && agent.spec.hooks.relocation != nil
+        )
+    }
+
+    /// Whether the agent's movable config folder is missing while the agent
+    /// is on this Mac (`present`: its vendor folder exists, or a process of
+    /// it runs). `exists` answers for a home-relative folder — the caller's
+    /// file check, so this stays pure.
+    package static func configDirMissing(agent: AgentID, present: Bool, exists: (String) -> Bool) -> Bool {
+        guard present, let relocation = agent.spec.hooks.relocation else { return false }
+        return !exists(relocation.dir)
+    }
+
+    /// "Pulse installs to ~/.pi/agent, which isn't there yet — a Pi set to
+    /// another folder (PI_CODING_AGENT_DIR) won't load it"; nil when the
+    /// folder is there or cannot move.
+    package func configDirText(lang: ResolvedLanguage) -> String? {
+        guard configDirMissing, let relocation = agent.spec.hooks.relocation else { return nil }
+        return String(format: L10n.t(.settingsHookConfigDir, lang), relocation.dir, agent.displayName, relocation.variable)
     }
 
     /// Whether the vendor's hook says when a session waits on the person.
@@ -180,6 +214,7 @@ package struct Connection: Equatable, Sendable {
         case .cannotWait?: return t(.ignoredCannotWait)
         case .noSession?: return t(.ignoredNoSession)
         case .silent?: return t(.ignoredSilent)
+        case .notABlock?: return t(.ignoredNotABlock)
         case nil: return t(.ignoredOther)
         }
     }
@@ -220,6 +255,9 @@ package struct Connection: Equatable, Sendable {
         }
         if install.carriesHook || present {
             parts.append(reportsWaits ? "reports waits" : "doesn't report waits")
+        }
+        if configDirMissing, let relocation = agent.spec.hooks.relocation {
+            parts.append("installs to ~/\(relocation.dir), not there (\(relocation.variable) is not followed)")
         }
         return "  \(agent.rawValue): " + parts.joined(separator: ", ")
     }

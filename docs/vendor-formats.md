@@ -20,7 +20,8 @@ payload. The tables below are those files in prose.
 
 - **Observe-only events.** Never PreToolUse, beforeShellExecution,
   `tool.execute.before`, Pi's `tool_call` / `tool_result` / `input` /
-  `before_agent_start` / `turn_end` / `message_end`, permissionRequest or
+  `before_agent_start` / `turn_end` / `message_end` / `user_bash` /
+  `session_before_*`, permissionRequest or
   any other hook that can gate or change a decision
   (`HookContract.gatingEvents`), and never an answer: `pulse-hook` prints
   nothing and exits 0 at once. Claude's and Codex's entries are `async`.
@@ -37,14 +38,21 @@ payload. The tables below are those files in prose.
   CRLF line ends and a UTF-8 BOM are kept. A module file of the same name
   that Pulse did not write is never overwritten.
 - **Only agents on this Mac.** An agent whose vendor folder (`~/.claude`,
-  `~/.codex`, …) does not exist gets no install. One agent's broken config
+  `~/.codex`, …) does not exist gets no install. No environment variable is
+  followed (a GUI app cannot see the shell's): Pi loads extensions from
+  `getAgentDir()`, which `PI_CODING_AGENT_DIR` can move; Pulse installs to
+  `~/.pi/agent` regardless, and when that folder is missing on a Mac where
+  Pi is present (`~/.pi`, or a running Pi process) Settings → Hooks says
+  where Pulse installs (`HookContract.relocation`,
+  `Connection.configDirMissing`). A Pi pointed elsewhere does not load it. One agent's broken config
   fails only that agent. An agent whose install failed is not offered again
   by the setup card; the card says why.
 - **One writer.** The installer writes the native `pulse-hook` launcher into
   every contract; nothing else writes the event log but it and the app's own
   dismissal. The hook records the agent's pid (the first ancestor matching
-  the catalog's process rule — never the direct `sh -c` parent, never 1) and
-  the landing handles, from `sysctl` and the environment only: it never
+  the catalog's process rule — never the direct `sh -c` parent, never 1; or,
+  for Pi, whose extension spawns the hook itself, the `pid` it sends, only
+  when it is the hook's own parent) and the landing handles, from `sysctl` and the environment only: it never
   forks and never runs `ps`. `pulse-hook` refuses an agent outside the roster
   (and Grok calling Claude's hooks).
 
@@ -64,7 +72,7 @@ rendered by its adapter).
 | Copilot CLI | `~/.copilot/hooks/pulse.json` (Pulse's own file) | `ownedJSON` | yes — `notification` `permission_prompt` / `elicitation_dialog` |
 | OpenCode | `~/.config/opencode/plugins/pulse.js` (Pulse's own file) | `module`: a plugin, `event` only | yes — `permission.asked` / `question.asked` |
 | Cursor | `~/.cursor/hooks.json` | `versioned` | **no** — it has no observe-only wait event |
-| Pi | `~/.pi/agent/extensions/pulse.js` (Pulse's own file) | `module`: an extension | yes — `ui_prompt_start` / `ui_prompt_end` |
+| Pi | `~/.pi/agent/extensions/pulse.js` (Pulse's own file; `PI_CODING_AGENT_DIR` is not followed) | `module`: an extension | yes — `ui_prompt_start` / `ui_prompt_end` (not its `/login` wait or its missing-cwd confirm) |
 
 ## What each event becomes
 
@@ -82,11 +90,20 @@ nothing Pulse shows ("ignored" below), activity or a prompt that names no
 session, and a blocked event from Codex or Cursor. The `ignored` line's
 message says which (`PulseHookReceiver.Ignored`); the reducer skips it.
 
+**Subagents.** Inside a subagent Claude's and Codex's events carry
+`agent_id`, Copilot's `agentId` (`AgentSpec.subagentKeys`): the line's `sub`
+column. A subagent's line never answers the main agent's block (or another
+subagent's), never revives an ended turn, and its prompt is not the person's
+(`attention-protocol.md`, reader rules). OpenCode's plugin folds a child
+session's asks into the root session and drops its lifecycle; Pi's
+subagents are separate `pi --mode json` processes, which the extension
+silences.
+
 | Agent | Vendor event | Pulse |
 | --- | --- | --- |
 | **Claude** (`~/.claude/settings.json`, every entry `async: true`) | `SessionStart` | `start` |
 | | `UserPromptSubmit` | `working` (message = `prompt`) |
-| | `PostToolUse`, `PostToolUseFailure` | `tool` (tool = `tool_name`, message = its target) |
+| | `PostToolUse`, `PostToolUseFailure` | `tool` (tool = `tool_name`, message = its target; `PostToolUseFailure`: `err` = 1) |
 | | `PermissionRequest` (*payload*) | `permission` — ask = `tool_name: command/file_path/url`, tool = `tool_name`; `AskUserQuestion` → `question`, ask = `tool_input.questions[0].question`; `ExitPlanMode` → ask = the plan's first line |
 | | `Notification` `permission_prompt` (*payload*, as every `Notification` row) | `permission` |
 | | `Notification` `elicitation_dialog` / `elicitation_url_dialog` / `agent_needs_input` | `question` |
@@ -100,7 +117,7 @@ message says which (`PulseHookReceiver.Ignored`); the reducer skips it.
 | | `PermissionRequest` | never installed, not read (fires before Codex's own auto-review) |
 | **Copilot CLI** (`~/.copilot/hooks/pulse.json`) | `sessionStart` / `sessionEnd` | `start` / `end` |
 | | `userPromptSubmitted` | `working` (message = `prompt`) |
-| | `postToolUse` / `postToolUseFailure` | `tool` (the tool ran: answers a `permission_prompt`; tool = `toolName`, message = the command or path in `toolArgs`, a JSON string) |
+| | `postToolUse` / `postToolUseFailure` | `tool` (the tool ran: answers a `permission_prompt`; tool = `toolName`, message = the command or path in `toolArgs`, a JSON string; `postToolUseFailure`: `err` = 1) |
 | | `agentStop` | `turn` |
 | | `notification` `permission_prompt` / `elicitation_dialog` (*payload*) | `permission` / `question` |
 | | `notification` `agent_idle` / `agent_completed` / `shell_completed` | ignored (background subagents and shells, not the session's turn) |
@@ -116,14 +133,29 @@ message says which (`PulseHookReceiver.Ignored`); the reducer skips it.
 | **Cursor** (`~/.cursor/hooks.json`) — never blocked | `sessionStart` / `sessionEnd` | `start` / `end` |
 | | `afterAgentResponse` | `tool` (no tool name) |
 | | `stop` | `turn` (session = `conversation_id`, cwd = `workspace_roots[0]`) |
-| **Pi** (extension `~/.pi/agent/extensions/pulse.js`; payload as the last argument) | `session_start` / `session_shutdown` (neither sent on `reason: "reload"`) | `start` / `end` |
+| **Pi** (extension `~/.pi/agent/extensions/pulse.js`; payload as the last argument; nothing sent when `ctx.mode` is `json` or `print`; one child at a time, in emission order) | `session_start` / `session_shutdown` (neither sent on `reason: "reload"`) | `start` (message = `getSessionName()`, when set) / `end` (flushes the queue) |
+| | `session_info_changed` | `title` (message = the new name; empty clears it) |
 | | `agent_start` | `working` (a run began; no text) |
-| | `message_start` (sent for `role: "user"` only) | `working` (message = the message's text: the title) |
-| | `tool_execution_end` | `tool` (tool = `toolName`, message = one argument — command, path, file_path, pattern, url or query — that the extension kept from the call's `tool_execution_start` by `toolCallId`; the end event carries no arguments. Sliced at 2000 characters only to bound the argv; the receiver redacts the whole value before it shortens it) |
-| | `ui_prompt_start` `kind: confirm` / other kinds (*payload*) | `permission` / `question` (ask = `title`; never the event's `reason`, which is `ui_prompt`) |
+| | `message_start` (sent for `role: "user"` only) | `working` (message = the message's text: the title; a skill block is sent as `/skill:name args`, never its path) |
+| | `tool_execution_start` (not sent with `parentToolCallId`) | `status` (tool = `toolName`, message = its target: what runs now; a long tool is not a stall) |
+| | `tool_execution_end` (not sent with `parentToolCallId`) (*payload*) | `tool` (tool = `toolName`, message = the target the extension kept from the call's `tool_execution_start` by `toolCallId` — `command` for bash / powershell, `path` for read / edit / write / ls, `pattern` for grep / find, else the first of command, path, file_path, pattern, url, query; `err` = `isError`, `took` = `durationMs`. Sliced at 2000 characters only to bound the argv; the receiver redacts the whole value before it shortens it) |
+| | `ui_prompt_start` `kind: confirm` / `select`, `input`, `editor` (*payload*) | `permission` / `question` (ask = `title`; never the event's `reason`, which is `ui_prompt`) — as Pi's own `setBlocked` reporter says them |
+| | `ui_prompt_start` / `ui_prompt_end` `kind: custom` (*payload*) | `ignored` — "a prompt that does not block" (a custom view; Pi never marks it blocked) |
 | | `ui_prompt_end` | `done` |
-| | `agent_settled` (*payload*) | `turn` (message = the run's last assistant words, which the extension kept from `agent_end`); `failed` when that message stopped on an error (message = its `errorMessage`) |
-| | `tool_execution_start`, `agent_end` | observed by the extension to fill the events above; never sent |
+| | `agent_settled` (*payload*) | `turn` (message = the run's last assistant words, which the extension kept from `agent_end`); `failed` when that message stopped on an error (message = its `errorMessage`); `stopped` when `aborted` (the person pressed Escape: no words) |
+| | `agent_end` | observed by the extension to fill `agent_settled`; never sent |
+
+**What Pi cannot report.** Pulse sees only what passes through Pi's
+extension events. Pi's `/login` OAuth wait (`setBlocked("login")`) and its
+"Session cwd not found" confirm on resume (`promptForMissingSessionCwd`)
+show no `ui_prompt_*` event: Pi waits there and the lamp does not turn red.
+
+**Order.** Each event is one `pulse-hook` child and the log numbers lines
+in the order the children take its lock, so the extension spawns the next
+child only when the one before it has exited (or after a 1.5 s guard), keeps
+at most 64 waiting (a block, its answer, the turn's end and the shutdown are
+dropped last) and spawns whatever is left at once on `session_shutdown`. A
+prompt's end is never numbered before its start.
 
 ## Title, steps and last words
 
@@ -132,7 +164,7 @@ message says which (`PulseHookReceiver.Ignored`); the reducer skips it.
 | Claude | `UserPromptSubmit` `prompt` | `PostToolUse(Failure)` `tool_name` + `tool_input` | `Stop` `last_assistant_message`; `StopFailure` error |
 | Codex | `UserPromptSubmit` `prompt` | `PostToolUse` `tool_name` + `tool_input` | `Stop` `last_assistant_message` |
 | Copilot | `userPromptSubmitted` `prompt` | `postToolUse` `toolName` + `toolArgs` (a JSON string) | unrecoverable `errorOccurred` `error.message` |
-| Pi | `message_start` (the person's message) | `tool_execution_end` + its call's argument from `tool_execution_start` | `agent_settled` with `agent_end`'s last assistant words; its `errorMessage` |
+| Pi | `session_info_changed` / `session_start` name, else `message_start` (the person's message) | `tool_execution_end` + its call's argument from `tool_execution_start` (failed, duration); `tool_execution_start` is what runs now | `agent_settled` with `agent_end`'s last assistant words; its `errorMessage`; none when aborted |
 | OpenCode | — | — (no tool event) | `session.error` message |
 | Cursor | — | — (no tool event) | — |
 

@@ -121,7 +121,7 @@ package struct TrayState: Equatable {
             row.cwd = session.cwd
             row.pid = session.pid
             row.liveProcess = live
-            row.task = session.title
+            row.task = session.shownTitle
 
             // How to reach it: the hook's landing handle first; the process
             // table fills only what the hook did not say.
@@ -181,8 +181,10 @@ package struct TrayState: Equatable {
             if nowMs - session.lastEventMs > silentBoundMs { return .recent(.silent) }
             // Silence is evidence only from an agent whose hook reports
             // every tool call; the others are silent through every long turn.
+            // A tool said to be running is silent until it ends.
             let stalled = session.agent.reportsToolActivity
                 && session.toolMs > 0
+                && session.running == nil
                 && AgentRow.stalled(lastActivityMs: session.lastEventMs, nowMs: nowMs, threshold: stalledSeconds)
             return .running(stalled: stalled)
         case .yourTurn(let since):

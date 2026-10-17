@@ -76,6 +76,13 @@ package enum HooksInstaller {
         return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
 
+    /// Whether a home-relative folder exists (`.pi/agent`).
+    package static func homeFolderExists(_ relative: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        let path = homeURL.appendingPathComponent(relative).path
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+
     // MARK: - Install / uninstall
 
     /// Why one agent's install or removal did not happen. The UI says it in

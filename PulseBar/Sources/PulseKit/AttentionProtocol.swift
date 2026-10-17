@@ -15,8 +15,10 @@ import Foundation
 /// - **resolved** (`done`, `dismiss`): nothing is owed — the vendor said its
 ///   prompt closed (`done`), or the person set the wait aside in Pulse
 ///   (`dismiss`, written by the app alone);
-/// - **lifecycle** (`start`, `working`, `end`): the session began, took a
-///   prompt, or ended;
+/// - **lifecycle** (`start`, `working`, `stopped`, `title`, `end`): the
+///   session began, took a prompt, was stopped by the person at its prompt
+///   (`stopped`: nothing owed, no last words), was named by its vendor
+///   (`title`: the name, no state), or ended;
 /// - **activity** (`tool`, `status`): a tool ran — its last step, the answer
 ///   to a block raised for that tool — or (`status`) work goes on and no tool
 ///   ran: never a step, never an answer;
@@ -29,7 +31,7 @@ package enum AttentionKind: String, Sendable, CaseIterable {
     case permission, question, waiting
     case turn, failed, idle
     case done, dismiss
-    case start, working, end
+    case start, working, stopped, title, end
     case tool, status
     case ignored
 
@@ -49,9 +51,9 @@ package enum AttentionKind: String, Sendable, CaseIterable {
     package var isResolution: Bool { self == .done || self == .dismiss }
 }
 
-/// One v7 record: twelve tab-separated columns.
+/// One v8 record: fifteen tab-separated columns.
 ///
-/// `seq  ms  agent  kind  event  session  cwd  pid  front  landing  tool  message`
+/// `seq  ms  agent  kind  event  session  sub  cwd  pid  front  landing  tool  err  took  message`
 ///
 /// - `seq`: the line's number in its log — assigned by `EventLog.append`
 ///   under the append lock, one more than the last; a reader applies only the
@@ -59,6 +61,10 @@ package enum AttentionKind: String, Sendable, CaseIterable {
 /// - `event`: the vendor's own name of the hook event that wrote the line
 ///   (`PermissionRequest`, `tool_execution_end`, `session.status`), or
 ///   Pulse's own (`pulse.dismiss`, `pulse.seen`);
+/// - `sub`: the vendor's id of the subagent (child agent) the event came
+///   from — Claude's and Codex's `agent_id`, Copilot's `agentId` — empty for
+///   the main agent. A subagent's line never answers another's block, never
+///   revives an ended turn and is never the person's prompt (`SessionBook`);
 /// - `pid`: the agent process the hook ran under, empty when unknown (a pid
 ///   of 1 or less is never written: the hook's parent had exited);
 /// - `front`: `1` when the prompt's own window was frontmost as the event was
@@ -67,7 +73,10 @@ package enum AttentionKind: String, Sendable, CaseIterable {
 ///   `;`-separated — `tmux:%3`, `iterm:w0t1p0:<uuid>`, `tty:/dev/ttys004`,
 ///   `term:<TERM_PROGRAM>`;
 /// - `tool`: the tool a `tool` line ran, or the tool a block is about
-///   (`Bash`); its target, when known, is the message;
+///   (`Bash`), or the tool a `status` line says has started; its target,
+///   when known, is the message;
+/// - `err`: `1` when the tool a `tool` line reports failed, else empty;
+/// - `took`: how long that tool ran, in ms, when the vendor said; else empty;
 /// - `message`: what the event said — a block's ask, a turn's last words, a
 ///   failed turn's error, a prompt's text, a tool's target, why a line was
 ///   ignored. Last, so the free text never shifts a column.
@@ -86,6 +95,12 @@ package struct AttentionRecord: Equatable, Sendable {
     package var front: Bool?
     package var landing: String
     package var tool: String
+    /// The subagent the line came from; "" for the main agent.
+    package var sub: String
+    /// The tool a `tool` line reports failed (`err` = `1`).
+    package var failed: Bool
+    /// How long that tool ran, in ms; 0 unknown.
+    package var tookMs: Int64
     package var message: String
 
     package init(
@@ -100,7 +115,10 @@ package struct AttentionRecord: Equatable, Sendable {
         landing: String = "",
         tool: String = "",
         event: String = "",
-        seq: Int64 = 0
+        seq: Int64 = 0,
+        sub: String = "",
+        failed: Bool = false,
+        tookMs: Int64 = 0
     ) {
         self.seq = seq
         self.ms = ms
@@ -113,6 +131,9 @@ package struct AttentionRecord: Equatable, Sendable {
         self.front = front
         self.landing = landing
         self.tool = tool
+        self.sub = sub
+        self.failed = failed
+        self.tookMs = tookMs
         self.message = message
     }
 
@@ -148,16 +169,19 @@ package struct AttentionRecord: Equatable, Sendable {
             kind.rawValue,
             event,
             session,
+            sub,
             cwd,
             pid > 1 ? String(pid) : "",
             AttentionProtocol.frontField(front),
             landing,
             tool,
+            failed ? "1" : "",
+            tookMs > 0 ? String(tookMs) : "",
             message,
         ].joined(separator: "\t")
     }
 
-    /// A complete v7 record, or nil for anything else: a comment, a blank
+    /// A complete v8 record, or nil for anything else: a comment, a blank
     /// line, a line with another column count, a `seq` that is not a
     /// positive number, an agent or a kind the protocol does not know.
     package init?<S: StringProtocol>(line: S) {
@@ -170,15 +194,18 @@ package struct AttentionRecord: Equatable, Sendable {
             agent: agent,
             kind: kind,
             ms: Int64(cols[1]) ?? 0,
-            message: cols[11],
+            message: cols[14],
             session: cols[5],
-            cwd: cols[6],
-            front: AttentionProtocol.parseFront(cols[8]),
-            pid: AttentionProtocol.parsePid(cols[7]),
-            landing: cols[9],
-            tool: cols[10],
+            cwd: cols[7],
+            front: AttentionProtocol.parseFront(cols[9]),
+            pid: AttentionProtocol.parsePid(cols[8]),
+            landing: cols[10],
+            tool: cols[11],
             event: cols[4],
-            seq: seq
+            seq: seq,
+            sub: cols[6],
+            failed: cols[12] == "1",
+            tookMs: AttentionProtocol.parseTook(cols[13])
         )
     }
 }
@@ -199,7 +226,7 @@ package enum EventName {
     }
 }
 
-/// Attention Protocol v7 — every hook event of every supported agent, read
+/// Attention Protocol v8 — every hook event of every supported agent, read
 /// by its adapter in `pulse-hook` (the app's `--hook`), as one numbered line
 /// of one append-only event log (`events.tsv`, `EventLog`).
 ///
@@ -207,24 +234,25 @@ package enum EventName {
 /// `EventLog.append`. Reader: `SessionBook` (the app), every line in `seq`
 /// order. Spec: `docs/attention-protocol.md`.
 package enum AttentionProtocol {
-    package static let version = 7
+    package static let version = 8
 
     /// What every `events.tsv` header begins with. A file whose first line
-    /// does not is not a v7 log: it is emptied and a fresh one started, never
+    /// does not is not a v8 log: it is emptied and a fresh one started, never
     /// read (`EventLog`).
-    package static let headerPrefix = "# pulse-events v7 "
+    package static let headerPrefix = "# pulse-events v8 "
 
     /// The columns, in order — what the header's legend says.
     package static let columnNames = [
-        "seq", "ms", "agent", "kind", "event", "session", "cwd", "pid", "front", "landing", "tool", "message",
+        "seq", "ms", "agent", "kind", "event", "session", "sub", "cwd", "pid", "front", "landing", "tool",
+        "err", "took", "message",
     ]
 
-    /// Column count of a complete v7 record.
-    package static let columnCount = 12
+    /// Column count of a complete v8 record.
+    package static let columnCount = 15
 
     /// The first line of `events.tsv`: the protocol, the `seq` the next line
     /// gets when nothing in the file has a larger one, and the log's `gen` —
-    /// chosen when the log is started (created, or a log that is not v7
+    /// chosen when the log is started (created, or a log that is not v8
     /// started over) and kept by every compaction, so a reader knows whether
     /// a rewritten file continues the numbering it applied.
     package struct Header: Equatable, Sendable {
@@ -236,7 +264,7 @@ package enum AttentionProtocol {
             self.gen = gen
         }
 
-        /// A v7 header line, or nil for anything else.
+        /// A v8 header line, or nil for anything else.
         package init?<S: StringProtocol>(line: S) {
             let text = String(line)
             guard AttentionProtocol.isHeader(text) else { return nil }
@@ -257,12 +285,12 @@ package enum AttentionProtocol {
         }
     }
 
-    /// Whether a file's first line is a v7 header.
+    /// Whether a file's first line is a v8 header.
     package static func isHeader<S: StringProtocol>(_ line: S) -> Bool {
         line.hasPrefix(headerPrefix)
     }
 
-    /// The columns of one v7 record, or nil for a blank line, a comment or
+    /// The columns of one v8 record, or nil for a blank line, a comment or
     /// header, or a line without exactly `columnCount` columns. Only the
     /// line's own break (`\n`, `\r`) is trimmed: a record's trailing columns
     /// are often empty, so trailing tabs are part of it.
@@ -277,7 +305,7 @@ package enum AttentionProtocol {
     }
 
     /// The typed kind of a line's `kind` column, or nil when it is not one
-    /// of the v7 kinds, spelled as written (`AttentionKind.rawValue`). No
+    /// of the v8 kinds, spelled as written (`AttentionKind.rawValue`). No
     /// other spelling is read: every writer is Pulse's own, so a word the
     /// protocol does not know is never guessed into a state, and never into
     /// Waiting.
@@ -330,6 +358,12 @@ package enum AttentionProtocol {
     package static func parsePid(_ field: String) -> Int32 {
         let pid = Int32(field.trimmingCharacters(in: .whitespaces)) ?? 0
         return pid > 1 ? pid : 0
+    }
+
+    /// The `took` column: a positive number of ms, else unknown (0).
+    package static func parseTook(_ field: String) -> Int64 {
+        let took = Int64(field.trimmingCharacters(in: .whitespaces)) ?? 0
+        return took > 0 ? took : 0
     }
 
     package static func parseFront(_ field: String) -> Bool? {

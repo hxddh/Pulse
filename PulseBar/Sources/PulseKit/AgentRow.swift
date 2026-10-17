@@ -71,13 +71,17 @@ package struct Block: Hashable, Sendable {
     /// The tool the block is about, when the raise named it (`Bash` from
     /// Claude's `Bash: npm test`); "" when unknown. Only that tool answers it.
     package var tool: String
+    /// The subagent that raised it; "" the main agent. Only that subagent's
+    /// own lines answer it (`SessionBook`).
+    package var sub: String
 
-    package init(kind: AttentionKind, ask: String = "", sinceMs: Int64 = 0, inFront: Bool = false, tool: String = "") {
+    package init(kind: AttentionKind, ask: String = "", sinceMs: Int64 = 0, inFront: Bool = false, tool: String = "", sub: String = "") {
         self.kind = kind
         self.ask = ask
         self.sinceMs = sinceMs
         self.inFront = inFront
         self.tool = tool
+        self.sub = sub
     }
 }
 
@@ -93,6 +97,8 @@ package struct SessionFacts: Equatable, Sendable {
     package var lastError: String
     /// Up to `SessionBook.maxSteps` recent steps, oldest first.
     package var steps: [SessionBook.Step]
+    /// The tool said to have started and not yet finished; nil none.
+    package var running: SessionBook.Step?
     /// When the current turn started (its prompt); 0 unknown.
     package var turnStartMs: Int64
     /// The newest event of any kind; 0 none.
@@ -112,6 +118,7 @@ package struct SessionFacts: Equatable, Sendable {
         lastWords: String = "",
         lastError: String = "",
         steps: [SessionBook.Step] = [],
+        running: SessionBook.Step? = nil,
         turnStartMs: Int64 = 0,
         lastEventMs: Int64 = 0,
         activityMs: Int64 = 0,
@@ -122,6 +129,7 @@ package struct SessionFacts: Equatable, Sendable {
         self.lastWords = lastWords
         self.lastError = lastError
         self.steps = steps
+        self.running = running
         self.turnStartMs = turnStartMs
         self.lastEventMs = lastEventMs
         self.activityMs = activityMs

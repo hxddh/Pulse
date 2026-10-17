@@ -1,4 +1,4 @@
-# Attention Protocol v7
+# Attention Protocol v8
 
 The contract between each supported agent's hook and Pulse's lamp: one
 append-only event log of numbered lines.
@@ -26,22 +26,22 @@ UTF-8 TSV, one event per line, numbered in the order the append lock was
 granted. The first line is the header:
 
 ```text
-# pulse-events v7 next=<seq> gen=<gen> (seq\tms\tagent\tkind\tevent\tsession\tcwd\tpid\tfront\tlanding\ttool\tmessage)
-<seq>\t<unix_ms>\t<agent>\t<kind>\t<event>\t<session>\t<cwd>\t<pid>\t<front>\t<landing>\t<tool>\t<message>
+# pulse-events v8 next=<seq> gen=<gen> (seq\tms\tagent\tkind\tevent\tsession\tsub\tcwd\tpid\tfront\tlanding\ttool\terr\ttook\tmessage)
+<seq>\t<unix_ms>\t<agent>\t<kind>\t<event>\t<session>\t<sub>\t<cwd>\t<pid>\t<front>\t<landing>\t<tool>\t<err>\t<took>\t<message>
 ```
 
 - **`gen`** names the log. It is chosen when the log is started — the file
-  is created, or a file that is not a v7 log is started over — and every
+  is created, or a file that is not a v8 log is started over — and every
   compaction keeps it. A reader that finds another `gen` is reading another
   log.
 - **`next`** is the `seq` the next line gets when no line in the file has a
   larger one: 1 for an empty log, one past the newest kept line after a
   compaction.
-- **Only a v7 log is read.** A file whose first line is not a v7 header (an
-  older protocol, or no header) is treated as absent: a read finds it
-  empty, and the next writer — the app's `ensureExists` at launch, or a
-  hook's append — empties it under its lock and starts a fresh v7 log (a
-  new `gen`, numbering from 1). It is never read and never migrated.
+- **Only a v8 log is read.** A file whose first line is not a v8 header (a
+  v7 log or any older protocol, or no header) is treated as absent: a read
+  finds it empty, and the next writer — the app's `ensureExists` at launch,
+  or a hook's append — empties it under its lock and starts a fresh v8 log
+  (a new `gen`, numbering from 1). It is never read and never migrated.
 - **Append only, numbered under the lock.** A writer opens the file
   `O_APPEND`, takes an exclusive `flock`, gives the line the next `seq` —
   one past the last line's (read from the file's tail), never less than the
@@ -58,11 +58,13 @@ granted. The first line is the header:
   last two hours are kept; a session whose newest line is a day old goes
   whole; whatever the budget, each session keeps what a replay rebuilds its
   own facts from — its first line that is not a block (its first clock), the
-  prompt its title came from (the first `working` line that says something)
-  and its latest prompt (the turn's clock); and an **open block** (a
-  `permission` / `question` / `waiting` no later line in its session
-  answers; a `status` line answers nothing) is kept with every line after
-  it. An answered block is never kept without its answer. Over half a MiB
+  prompt its title came from (the first main-agent `working` line that says
+  something), its latest main-agent prompt (the turn's clock) and the line
+  its vendor name came from (the latest `title`, or a `start` that carries
+  a name); and an **open block** (a `permission` / `question` / `waiting`
+  no later line in its session answers — a `status` line answers nothing,
+  and a subagent's line answers only that subagent's block) is kept with
+  every line after it. An answered block is never kept without its answer. Over half a MiB
   the per-session count and the window halve until it fits. The line being
   appended is always kept: an append reports success only when its line is
   in the file. `ignored` lines are bounded like any other.
@@ -89,7 +91,7 @@ granted. The first line is the header:
   session — its steps, its title, its turn's clock — is rebuilt by this
   replay and kept nowhere else.
 
-**Every line has exactly twelve columns**, in the order above, and a `seq`
+**Every line has exactly fifteen columns**, in the order above, and a `seq`
 that is a positive integer. A line with any other count, another `seq`, an
 agent or a kind the protocol does not know, is not read. Leave a column
 empty when you have nothing for it; the trailing tabs are part of the
@@ -102,13 +104,16 @@ record.
 | `agent` | One of the six `AgentID` raw values: `claude`, `codex`, `cursor`, `pi`, `copilot`, `opencode` (`cursor-agent` / `cursor_agent` read as `cursor`) |
 | `kind` | One of the kinds below, spelled exactly as listed |
 | `event` | The vendor's own name of the hook event that wrote the line (`PermissionRequest`, `tool_execution_end`, `session.status`); `pulse.dismiss` / `pulse.seen` for the app's own `dismiss`. ≤64 chars. Read by nobody's state — it says where a line came from: the why, the detail page's timeline, Settings' "heard" and the report cite it (only when it is a name: letters, digits, `_ . : -`) |
-| `session` | The vendor's session id; empty allowed (not for `tool`, `status`, `working`) |
+| `session` | The vendor's session id; empty allowed (not for `tool`, `status`, `working`, `title`) |
+| `sub` | The vendor's id of the subagent (child agent) the event came from — Claude's and Codex's `agent_id`, Copilot's `agentId` (each adapter's `subagentKeys`); empty for the main agent. A subagent's line belongs to its session, but it is not the person: see the reader rules |
 | `cwd` | Absolute project path; empty allowed |
-| `pid` | The agent process the hook ran under: the first ancestor of the hook whose argv matches the agent's catalog process rule. Never the hook's direct parent (usually a `sh -c` that exits with the hook) and never `1` — empty when unknown |
+| `pid` | The agent process the hook ran under: the first ancestor of the hook whose argv matches the agent's catalog process rule. Never the hook's direct parent (usually a `sh -c` that exits with the hook) and never `1` — empty when unknown. The one exception is a module that spawns the hook itself and says its own pid (Pi's extension sends `process.pid`, `AgentSpec.reportsOwnPID`): that pid is taken only when it is the hook's own parent |
 | `front` | `1` when the prompt's own window was frontmost as the event was raised, `0` when not, empty when unknown. Only written for blocked kinds, `turn`, `failed` and `idle` |
 | `landing` | Where the session can be reached, most specific first, `;`-separated: `tmux:%3`, `tmuxsock:<TMUX socket path>`, `iterm:<ITERM_SESSION_ID>`, `tty:/dev/ttys004`, `term:<TERM_PROGRAM>`, `app:<__CFBundleIdentifier>`; unknown keys are ignored (`architecture.md`, "Landing") |
-| `tool` | The tool a `tool` line ran, or the tool a block is about (`Bash`, `AskUserQuestion`); empty when the event names none. A tool name only — no column but `kind` says what a line means |
-| `message` | What is asked, the turn's last words, a `failed` turn's error, the prompt's text on a `working` line, a tool line's target, or why a line was `ignored`; tabs and every kind of line break (`\n`, `\r`, VT, FF, NEL, U+2028, U+2029) made spaces; ≤200 chars; credentials redacted from the whole value before it is shortened. Last, so free text never shifts a column |
+| `tool` | The tool a `tool` line ran, the tool a `status` line says has started (Pi's `tool_execution_start`), or the tool a block is about (`Bash`, `AskUserQuestion`); empty when the event names none. A tool name only — no column but `kind` says what a line means |
+| `err` | `1` when the tool a `tool` line reports failed (Claude's `PostToolUseFailure`, Copilot's `postToolUseFailure`, Pi's `isError`); empty otherwise. Anything but `1` is not a failure |
+| `took` | How long the tool a `tool` line reports ran, in integer milliseconds, when the vendor said (Pi's `durationMs`); empty when unknown. Anything but a positive integer is unknown |
+| `message` | What is asked, the turn's last words, a `failed` turn's error, the prompt's text on a `working` line, a tool or `status` line's target, the vendor's name for the session on a `title` line (or a `start`, when the session already has one), or why a line was `ignored`; tabs and every kind of line break (`\n`, `\r`, VT, FF, NEL, U+2028, U+2029) made spaces; ≤200 chars; credentials redacted from the whole value before it is shortened. Last, so free text never shifts a column |
 
 Readers skip blank lines and `#` comments.
 
@@ -124,15 +129,18 @@ Readers skip blank lines and `#` comments.
 | | `idle` | It has sat at its prompt a while (Claude's `idle_prompt`, ~60 s after a turn): your turn only if the session was still working or blocked (an Esc on a prompt fires no Stop) or is new to Pulse — never revives a turn already seen |
 | Resolved | `done` | The vendor said its prompt closed (OpenCode `permission.replied`, Pi `ui_prompt_end`, Claude `elicitation_complete`): nothing is owed |
 | | `dismiss` | Pulse's own: the person set the wait aside (`pulse.dismiss`) or looked at a finished turn (`pulse.seen`). Written by the app alone |
-| Lifecycle | `start` | The session started or resumed |
+| Lifecycle | `start` | The session started or resumed (message = the vendor's name for it, when it has one) |
 | | `working` | The user submitted a prompt (message = its text: the title's source) |
+| | `stopped` | The person stopped the run at the agent's own prompt (Pi's aborted `agent_settled`): the turn is over and nothing is owed — no last words, never "your turn" |
+| | `title` | The vendor named the session (Pi's `session_info_changed`): message = the name, which is the row's title over the first prompt; empty clears it. No state, and it makes no session |
 | | `end` | The session ended |
 | Activity | `tool` | A tool ran (or a reply streamed): the session is working, and — when it names its tool — its last step and the answer to a block raised for that tool |
-| | `status` | Work goes on and no tool ran (a status, a retry, a recoverable error): never a step, never an answer |
-| Heard | `ignored` | The receiver heard an event it did not turn into state: an event Pulse does not install, a payload that is not a JSON object, a blocked event from an agent that cannot report one, activity or a prompt with no session, an event that says nothing Pulse shows. `message` says which (`PulseHookReceiver.Ignored`) — never the payload's words. The reducer changes no state for it; it goes on its session's timeline and is Settings' "last ignored" |
+| | `status` | Work goes on and no tool finished (a status, a retry, a recoverable error, or a tool that started — `tool` names it, `message` its target: what runs now): never a step, never an answer |
+| Heard | `ignored` | The receiver heard an event it did not turn into state: an event Pulse does not install, a payload that is not a JSON object, a blocked event from an agent that cannot report one, activity or a prompt with no session, an event that says nothing Pulse shows, a prompt that does not block (Pi's `custom` view). `message` says which (`PulseHookReceiver.Ignored`) — never the payload's words. The reducer changes no state for it; it goes on its session's timeline and is Settings' "last ignored" |
 
-`working`, `done`, `dismiss` and `end` clear the session's block; `start`
-does unless the session is working. A `tool` or `status` line keeps a
+`working`, `done`, `dismiss`, `stopped` and `end` clear the session's
+block; `start` does unless the session is working — each only when the
+main agent wrote it (a subagent's line clears only its own block). A `tool` or `status` line keeps a
 working session from reading stalled; a `tool` line answers a block raised
 before it in the same session — unless both name a tool and the names
 differ (a parallel tool is not the answer). A `status` line never answers.
@@ -159,11 +167,30 @@ as spelled in the table — no alias, no vendor word, no guess from free text.
   the first raise's) — the why cites it.
 - A blocked line for an agent with `waiting: .none` (Codex, Cursor) is
   ignored, whoever wrote it.
+- **A subagent is not the person.** A line with `sub` never answers a
+  block the main agent — or another subagent — raised; it never revives a
+  turn that has ended (`your turn` and idle stay); its `working` line is
+  its own task, not the person's prompt (no title, no latest prompt, no
+  turn clock); its `start`, `title`, `stopped` and `end` move nothing. A
+  block it raises is the session's block (the work cannot go on), and only
+  that subagent's own `tool` (same tool, as below), `done` or end of turn
+  answers it. Inside a live turn its activity is work (it keeps the session
+  from reading stalled) and its steps go on the timeline marked as its own.
 - `done`, `dismiss`, `working`, `end` clear that session (`session` empty →
   only the agent's session-less entry in the folder it names, or every
   session-less one when it names none; a dismissal always names the folder).
 - A `tool` line that names its tool is a step: the session keeps its last
-  five (tool, target, time); a `status` line is not a step. A `working`
+  five (tool, target, time, `err`, `took`, `sub`); a `status` line is not a
+  step. A `status` line that names a tool says that tool runs now: while it
+  runs a silence is not a stall, and the `tool` line of the same tool from
+  the same speaker (or the turn's end) finishes it.
+- A `stopped` line puts the session at its prompt with nothing owed —
+  from working, from a block (no grace: the person was at the prompt) or
+  from your turn; one stamped before the block or turn it would end is
+  about an earlier one. It carries no last words.
+- A `title` line sets the session's name (empty clears it); a `start`
+  that carries a name sets it too. The row's title is the name, else the
+  first prompt that says something. A `working`
   line starts a new turn (its clock), its text is the latest prompt, and the
   first that says something (not "continue") is the title. A `turn` line's
   message is the last words; a `failed` line's is the turn's error, until
@@ -203,6 +230,8 @@ as spelled in the table — no alias, no vendor word, no guess from free text.
 
 ## Versioning
 
-The protocol is v7: twelve numbered columns, and a log whose header is not
-v7 is treated as absent (emptied, started over, never read). A change to
-the columns or the kinds is a new protocol version and a major release.
+The protocol is v8: fifteen numbered columns (v7's twelve plus `sub`,
+`err` and `took`) and the kinds above (v7's plus `stopped` and `title`),
+and a log whose header is not v8 is treated as absent (emptied, started
+over, never read). A change to the columns or the kinds is a new protocol
+version and a major release.

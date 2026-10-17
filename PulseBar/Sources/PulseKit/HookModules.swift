@@ -18,8 +18,11 @@ package enum HookModules {
         return String(decoding: data, as: UTF8.self)
     }
 
-    /// Shared by both modules: spawn `pulse-hook <agent> <event> <payload>`
-    /// detached, never wait. The payload rides in argv, not on a pipe.
+    /// The OpenCode plugin's sender: spawn `pulse-hook <agent> <event>
+    /// <payload>` detached, never wait. The payload rides in argv, not on a
+    /// pipe. (The Pi extension spawns the same command one child at a time,
+    /// in order — `Pi.module` — since Pi's events come in bursts whose
+    /// order matters: a prompt's end must not be numbered before its start.)
     package static func sendFunction(launcher: String, agent: String) -> String {
         """
         const PULSE_HOOK = \(literal(launcher))

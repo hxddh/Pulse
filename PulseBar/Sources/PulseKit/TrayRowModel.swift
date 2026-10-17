@@ -342,6 +342,8 @@ extension TrayRowModel {
         case .started: return t(.timelineStarted)
         case .prompt: return t(.timelinePrompt)
         case .step(let tool, let target): return stepText(SessionBook.Step(tool: tool, target: target, ms: 0))
+        case .failedStep(let tool, let target):
+            return String(format: t(.timelineFailedStep), stepText(SessionBook.Step(tool: tool, target: target, ms: 0)))
         case .working: return t(.timelineWorking)
         case .status: return t(.timelineStatus)
         case .raised(let kind): return String(format: t(.timelineRaised), L10n.waitKind(kind, lang))
@@ -355,9 +357,19 @@ extension TrayRowModel {
         case .resolved: return t(.timelineResolved)
         case .dismissed: return t(.timelineDismissed)
         case .seen: return t(.timelineSeen)
+        case .stopped: return t(.timelineStopped)
+        case .named: return t(.timelineNamed)
+        case .subagent: return t(.timelineSubagent)
         case .ended: return t(.timelineEnded)
         case .skipped(let reason): return String(format: t(.timelineSkipped), Connection.reasonText(reason, lang: lang))
         }
+    }
+
+    /// One heard line's words on the timeline: what it did, marked
+    /// "Subagent · …" when a subagent said it.
+    package static func heardText(_ heard: SessionBook.Heard, lang: ResolvedLanguage) -> String {
+        let text = effectText(heard.effect, lang: lang)
+        return heard.sub.isEmpty ? text : String(format: L10n.t(.timelineBySubagent, lang), text)
     }
 
     // MARK: - Time
@@ -498,7 +510,7 @@ package struct DetailModel: Equatable {
             Entry(
                 time: L10n.ago(min(heard.ms, nowMs), nowMs: nowMs, lang),
                 event: EventName.display(heard.event),
-                effect: Words.effectText(heard.effect, lang: lang),
+                effect: Words.heardText(heard, lang: lang),
                 tone: tone(heard.effect)
             )
         }
@@ -530,9 +542,9 @@ package struct DetailModel: Equatable {
     package static func tone(_ effect: SessionBook.Effect) -> Entry.Tone {
         switch effect {
         case .raised: return .alert
-        case .again, .held, .status, .atPrompt, .skipped: return .quiet
-        case .started, .prompt, .step, .working, .answered, .yourTurn, .turnEnded, .failed,
-             .resolved, .dismissed, .seen, .ended:
+        case .again, .held, .status, .atPrompt, .skipped, .subagent, .named: return .quiet
+        case .started, .prompt, .step, .failedStep, .working, .answered, .yourTurn, .turnEnded, .failed,
+             .resolved, .dismissed, .seen, .stopped, .ended:
             return .plain
         }
     }

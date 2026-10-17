@@ -69,6 +69,10 @@ macOS 拦下而丢失。把 Pulse 换到别的位置时，打开一次新位置�
 不会报告的两个只显示「运行中」与「轮到你」，Pulse 如实这样写，不伪造红灯。每个事件装在哪、变成什么、出处在哪，
 见 [`docs/vendor-formats.md`](docs/vendor-formats.md)。
 
+Pi 的扩展装在 `~/.pi/agent/extensions/`。如果你用 `PI_CODING_AGENT_DIR` 让 Pi 读别的文件夹，Pulse 看不到这个
+环境变量（菜单栏 App 读不到 shell 的环境），装的扩展不会被加载；`~/.pi/agent` 不存在时设置 → Hooks 会写明这一点。
+Pi 的 `/login` 登录等待与恢复会话时「工作目录不存在」的确认不经过扩展事件，Pulse 看不到。
+
 ## 隐私
 
 - **不连网络。** Pulse 不检查更新、不上报任何东西；设置里的「版本发布…」只是在浏览器里打开 Releases 页。

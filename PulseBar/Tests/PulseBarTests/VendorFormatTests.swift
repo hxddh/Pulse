@@ -56,6 +56,27 @@ struct VendorDriftTests {
         #expect(HookContract.toolActivityEvents.isDisjoint(with: HookContract.gatingEvents))
     }
 
+    /// Pi (pinned at 8efd314): a tool's start says what runs now and is
+    /// never an answer; the events that can cancel a session switch, fork,
+    /// compaction or tree move are gating and never installed; the folder
+    /// Pi's extensions load from can be moved by `PI_CODING_AGENT_DIR`,
+    /// which Pulse does not follow.
+    @Test func piTellsWhatRunsAndNeverGates() {
+        let names = Set(AgentID.pi.spec.hooks.events.map(\.name))
+        #expect(names.isDisjoint(with: HookContract.gatingEvents))
+        let start = PulseHookReceiver.interpret(agent: .pi, event: "tool_execution_start", payload: [:])
+        #expect(start?.action == .status)
+        #expect(!HookContract.answerEvents.contains("tool_execution_start"))
+        for event in ["session_before_switch", "session_before_fork", "session_before_compact", "session_before_tree"] {
+            #expect(HookContract.gatingEvents.contains(event), "\(event)")
+        }
+        let relocation = AgentID.pi.spec.hooks.relocation
+        #expect(relocation == HookContract.Relocation(dir: ".pi/agent", variable: "PI_CODING_AGENT_DIR"))
+        #expect(AgentID.pi.spec.hooks.path.hasPrefix(".pi/agent/"))
+        #expect(AgentID.pi.spec.reportsOwnPID)
+        #expect(!AgentID.claude.spec.reportsOwnPID)
+    }
+
     /// Every contract event Pulse installs is one the receiver knows —
     /// an installed event it could not read would be a hook that says
     /// nothing.

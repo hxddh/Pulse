@@ -212,9 +212,23 @@ package enum AgentProcesses {
 
     /// One command line from its parts: the executable path (or argv[0]
     /// when the path is unknown), then the arguments after argv[0].
+    ///
+    /// An interpreter whose arguments are all gone is a program that renamed
+    /// itself: Node's `process.title = "pi"` overwrites argv in place on
+    /// macOS, so the kernel reports `node` with argv `["pi", "", …]`. Its
+    /// argv[0] is then the program — `node pi` — so `match(args:)` sees the
+    /// script it would otherwise miss.
     package static func commandLine(path: String, argv: [String]) -> String {
         let program = path.isEmpty ? (argv.first ?? "") : path
-        return ([program] + argv.dropFirst()).filter { !$0.isEmpty }.joined(separator: " ")
+        var rest = Array(argv.dropFirst()).filter { !$0.isEmpty }
+        if !path.isEmpty, rest.isEmpty, let title = argv.first?.trimmingCharacters(in: .whitespaces), !title.isEmpty {
+            let exe = (path as NSString).lastPathComponent.lowercased()
+            let named = (title as NSString).lastPathComponent.lowercased()
+            if interpreters.contains(exe), named != exe, !interpreters.contains(named) {
+                rest = [title]
+            }
+        }
+        return ([program] + rest).filter { !$0.isEmpty }.joined(separator: " ")
     }
 
     // MARK: - The table (libproc)

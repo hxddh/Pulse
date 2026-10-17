@@ -145,8 +145,10 @@ package enum L10n {
         case ignoredCannotWait
         case ignoredNoSession
         case ignoredSilent
+        case ignoredNotABlock
         case ignoredOther
         case settingsHookNoWait
+        case settingsHookConfigDir
         case waitingBannerFailed
         case lampRuleBlocked
         case lampRuleStalled
@@ -210,6 +212,11 @@ package enum L10n {
         case timelineSeen
         case timelineEnded
         case timelineSkipped
+        case timelineFailedStep
+        case timelineStopped
+        case timelineNamed
+        case timelineSubagent
+        case timelineBySubagent
         case stepThisTurn
         case setupFailedAction
         case menuOpenPulse
@@ -316,8 +323,10 @@ extension L10n.Key {
         case .ignoredCannotWait: return ("it cannot report waits", "它不报告等待")
         case .ignoredNoSession: return ("no session", "没有会话")
         case .ignoredSilent: return ("nothing to show", "没有可显示的内容")
+        case .ignoredNotABlock: return ("a prompt that does not block", "不阻塞的提示")
         case .ignoredOther: return ("not used", "未采用")
         case .settingsHookNoWait: return ("Doesn't report when it waits — running and your turn only", "不会报告它在等你——只显示运行中和轮到你")
+        case .settingsHookConfigDir: return ("Pulse installs to ~/%@, which isn't there yet — a %@ set to another folder (%@) won't load it", "Pulse 装在 ~/%@，这个文件夹还不存在——若 %@ 用了别的文件夹（%@），就不会加载它")
         case .waitingBannerFailed: return ("macOS did not show the last “needs you” banner — check Notifications", "macOS 没有显示上一条「需要你」通知——请检查通知设置")
         case .lampRuleBlocked: return ("Red: an agent is waiting on you.", "红：有 Agent 在等你。")
         case .lampRuleStalled: return ("Orange: a running session has gone quiet.", "橙：有运行中的会话停滞了。")
@@ -381,6 +390,11 @@ extension L10n.Key {
         case .timelineSeen: return ("You looked", "你看过了")
         case .timelineEnded: return ("Ended", "结束")
         case .timelineSkipped: return ("Ignored — %@", "未采用——%@")
+        case .timelineFailedStep: return ("%@ — failed", "%@——失败")
+        case .timelineStopped: return ("You stopped it", "你停下了它")
+        case .timelineNamed: return ("Named", "已命名")
+        case .timelineSubagent: return ("Its own start or finish", "自己的开始或结束")
+        case .timelineBySubagent: return ("Subagent · %@", "子代理 · %@")
         case .stepThisTurn: return ("This turn", "本回合")
         case .setupFailedAction: return ("Open Settings", "打开设置")
         case .menuOpenPulse: return ("Open Pulse", "打开 Pulse")

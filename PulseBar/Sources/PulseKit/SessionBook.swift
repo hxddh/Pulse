@@ -4,7 +4,7 @@ import Foundation
 /// what its events said about it — from the agents' own hook events.
 ///
 /// Pulse reads no vendor session file. Each supported agent's hook appends
-/// one v7 line to the event log (`EventLog`) when a session starts, takes a
+/// one v8 line to the event log (`EventLog`) when a session starts, takes a
 /// prompt, runs a tool, is blocked, finishes its turn or ends; a process exit
 /// ends a session. This is the reducer those lines feed, in `seq` order — a
 /// pure value, `apply` in, `sessions` out — and `TrayState.project` turns it
@@ -18,10 +18,13 @@ import Foundation
 /// What a session says about itself, from its events only:
 ///
 /// - **steps**: the last `maxSteps` tool lines that named their tool (the
-///   tool, its target, when), and the clock of the prompt that started the
-///   current turn — the row's quiet "last step" and its turn's duration;
-/// - **title**: the first prompt that says something (not "continue"), and
-///   the latest prompt;
+///   tool, its target, when, whether it failed, how long it ran, which
+///   subagent ran it), the tool a `status` line says is running now, and
+///   the clock of the prompt that started the current turn — the row's
+///   quiet "last step" and its turn's duration;
+/// - **title**: the vendor's own name for the session when it has one (a
+///   `title` line, or a `start` that carries it), else the first prompt
+///   that says something (not "continue"); and the latest prompt;
 /// - **last words**: what the latest turn line carried; **error**: the text
 ///   of a turn that ended on an error (a `failed` line), until the next turn
 ///   starts (a prompt, or work after the turn ended). Tokens, context,
@@ -58,6 +61,14 @@ import Foundation
 ///   `done` it is raised again.
 /// - **`ignored`** lines change no state: they record what the receiver
 ///   heard. One that names a session the book holds goes on its timeline.
+/// - **A subagent is not the person** (a line with `sub`): its line never
+///   answers a block the main agent — or another subagent — raised, never
+///   revives a turn that has ended (your turn and idle stay), and its prompt
+///   is not the person's prompt (no title, no latest prompt, no turn clock);
+///   its steps go on the timeline marked as its own. Only its own block is
+///   answered by its activity, its `done` or its end of turn.
+/// - **`stopped`**: the person stopped the run at the agent's prompt — the
+///   session is at its prompt with nothing owed, and no last words.
 /// - **Every line says where it came from**: the session keeps the vendor
 ///   event that put it in its current state (`stateEvent` — the why cites
 ///   it), its newest event (`lastEvent`) and its last `maxTimeline` heard
@@ -105,6 +116,12 @@ package struct SessionBook: Equatable {
         package var tool: String
         package var target: String
         package var ms: Int64
+        /// The tool reported it failed (`err`).
+        package var failed = false
+        /// How long it ran, in ms (`took`); 0 unknown.
+        package var tookMs: Int64 = 0
+        /// The subagent that ran it; "" for the main agent.
+        package var sub = ""
     }
 
     /// One line a session heard, as its timeline says it: when, the
@@ -115,11 +132,14 @@ package struct SessionBook: Equatable {
         package var ms: Int64
         package var event: String
         package var effect: Effect
+        /// The subagent the line came from; "" for the main agent.
+        package var sub: String
 
-        package init(ms: Int64, event: String, effect: Effect) {
+        package init(ms: Int64, event: String, effect: Effect, sub: String = "") {
             self.ms = ms
             self.event = event
             self.effect = effect
+            self.sub = sub
         }
     }
 
@@ -132,6 +152,8 @@ package struct SessionBook: Equatable {
         case prompt
         /// A tool ran: a step (the tool, its target).
         case step(tool: String, target: String)
+        /// A tool ran and failed: a step marked failed.
+        case failedStep(tool: String, target: String)
         /// Activity that named no tool.
         case working
         /// Work goes on, no tool ran (`status`).
@@ -160,6 +182,13 @@ package struct SessionBook: Equatable {
         case dismissed
         /// Its finished turn was looked at from Pulse (`pulse.seen`).
         case seen
+        /// The person stopped the run at its prompt (`stopped`).
+        case stopped
+        /// The vendor named the session (`title`).
+        case named
+        /// A subagent's own lifecycle — its start, prompt, end of turn or
+        /// end: the session's state did not move.
+        case subagent
         /// The session ended.
         case ended
         /// Heard, and not turned into state — the receiver's reason
@@ -198,8 +227,12 @@ package struct SessionBook: Equatable {
         package var message = ""
         /// The text of the latest `failed` turn; cleared by the next turn.
         package var lastError = ""
-        /// The first prompt that says something — the session's title.
+        /// The first prompt that says something — the session's title when
+        /// the vendor has not named it.
         package var title = ""
+        /// The vendor's own name for the session (a `title` line, or a
+        /// `start` that carries one); "" none.
+        package var name = ""
         /// The latest prompt's text.
         package var lastPrompt = ""
         /// The prompt (or, with none seen, the step) that started the
@@ -207,6 +240,10 @@ package struct SessionBook: Equatable {
         package var turnStartMs: Int64 = 0
         /// The last `maxSteps` tool steps, oldest first.
         package var steps: [Step] = []
+        /// The tool a `status` line said started and no `tool` line has
+        /// finished yet — what runs now. While it is set a silence is not a
+        /// stall (a 25-minute build says nothing until it ends).
+        package var running: Step?
         /// A turn waiting out the grace of the current block.
         package var heldTurn: HeldTurn?
         /// The block the last dismissal in Pulse cleared: the same block
@@ -227,6 +264,10 @@ package struct SessionBook: Equatable {
             if case .ended = state { return true }
             return false
         }
+
+        /// What the row calls the session: the vendor's name, else the
+        /// first prompt that said something.
+        package var shownTitle: String { name.isEmpty ? title : name }
     }
 
     package private(set) var sessions: [SessionKey: Session] = [:]
@@ -294,12 +335,26 @@ package struct SessionBook: Equatable {
         note(record, ms: ms, into: &session)
         let prior = session.state
         let event = record.event
+        let sub = record.sub.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if !sub.isEmpty {
+            Self.applySubagent(record, sub: sub, at: ms, new: before == nil, into: &session)
+            Self.hear(&session, Heard(ms: ms, event: event, effect: Self.effect(of: record, prior: prior, now: session), sub: sub))
+            sessions[key] = session
+            guard let before else { return true }
+            var unheard = session
+            unheard.timeline = before.timeline
+            return unheard != before
+        }
 
         switch kind {
         case .start:
             // A start mid-work (a resume, a compaction) says nothing about
             // the work; otherwise the session is at its prompt.
             if session.state != .working { Self.set(&session, .idle, at: ms, event: event) }
+            // A session the vendor already named (a resume).
+            let name = TitleHeuristics.firstLine(record.message)
+            if !name.isEmpty { session.name = name }
         case .working:
             session.activityMs = max(session.activityMs, ms)
             Self.prompt(record.message, at: ms, into: &session)
@@ -307,7 +362,7 @@ package struct SessionBook: Equatable {
         case .tool, .status:
             session.activityMs = max(session.activityMs, ms)
             session.toolMs = max(session.toolMs, ms)
-            if kind == .tool { Self.step(record, at: ms, into: &session) }
+            Self.progress(record, at: ms, into: &session)
             // Work goes on — unless it is older than the state it would
             // end, or a different tool than the one a block is about.
             if ms > session.stateSinceMs || before == nil {
@@ -326,6 +381,11 @@ package struct SessionBook: Equatable {
             }
         case .permission, .question, .waiting:
             Self.raise(kind, record: record, at: ms, in: &session)
+        case .stopped:
+            Self.stop(&session, at: ms, event: event)
+        case .title:
+            // The vendor's name for the session; an empty one clears it.
+            session.name = TitleHeuristics.firstLine(record.message)
         case .turn, .failed:
             let message = TitleHeuristics.firstLine(record.message)
             if !message.isEmpty {
@@ -369,6 +429,65 @@ package struct SessionBook: Equatable {
         sessions[key] = session
     }
 
+    /// A subagent's line (`sub` set). It never answers a block the main
+    /// agent or another subagent raised, never revives a turn that has ended
+    /// and is never the person's prompt; its own block is answered by its
+    /// own activity, its `done` or its end of turn. A raise is a block of
+    /// the session's (the subagent cannot go on, so neither can the work).
+    private static func applySubagent(_ record: AttentionRecord, sub: String, at ms: Int64, new: Bool, into session: inout Session) {
+        let event = record.event
+        var owned: Block?
+        if case .blocked(let block) = session.state, block.sub == sub { owned = block }
+        let live: Bool
+        switch session.state {
+        case .working, .blocked: live = true
+        case .idle, .yourTurn, .ended: live = false
+        }
+        switch record.kind {
+        case .permission, .question, .waiting:
+            raise(record.kind, record: record, at: ms, in: &session)
+        case .tool, .status:
+            // Work inside a live turn — never a turn of its own after the
+            // person's has ended. A session met only now is working.
+            guard live || new else { return }
+            session.activityMs = max(session.activityMs, ms)
+            session.toolMs = max(session.toolMs, ms)
+            progress(record, at: ms, into: &session)
+            guard ms > session.stateSinceMs || new else { return }
+            if new, !live {
+                set(&session, .working, at: ms, event: event)
+            } else if let owned, answers(record, owned) {
+                answer(&session, at: ms, event: event)
+            }
+        case .working:
+            // Its own task, not the person's prompt.
+            if live { session.activityMs = max(session.activityMs, ms) }
+        case .done:
+            if let owned, ms >= owned.sinceMs { answer(&session, at: ms, event: event) }
+        case .turn, .failed, .idle, .stopped, .end:
+            // The subagent is done: its own ask is over; the session's turn
+            // goes on.
+            if let owned, ms >= owned.sinceMs { answer(&session, at: ms, event: event) }
+        case .start, .title, .dismiss, .ignored:
+            break
+        }
+    }
+
+    /// The person stopped the run (`stopped`): at its prompt, nothing owed,
+    /// no held turn. A stop stamped before the block or turn it would end
+    /// is about an earlier one.
+    private static func stop(_ session: inout Session, at ms: Int64, event: String) {
+        switch session.state {
+        case .blocked, .yourTurn:
+            guard ms >= session.stateSinceMs else { return }
+            set(&session, .idle, at: ms, event: event)
+        case .working:
+            set(&session, .idle, at: ms, event: event)
+        case .idle, .ended:
+            break
+        }
+    }
+
     /// One heard line on the session's timeline; the oldest beyond
     /// `maxTimeline` goes.
     private static func hear(_ session: inout Session, _ heard: Heard) {
@@ -383,15 +502,25 @@ package struct SessionBook: Equatable {
         if case .blocked = prior { wasBlocked = true }
         var isBlocked = false
         if case .blocked = session.state { isBlocked = true }
+        let answered = wasBlocked && !isBlocked
+        if !record.sub.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // A subagent's own lifecycle moves nothing but its own ask.
+            switch record.kind {
+            case .start, .working, .turn, .failed, .idle, .stopped, .title, .end:
+                return answered ? .answered : .subagent
+            default:
+                break
+            }
+        }
         switch record.kind {
         case .start:
             return .started
         case .working:
-            return wasBlocked && !isBlocked ? .answered : .prompt
+            return answered ? .answered : .prompt
         case .tool:
-            if wasBlocked && !isBlocked { return .answered }
+            if answered { return .answered }
             guard let step = stepOf(record) else { return .working }
-            return .step(tool: step.tool, target: step.target)
+            return step.failed ? .failedStep(tool: step.tool, target: step.target) : .step(tool: step.tool, target: step.target)
         case .status:
             return .status
         case .permission, .question, .waiting:
@@ -413,6 +542,10 @@ package struct SessionBook: Equatable {
             return .resolved
         case .dismiss:
             return record.event == AttentionRecord.seenEvent ? .seen : .dismissed
+        case .stopped:
+            return .stopped
+        case .title:
+            return .named
         case .end:
             return .ended
         case .ignored:
@@ -424,9 +557,9 @@ package struct SessionBook: Equatable {
     /// nothing is going on (a `done` or an `end` for a session never seen).
     private func introduce(key: SessionKey, session: String, kind: AttentionKind, ms: Int64) -> Session? {
         switch kind {
-        case .done, .dismiss, .end, .ignored:
+        case .done, .dismiss, .end, .ignored, .title:
             return nil
-        case .turn, .failed, .idle, .tool, .status:
+        case .turn, .failed, .idle, .tool, .status, .stopped:
             // With no identity there is no session to belong to.
             if session.isEmpty { return nil }
         case .start, .working, .permission, .question, .waiting:
@@ -456,27 +589,46 @@ package struct SessionBook: Equatable {
     private static func prompt(_ raw: String, at ms: Int64, into session: inout Session) {
         session.turnStartMs = ms
         session.lastError = ""
+        session.running = nil
         let text = TitleHeuristics.promptTitle(raw)
         guard !text.isEmpty else { return }
         session.lastPrompt = text
         if session.title.isEmpty, TitleHeuristics.isMeaningful(text) { session.title = text }
     }
 
-    /// A `tool` line that names its tool is a step. Lines are applied in
-    /// order, so the last `maxSteps` are the newest.
-    private static func step(_ record: AttentionRecord, at ms: Int64, into session: inout Session) {
-        guard let step = stepOf(record) else { return }
+    /// A `tool` line that names its tool is a step, and finishes the tool
+    /// its speaker said was running (the same tool, or either unnamed); a
+    /// `status` line that names a tool says it runs now. Lines are applied
+    /// in order, so the last `maxSteps` steps are the newest.
+    private static func progress(_ record: AttentionRecord, at ms: Int64, into session: inout Session) {
+        let step = stepOf(record)
+        if record.kind == .status {
+            if let step { session.running = step }
+            return
+        }
+        if let running = session.running, running.sub == record.sub.trimmingCharacters(in: .whitespacesAndNewlines),
+           step == nil || running.tool.caseInsensitiveCompare(step?.tool ?? "") == .orderedSame {
+            session.running = nil
+        }
+        guard let step else { return }
         session.steps.append(step)
         if session.steps.count > maxSteps { session.steps.removeFirst(session.steps.count - maxSteps) }
     }
 
-    /// The step a `tool` line names; nil when it names no tool.
+    /// The step a `tool` (or `status`) line names; nil when it names no tool.
     private static func stepOf(_ record: AttentionRecord) -> Step? {
         let tool = record.tool.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !tool.isEmpty else { return nil }
         var target = TitleHeuristics.firstLine(record.message, limit: stepTargetLimit)
         if target.caseInsensitiveCompare(tool) == .orderedSame { target = "" }
-        return Step(tool: String(tool.prefix(64)), target: target, ms: record.ms)
+        return Step(
+            tool: String(tool.prefix(64)),
+            target: target,
+            ms: record.ms,
+            failed: record.kind == .tool && record.failed,
+            tookMs: record.kind == .tool ? max(0, record.tookMs) : 0,
+            sub: String(record.sub.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+        )
     }
 
     /// A blocked event. A re-raise of the same kind inside the grace is the
@@ -494,7 +646,8 @@ package struct SessionBook: Equatable {
             kind: kind,
             ask: ContentSanitizer.redact(record.message),
             sinceMs: ms,
-            inFront: record.front == true
+            inFront: record.front == true,
+            sub: String(record.sub.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
         )
         let named = record.tool.trimmingCharacters(in: .whitespacesAndNewlines)
         block.tool = named.isEmpty ? blockedTool(block.ask) : named
@@ -509,7 +662,7 @@ package struct SessionBook: Equatable {
         // keeps the first one's, as it keeps its clock.
         var cause = record.event
         if case .blocked(let open) = session.state {
-            if open.kind == kind, abs(ms - open.sinceMs) < Self.stopGraceMs {
+            if open.kind == kind, open.sub == block.sub, abs(ms - open.sinceMs) < Self.stopGraceMs {
                 cause = session.stateEvent
                 if askSpecificity(block.ask, tool: block.tool) <= askSpecificity(open.ask, tool: open.tool) {
                     block.ask = open.ask
@@ -558,7 +711,13 @@ package struct SessionBook: Equatable {
         session.state = state
         session.stateSinceMs = ms
         session.stateEvent = event
-        if case .blocked = state { return }
+        switch state {
+        case .blocked: return
+        case .working: break
+        case .idle, .yourTurn, .ended:
+            // The turn is over: nothing runs now.
+            session.running = nil
+        }
         session.heldTurn = nil
     }
 
@@ -730,6 +889,7 @@ package struct SessionBook: Equatable {
             lastWords: session.message,
             lastError: session.lastError,
             steps: session.steps,
+            running: session.running,
             turnStartMs: session.turnStartMs,
             lastEventMs: session.lastEventMs,
             activityMs: session.activityMs,
