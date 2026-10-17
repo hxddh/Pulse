@@ -28,8 +28,9 @@ struct SessionDetailView: View {
 /// Renders a `DetailModel` and nothing else: the header (back, lamp, the
 /// agent's icon and the headline — the page's title), then the ask with Go
 /// and Ignore, the landing notice, the why, the timeline of what Pulse
-/// heard, the last message, the error and the facts (this turn, the
-/// folder) — each block only when it has something to say.
+/// heard, the last message, the error, the facts (this turn, the folder)
+/// and — for an agent that cannot report one — that it does not report
+/// waits; each block only when it has something to say.
 struct SessionDetailFace: View {
     let model: DetailModel
     /// Off for a fixture capture, which measures the whole page.
@@ -133,6 +134,12 @@ struct SessionDetailFace: View {
                 }
             }
             FactGrid(facts: model.facts)
+            if let caveat = model.caveat {
+                Text(caveat)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(.horizontal, TrayChrome.padX)
         .padding(.vertical, PulseTheme.Space.m)
@@ -223,6 +230,7 @@ struct TimelineGrid: View {
     private static func style(_ tone: DetailModel.Entry.Tone) -> AnyShapeStyle {
         switch tone {
         case .alert: return AnyShapeStyle(Lamp.waiting.color)
+        case .failure: return AnyShapeStyle(PulseTheme.warning)
         case .plain: return AnyShapeStyle(.primary)
         case .quiet: return AnyShapeStyle(.tertiary)
         }

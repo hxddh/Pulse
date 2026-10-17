@@ -3,8 +3,9 @@ import Foundation
 /// One agent's hook connection, as Settings → Hooks says it on the agent's
 /// line and "Copy report" says it in English: whether Pulse's hook is
 /// installed and whole, which vendor event was heard last and when, the
-/// last event it heard and did not turn into state (and why), and whether
-/// the agent can report a wait at all.
+/// last event it heard and did not use (and why), and what the agent's
+/// adapter reports at all (`AgentCapabilities`: waits, steps, last words,
+/// titles).
 ///
 /// Pure: built from what the installer read (`HooksSupport.inspect`), the
 /// last install's failure and the event log's newest lines (kept by
@@ -289,8 +290,9 @@ package struct Connection: Equatable, Sendable {
             : String(format: L10n.t(.settingsHookHeard, lang), name, when)
     }
 
-    /// "Last ignored PreCompact — not an installed event · 2m ago"; nil
-    /// when nothing was.
+    /// "Last not used PreCompact — not an installed event · 2m ago" — the
+    /// receiver did not use it ("Ignore" is the person's word, for a wait);
+    /// nil when nothing was.
     package func ignoredText(nowMs: Int64, lang: ResolvedLanguage) -> String? {
         guard let ignored = lastIgnored, ignored.ms > 0 else { return nil }
         let name = EventName.display(ignored.event)
@@ -302,10 +304,22 @@ package struct Connection: Equatable, Sendable {
         )
     }
 
-    /// "Reports when it waits" / "Doesn't report when it waits — running
-    /// and your turn only".
-    package func waitsText(lang: ResolvedLanguage) -> String {
-        L10n.t(reportsWaits ? .settingsHookReportsWaits : .settingsHookNoWait, lang)
+    /// What the agent reports, from its adapter (`AgentCapabilities`):
+    /// "Reports waits, steps, last words, titles"; an agent that cannot
+    /// report a wait says so and names its turns — "Reports turns, steps,
+    /// last words — not waits".
+    package func capabilityText(lang: ResolvedLanguage) -> String {
+        Self.capabilityText(agent.spec.capabilities, lang: lang)
+    }
+
+    /// `capabilityText`, for a set of capabilities. Pure.
+    package static func capabilityText(_ can: AgentCapabilities, lang: ResolvedLanguage) -> String {
+        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
+        var words: [String] = [t(can.waits ? .capWaits : .capTurns)]
+        if can.steps { words.append(t(.capSteps)) }
+        if can.lastWords { words.append(t(.capWords)) }
+        if can.titles { words.append(t(.capTitles)) }
+        return String(format: t(can.waits ? .capReports : .capReportsNoWaits), L10n.list(words, lang))
     }
 
     /// The receiver's reason for an `ignored` line, in the person's
@@ -341,8 +355,9 @@ package struct Connection: Equatable, Sendable {
         return name.isEmpty ? "?" : name
     }
 
-    /// One agent's line: "  claude: installed, heard Stop 42s ago, last
-    /// ignored PreCompact (not an installed event) 3s ago, reports waits".
+    /// One agent's line: "  claude: installed, heard Stop 42s ago, last not
+    /// used PreCompact (not an installed event) 3s ago, capabilities: waits
+    /// steps words titles".
     package func reportLine(present: Bool, nowMs: Int64) -> String {
         func age(_ ms: Int64) -> String { "\(max(0, (nowMs - ms) / 1000))s ago" }
         var parts: [String] = []
@@ -366,10 +381,10 @@ package struct Connection: Equatable, Sendable {
             parts.append("nothing heard yet")
         }
         if let ignored = lastIgnored, ignored.ms > 0 {
-            parts.append("last ignored \(Self.reportEvent(ignored.event)) (\(Self.reportReason(ignored.reason))) \(age(ignored.ms))")
+            parts.append("last not used \(Self.reportEvent(ignored.event)) (\(Self.reportReason(ignored.reason))) \(age(ignored.ms))")
         }
         if install.carriesHook || present {
-            parts.append(reportsWaits ? "reports waits" : "doesn't report waits")
+            parts.append("capabilities: " + agent.spec.capabilities.reportWords.joined(separator: " "))
         }
         if configDirMissing, let relocation = agent.spec.hooks.relocation {
             parts.append("installs to ~/\(relocation.dir), not there (\(relocation.variable) is not followed)")

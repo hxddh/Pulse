@@ -72,7 +72,7 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
   `ignored` line that says why not (an event not installed, a payload that is
   not JSON, a blocked event from an agent that cannot report one, a vendor
   prompt that does not block) — never the payload's words. The reducer changes no state for `ignored`; it goes on its
-  session's timeline and Settings' "last ignored" — it is there to be read.
+  session's timeline and Settings' "last not used" — it is there to be read.
 - **Replay before the first projection.** At launch `ScanEngine` applies the
   whole log, in order, to `SessionBook`, and only then projects; that
   projection is the banner baseline. Every line carries a `seq` assigned
@@ -203,7 +203,8 @@ contracts and their sources, no gating event, libproc only, AppleScript only
 in `TerminalFocus`, no network API, no token / usage / cost reads),
 `make_agent_icons --check`, `surface_check` (views render values, the pure
 models stay in `PulseKit` and it imports no UI framework, QA files stay in
-`PulseQA`, a why never says "hook", a step never says "running") and
+`PulseQA`, a why never says "hook", a step never says "running", and the
+one live line — "Now: …", `nowLine` — reads only `SessionFacts.running`) and
 a `Bundle.module` grep. `vendor_drift.py` runs weekly
 (`vendor-drift.yml`). A gate earns its place by guarding a real fact.
 

@@ -375,7 +375,7 @@ struct TrayRowFace: View {
             line
             if let second = model.secondLine {
                 Text(second.text)
-                    .font(second.kind == .step ? PulseTheme.Font.caption : PulseTheme.Font.body)
+                    .font(second.kind.isQuiet ? PulseTheme.Font.caption : PulseTheme.Font.body)
                     .foregroundStyle(Self.secondLineStyle(second.kind))
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -416,13 +416,14 @@ struct TrayRowFace: View {
             .padding(.bottom, Self.verticalPadding)
     }
 
-    /// The ask reads as secondary, the why of a stall in its tone, a step
-    /// quietest of all.
+    /// The ask reads as secondary, the why of a stall in its tone, a failed
+    /// turn's error secondary and small, a step or the live tool quietest
+    /// of all.
     private static func secondLineStyle(_ kind: TrayRowModel.SecondLine.Kind) -> AnyShapeStyle {
         switch kind {
-        case .ask: return AnyShapeStyle(.secondary)
+        case .ask, .failure: return AnyShapeStyle(.secondary)
         case .warning: return AnyShapeStyle(PulseTheme.warning)
-        case .step: return AnyShapeStyle(.tertiary)
+        case .step, .now: return AnyShapeStyle(.tertiary)
         }
     }
 

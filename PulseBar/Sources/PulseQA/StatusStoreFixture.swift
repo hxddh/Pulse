@@ -151,8 +151,8 @@ extension StatusStore {
         var snap = PulseSnapshot(counts: counts, projected: true)
         snap.lamp = Lamp(rule)
         snap.title = title
-        snap.tooltip = TrayState.lampSentence(rule, lang: lang)
-        snap.accessibilityLabel = snap.lamp.isGrey ? tr(.a11yIdle) : snap.tooltip
+        snap.tooltip = TrayState.tooltip(rule, rows: rows, counts: counts, nowMs: Int64(Date().timeIntervalSince1970 * 1000), lang: lang)
+        snap.accessibilityLabel = snap.lamp.isGrey ? tr(rule.accessibilityKey) : snap.tooltip
         snapshot = snap
     }
 }

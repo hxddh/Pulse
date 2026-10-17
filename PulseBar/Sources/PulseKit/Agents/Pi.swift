@@ -62,6 +62,8 @@ extension AgentSpec {
         subagentKeys: [],
         // The extension spawns pulse-hook itself, with `process.pid`.
         reportsOwnPID: true,
+        // A turn says its last words: `agent_settled` carries `agent_end`'s last assistant words.
+        lastWords: true,
         read: { Pi.read($0, $1) }
     )
 }

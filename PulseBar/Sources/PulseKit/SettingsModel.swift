@@ -4,9 +4,10 @@ import Foundation
 ///
 /// General (open at login) · Notifications (whether macOS allows banners) ·
 /// Hooks — the diagnostics: Install all / Remove all, one line per agent on
-/// this Mac (its `Connection`: installed, needing an update or failed, the
-/// vendor event heard last and when, the last one not used and why, whether
-/// it reports a wait), the agents that are not here collapsed into one line,
+/// this Mac (its `Connection`: installed, needing an update or failed; what
+/// its adapter reports — waits, steps, last words, titles; the vendor event
+/// heard last and when; why a whole install may not run; the last event not
+/// used and why), the agents that are not here collapsed into one line,
 /// and "Copy report". The
 /// version, the kind of build and "Releases…" are the footer. The language
 /// is the system's. `SettingsFace` renders this and sends `Action`s; the
@@ -98,9 +99,11 @@ package struct SettingsModel: Equatable {
         self.focus = focus
     }
 
-    /// One agent's connection, as the Hooks section says it: its name and
-    /// state on one line, under it what was heard and whether it reports a
-    /// wait.
+    /// One agent's connection, as the Hooks section says it, in one order:
+    /// its name and state on one line; under it, quietly, what it reports
+    /// (`capability`), what was heard and when with any caveat the state
+    /// line does not already say (`detail`), and the last event not used
+    /// (`notUsed`).
     package struct HookAgent: Equatable, Identifiable {
         package enum Tone: Equatable {
             /// Installed and whole.
@@ -116,11 +119,15 @@ package struct SettingsModel: Equatable {
         /// "Not installed".
         package var state: String
         package var tone: Tone
-        /// "Heard PermissionRequest · 4m ago" · "Reports when it waits";
-        /// what was heard only when a hook is there to hear.
+        /// "Reports waits, steps, last words, titles" — from the adapter,
+        /// whatever the install.
+        package var capability: String
+        /// "Heard PermissionRequest · 4m ago" (only when a hook is there to
+        /// hear), a caveat the state line does not say, a config folder
+        /// that is missing; "" when none.
         package var detail: String
-        /// "Last ignored PreCompact — not an installed event · 2m ago".
-        package var ignored: String?
+        /// "Last not used PreCompact — not an installed event · 2m ago".
+        package var notUsed: String?
 
         package var agent: AgentID { connection.agent }
         package var id: AgentID { agent }
@@ -145,9 +152,10 @@ package struct SettingsModel: Equatable {
             if let reason = connection.caveat, connection.install != .complete {
                 caveat = connection.caveatText(reason, lang: lang)
             }
-            detail = [heard, connection.waitsText(lang: lang), caveat, connection.configDirText(lang: lang) ?? ""]
+            capability = connection.capabilityText(lang: lang)
+            detail = [heard, caveat, connection.configDirText(lang: lang) ?? ""]
                 .filter { !$0.isEmpty }.joined(separator: " · ")
-            ignored = connection.ignoredText(nowMs: nowMs, lang: lang)
+            notUsed = connection.ignoredText(nowMs: nowMs, lang: lang)
         }
     }
 
@@ -199,7 +207,7 @@ package struct SettingsModel: Equatable {
     /// What "Copy report" puts on the clipboard: plain text, English, no
     /// path, prompt, session id or project — the version, each agent's
     /// connection (its install, the event heard last, the last one not
-    /// used and why, whether it reports a wait), whether macOS allows
+    /// used and why, what it reports), whether macOS allows
     /// banners, the login item as macOS sees it, and how Pulse reads each
     /// listed session with its last few heard lines (the detail page does
     /// not say it).
@@ -250,7 +258,11 @@ package struct SettingsModel: Equatable {
         package var go: LandingPlan.Precision?
         package var liveProcess: Bool
         package var lastEventMs: Int64
-        /// The last `reportTimeline` heard lines, newest first.
+        /// Steps this turn took, and how many failed.
+        package var turnSteps: Int
+        package var turnFailedSteps: Int
+        /// The last `reportTimeline` heard lines, newest first — runs of
+        /// steps already grouped (`SessionBook.StepRun`).
         package var timeline: [SessionBook.Heard]
 
         /// Heard lines a session's report carries.
@@ -270,6 +282,8 @@ package struct SettingsModel: Equatable {
             go = row.landingPlan.precision
             liveProcess = row.liveProcess
             lastEventMs = facts.lastEventMs
+            turnSteps = facts.turnSteps
+            turnFailedSteps = facts.turnFailedSteps
             timeline = Array(facts.timeline.suffix(Self.reportTimeline).reversed())
         }
 
@@ -284,6 +298,9 @@ package struct SettingsModel: Equatable {
             var text = "  \(agent.rawValue): \(state), from \(source), go \(goWord)"
             text += liveProcess ? ", process watched" : ", no process"
             text += lastEventMs > 0 ? ", last event \(max(0, (nowMs - lastEventMs) / 1000))s ago" : ", no event"
+            if turnSteps > 0 {
+                text += ", steps \(turnSteps)" + (turnFailedSteps > 0 ? " (\(turnFailedSteps) failed)" : "")
+            }
             for heard in timeline {
                 let by = heard.sub.isEmpty ? "" : "subagent "
                 text += "\n    \(max(0, (nowMs - heard.ms) / 1000))s ago · \(Connection.reportEvent(heard.event)) · \(by)\(Self.word(heard.effect))"
@@ -300,6 +317,9 @@ package struct SettingsModel: Equatable {
             case .prompt: return "prompt"
             case .step(let tool, _): return "step \(Connection.reportEvent(tool))"
             case .failedStep(let tool, _): return "failed step \(Connection.reportEvent(tool))"
+            case .steps(let run):
+                let tools = run.tools.map { "\(Connection.reportEvent($0.tool))×\($0.count)" }.joined(separator: " ")
+                return "steps \(tools)" + (run.failed > 0 ? " (\(run.failed) failed)" : "")
             case .working: return "working"
             case .status: return "status"
             case .raised(let kind): return "raised \(kind.rawValue)"
@@ -317,7 +337,7 @@ package struct SettingsModel: Equatable {
             case .named: return "named"
             case .subagent: return "subagent lifecycle"
             case .ended: return "ended"
-            case .skipped(let reason): return "ignored (\(Connection.reportReason(reason)))"
+            case .skipped(let reason): return "not used (\(Connection.reportReason(reason)))"
             }
         }
     }

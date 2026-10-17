@@ -67,13 +67,21 @@ re-raise inside the grace keeps the first raise's, a held turn lands with
 its own, a process exit has none) and its last `SessionBook.maxTimeline`
 heard lines, each with the `SessionBook.Effect` the reducer decided as it
 applied it — raised, said again, answered, your turn, held, dismissed,
-seen, stopped, named, a step (or a failed one), a subagent's own lifecycle,
-an `ignored` line's reason — and which subagent said it (`Heard.sub`, the
-v8 `sub` column; the detail page marks it "Subagent · …"). Nothing is guessed from an event's
-name, and the ring is rebuilt by the launch replay like every other fact.
-The why cites the event (`TrayRowModel.cause`; `EventName.display` refuses a
-column that is not a name); the detail page draws the ring; the report
-carries the last three, a step by its tool only.
+seen, stopped, named, a step (or a failed one, with its `took`), a run of
+consecutive steps of one speaker merged as it is heard (`StepRun`: each
+tool and its count, how many failed — so the ring covers a turn), a
+subagent's own lifecycle, an `ignored` line's reason — and which subagent
+said it (`Heard.sub`, the v8 `sub` column; the detail page marks it
+"Subagent · …"). The session also counts the current turn's steps and
+failures, and keeps whether its last turn failed and whether the person
+stopped it. Nothing is guessed from an event's name, and all of it is
+rebuilt by the launch replay like every other fact. The why says what
+happened in plain words and cites no event; the event names are the detail
+page's timeline column (`EventName.display` refuses a column that is not a
+name), Settings → Hooks and the report, which carries the last three
+entries, a step by its tool only. Each agent's capability line (waits,
+steps, last words, titles) is `AgentSpec.capabilities`, derived from its
+adapter.
 
 Settings' per-agent line is a `Connection`: the install
 `HooksSupport.inspect` reads from the agent's config — the events that carry

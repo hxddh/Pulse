@@ -50,7 +50,8 @@ package enum Lamp: String, CaseIterable, Equatable, Sendable {
         case .waiting: return .a11yWaiting
         case .running: return .a11yRunning
         case .stalled: return .a11yStalled
-        case .idle, .processOnly: return .a11yIdle
+        case .processOnly: return .a11yProcessOnly
+        case .idle: return .a11yIdle
         }
     }
 }
@@ -113,6 +114,14 @@ package struct SessionFacts: Equatable, Sendable {
     /// The last `SessionBook.maxTimeline` lines it heard, oldest first —
     /// the detail page's timeline.
     package var timeline: [SessionBook.Heard]
+    /// Steps the current turn took (its subagents' among them), and how
+    /// many failed.
+    package var turnSteps: Int
+    package var turnFailedSteps: Int
+    /// The latest turn ended on an error.
+    package var failedTurn: Bool
+    /// The person stopped the run, and nothing has moved it since.
+    package var stopped: Bool
 
     package init(
         lastWords: String = "",
@@ -124,7 +133,11 @@ package struct SessionFacts: Equatable, Sendable {
         activityMs: Int64 = 0,
         stateEvent: String = "",
         lastEvent: String = "",
-        timeline: [SessionBook.Heard] = []
+        timeline: [SessionBook.Heard] = [],
+        turnSteps: Int = 0,
+        turnFailedSteps: Int = 0,
+        failedTurn: Bool = false,
+        stopped: Bool = false
     ) {
         self.lastWords = lastWords
         self.lastError = lastError
@@ -136,10 +149,14 @@ package struct SessionFacts: Equatable, Sendable {
         self.stateEvent = stateEvent
         self.lastEvent = lastEvent
         self.timeline = timeline
+        self.turnSteps = turnSteps
+        self.turnFailedSteps = turnFailedSteps
+        self.failedTurn = failedTurn
+        self.stopped = stopped
     }
 
-    /// The newest step; nil when the agent's hook names no tool (Cursor,
-    /// OpenCode) or none has run.
+    /// The newest step; nil when the agent's hook names no tool or none
+    /// has run.
     package var lastStep: SessionBook.Step? { steps.last }
 
     /// The newest clock, in ms; 0 unknown.

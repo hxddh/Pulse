@@ -300,7 +300,8 @@ final class StatusStore {
     func trayRowModel(_ row: AgentRow, at date: Date = Date()) -> TrayRowModel {
         TrayRowModel.make(TrayRowModel.Input(
             row: row, facts: facts(for: row.key), lang: lang,
-            nowMs: Self.ms(date), notice: rowActionNotices[row.key]
+            nowMs: Self.ms(date), notice: rowActionNotices[row.key],
+            connected: connected(row.agent)
         ))
     }
 
@@ -308,8 +309,19 @@ final class StatusStore {
     func detailModel(_ row: AgentRow, at date: Date = Date()) -> DetailModel {
         DetailModel.make(
             row: row, facts: facts(for: row.key), lang: lang,
-            nowMs: Self.ms(date), notice: rowActionNotices[row.key]
+            nowMs: Self.ms(date), notice: rowActionNotices[row.key],
+            connected: connected(row.agent)
         )
+    }
+
+    /// Pulse's hook is in the agent's config (the last probe; a status not
+    /// read yet counts as connected, so nothing is claimed missing).
+    private func connected(_ agent: AgentID) -> Bool {
+        if let install = hookInstalls[agent] { return install.carriesHook }
+        switch hooksStatus {
+        case .unknown, .working: return true
+        case .missing, .installed, .failed: return hooksStatus.isInstalled(for: agent)
+        }
     }
 
     private static func ms(_ date: Date) -> Int64 { Int64(date.timeIntervalSince1970 * 1000) }

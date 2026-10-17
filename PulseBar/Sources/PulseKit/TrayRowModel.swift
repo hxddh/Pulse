@@ -4,8 +4,10 @@ import Foundation
 ///
 /// One line — lamp · agent · project · headline · time — and a second line
 /// only when the row has something to add: the ask of a blocked row, the why
-/// of a stalled one, or — quietly — a running row's last step ("Bash · swift
-/// test · 12m ago", a past step, never "running"). No chip, no tint, no "new"
+/// of a stalled one, or — quietly — a running row's live tool ("Now: Bash ·
+/// npm test · 3m", only while the agent says it has not finished) else its
+/// last step ("Bash · swift test · 12m ago", a past step, never "running"),
+/// or a failed turn's error ("Turn failed: …"). No chip, no tint, no "new"
 /// dot, no buttons on the row: the verbs are a click (the body goes, the
 /// trailing "›" or an ⌥-click opens the detail — `clickAction`), keys (↩ →
 /// ⌘D), the context menu (which shows each key), VoiceOver actions and
@@ -63,8 +65,22 @@ package struct TrayRowModel: Equatable {
             case ask
             /// Why a stalled row is orange.
             case warning
-            /// A running row's last step — quiet.
+            /// A running row's last step — quiet. A past step: never
+            /// "running" (`surface_check`).
             case step
+            /// The tool the agent said started and has not finished
+            /// (`SessionFacts.running`) — quiet, "Now: …".
+            case now
+            /// The error a turn ended on — quiet; the lamp stays grey.
+            case failure
+
+            /// Said in small, quiet type.
+            package var isQuiet: Bool {
+                switch self {
+                case .step, .now, .failure: return true
+                case .ask, .warning: return false
+                }
+            }
         }
         package var kind: Kind
         package var text: String
@@ -105,13 +121,20 @@ package struct TrayRowModel: Equatable {
         package var lang: ResolvedLanguage
         package var nowMs: Int64
         package var notice: RowNotice?
+        /// Pulse's hook is installed for the row's agent — what a
+        /// process-only row's why says it is waiting for.
+        package var connected: Bool
 
-        package init(row: AgentRow, facts: SessionFacts = SessionFacts(), lang: ResolvedLanguage, nowMs: Int64, notice: RowNotice? = nil) {
+        package init(
+            row: AgentRow, facts: SessionFacts = SessionFacts(), lang: ResolvedLanguage, nowMs: Int64,
+            notice: RowNotice? = nil, connected: Bool = true
+        ) {
             self.row = row
             self.facts = facts
             self.lang = lang
             self.nowMs = nowMs
             self.notice = notice
+            self.connected = connected
         }
     }
 
@@ -121,7 +144,7 @@ package struct TrayRowModel: Equatable {
         let lang = input.lang
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         let headline = Self.headline(row, facts: facts, lang: lang, nowMs: input.nowMs)
-        let why = Self.why(row, facts: facts, lang: lang, nowMs: input.nowMs)
+        let why = Self.why(row, facts: facts, lang: lang, nowMs: input.nowMs, connected: input.connected)
         let lamp = row.lamp
         let age = Self.rowTime(row, facts: facts, nowMs: input.nowMs, lang: lang)
         let place = row.project
@@ -141,8 +164,8 @@ package struct TrayRowModel: Equatable {
         if !project.isEmpty { spoken.append(project) }
         let spokenAge = Self.rowTime(row, facts: facts, nowMs: input.nowMs, lang: lang, spoken: true)
         if !spokenAge.isEmpty { spoken.append(spokenAge) }
-        if let second, second.kind != .step { spoken.append(second.text) } else { spoken.append(why) }
-        if let second, second.kind == .step { spoken.append(second.text) }
+        if let second, !second.kind.isQuiet { spoken.append(second.text) } else { spoken.append(why) }
+        if let second, second.kind.isQuiet { spoken.append(second.text) }
 
         return TrayRowModel(
             lang: lang,
@@ -166,9 +189,12 @@ package struct TrayRowModel: Equatable {
 
     /// The second line exists only for a blocked row (its ask — or, when
     /// the agent did not say, what kind of wait it is), for an orange row
-    /// (the why, which names the last step) and for a running row whose hook
-    /// named a step (the step, quietly). Everything else is one line — a
-    /// running row whose hook has named no tool yet among them.
+    /// (the why, which names the last step), for a running row whose agent
+    /// said a tool started and has not finished (that tool, "Now: …") or
+    /// named a step (the step, quietly), and for a turn that ended on an
+    /// error with words (the error's first line, quietly). Everything else
+    /// is one line — a running row whose hook has named no tool yet among
+    /// them.
     package static func secondLine(
         _ row: AgentRow,
         facts: SessionFacts,
@@ -183,9 +209,17 @@ package struct TrayRowModel: Equatable {
         case .running(stalled: true):
             return SecondLine(kind: .warning, text: why)
         case .running(stalled: false):
+            // Only the agent's own "started, not finished" says a tool is
+            // live; a finished step never does.
+            if let live = facts.running {
+                return SecondLine(kind: .now, text: truncate(nowLine(live, nowMs: nowMs, lang: lang), 140))
+            }
             guard let step = facts.lastStep else { return nil }
             return SecondLine(kind: .step, text: truncate(stepLine(step, nowMs: nowMs, lang: lang), 140))
-        case .yourTurn, .recent, .processOnly:
+        case .yourTurn:
+            guard facts.failedTurn, !facts.lastError.isEmpty else { return nil }
+            return SecondLine(kind: .failure, text: truncate(String(format: L10n.t(.failedTurnLine, lang), facts.lastError), 140))
+        case .recent, .processOnly:
             return nil
         }
     }
@@ -196,11 +230,12 @@ package struct TrayRowModel: Equatable {
 /// What a row is doing and why Pulse says so, in plain words:
 ///
 /// - `headline` — what it is doing or asking: the tray hero;
-/// - `why` — one sentence: what put the row in its state, the vendor event
-///   that said so, and since when ("Asked permission (PermissionRequest) ·
-///   4m ago", "Turn ended (Stop) · 2m ago", "Nothing new for 23m", "Started
-///   before Pulse — details after its next step"). The agent's name is the
-///   row's icon; never the word "hook" — `surface_check.py` holds it.
+/// - `why` — one sentence: what put the row in its state and since when
+///   ("Asked permission · 4m ago", "Turn failed · 2m ago", "Stopped by you
+///   · now", "Nothing new for 23m", "Started before Pulse — details after
+///   its next step"). The vendor's event names are not in it — they are in
+///   the detail page's timeline and Settings → Hooks. The agent's name is
+///   the row's icon; never the word "hook" — `surface_check.py` holds it.
 ///
 /// Pure: the row, its facts, the language and the clock in; the same inputs
 /// always give the same sentences. It never guesses — every word comes from
@@ -234,31 +269,35 @@ extension TrayRowModel {
             if let task = row.usefulTask { return task }
             if !facts.lastWords.isEmpty, facts.selfReportFresh(at: nowMs) { return facts.lastWords }
             if !project.isEmpty { return project }
-            return row.canFocusTerminal ? t(.terminalSession) : t(.appSession)
+            return t(.sessionNoTitle)
         }
     }
 
     // MARK: - Why
 
-    /// Which evidence put the row in its state — the vendor event that
-    /// said so, when the book knows it — and since when.
-    package static func why(_ row: AgentRow, facts: SessionFacts = SessionFacts(), lang: ResolvedLanguage, nowMs: Int64) -> String {
+    /// What put the row in its state, and since when — in the words the
+    /// timeline and the banner use for the same thing; `connected`: Pulse's
+    /// hook is installed for the agent (a process-only row is waiting for
+    /// its next step, else for Pulse to connect it).
+    package static func why(
+        _ row: AgentRow, facts: SessionFacts = SessionFacts(), lang: ResolvedLanguage, nowMs: Int64, connected: Bool = true
+    ) -> String {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         func since(_ ms: Int64) -> String { ms > 0 ? L10n.ago(ms, nowMs: nowMs, lang) : "?" }
-        func said(_ what: String, event: String, at ms: Int64) -> String {
-            String(format: t(.explainWhen), cause(what, event: event, lang: lang), since(ms))
+        func said(_ what: String, at ms: Int64) -> String {
+            String(format: t(.explainWhen), what, since(ms))
         }
         let quiet = L10n.duration(facts.lastActivitySeconds(at: nowMs), lang)
         let last = facts.lastActivityMs
         switch row.status {
         case .needsYou(let block):
-            var text = said(kindNoun(block.kind, lang: lang), event: facts.stateEvent, at: block.sinceMs)
+            var text = said(L10n.waitKind(block.kind, lang), at: block.sinceMs)
             if block.inFront { text += t(.explainAskedFront) }
             return text
         case .yourTurn(let sinceMs):
-            return said(t(.explainTurn), event: facts.stateEvent, at: sinceMs)
+            return said(t(facts.failedTurn ? .timelineFailed : .explainTurn), at: sinceMs)
         case .processOnly:
-            return t(.explainProcessOnly)
+            return t(connected ? .explainProcessOnly : .explainProcessOnlyUnconnected)
         case .running(stalled: true):
             guard last > 0 else { return t(.explainStalledUnknown) }
             if let step = facts.lastStep {
@@ -267,33 +306,16 @@ extension TrayRowModel {
             return String(format: t(.explainStalled), quiet)
         case .running(stalled: false):
             guard last > 0 else { return t(.explainRunningNoClock) }
-            return said(t(.explainRunning), event: facts.lastEvent, at: last)
+            return said(t(.explainRunning), at: last)
         // Which rule made it recent — never a guess that it runs.
         case .recent(.atPrompt):
-            return said(t(.explainIdle), event: facts.stateEvent, at: last)
+            return said(t(facts.stopped ? .timelineStopped : .explainIdle), at: last)
         case .recent(.ended(let atMs)):
-            return said(t(.explainEnded), event: facts.stateEvent, at: atMs > 0 ? atMs : last)
+            return said(t(.explainEnded), at: atMs > 0 ? atMs : last)
         case .recent(.quiet):
             return String(format: t(.explainQuiet), quiet)
         case .recent(.silent):
             return String(format: t(.explainSilent), quiet)
-        }
-    }
-
-    /// "Asked permission (PermissionRequest)": what happened and the vendor
-    /// event that said it — the event only when it is a name
-    /// (`EventName.display`); "" says nothing more.
-    package static func cause(_ what: String, event: String, lang: ResolvedLanguage) -> String {
-        let name = EventName.display(event)
-        return name.isEmpty ? what : String(format: L10n.t(.explainCause, lang), what, name)
-    }
-
-    /// A wait kind as what the agent did: "Asked permission".
-    package static func kindNoun(_ kind: AttentionKind, lang: ResolvedLanguage) -> String {
-        switch kind {
-        case .permission: return L10n.t(.explainKindPermission, lang)
-        case .question: return L10n.t(.explainKindInput, lang)
-        default: return L10n.t(.explainKindWaiting, lang)
         }
     }
 
@@ -326,16 +348,43 @@ extension TrayRowModel {
     }
 
     /// A step with its age: "Bash · swift test · 12m ago" — "now" below a
-    /// minute, like the row's own time.
+    /// minute, like the row's own time; "Subagent · Grep · TODO · …" when a
+    /// subagent took it, "… · failed · 1m ago" when it failed.
     package static func stepLine(_ step: SessionBook.Step, nowMs: Int64, lang: ResolvedLanguage) -> String {
-        "\(stepText(step)) · \(L10n.ago(step.ms, nowMs: nowMs, lang))"
+        var text = stepText(step)
+        if !step.sub.isEmpty { text = String(format: L10n.t(.timelineBySubagent, lang), text) }
+        if step.failed { text += " · " + L10n.t(.stepFailedMark, lang) }
+        return "\(text) · \(L10n.ago(step.ms, nowMs: nowMs, lang))"
+    }
+
+    /// The live tool — the one the agent said started and has not finished
+    /// (`SessionFacts.running`, never a finished step): "Now: Bash · npm
+    /// test · 3m", how long it has been going; no time below a minute.
+    /// Its own words, never a step's (`surface_check`).
+    package static func nowLine(_ live: SessionBook.Step, nowMs: Int64, lang: ResolvedLanguage) -> String {
+        var text = stepText(live)
+        if !live.sub.isEmpty { text = String(format: L10n.t(.timelineBySubagent, lang), text) }
+        var line = String(format: L10n.t(.stepNow, lang), text)
+        let seconds = Double(nowMs - live.ms) / 1000
+        if live.ms > 0, seconds >= 60 { line += " · " + L10n.duration(seconds, lang) }
+        return line
+    }
+
+    /// How long one step ran, from the vendor's `took`: "2.3s" / "2.3秒"
+    /// below a minute, else one unit ("4m"); "" unknown.
+    package static func tookText(_ ms: Int64, lang: ResolvedLanguage) -> String {
+        guard ms > 0 else { return "" }
+        let seconds = Double(ms) / 1000
+        if seconds >= 60 { return L10n.duration(seconds, lang) }
+        return String(format: L10n.t(.stepTook, lang), String(format: "%.1f", seconds))
     }
 
     // MARK: - Timeline
 
-    /// What one heard line did, in a few words: "Raised · Permission",
-    /// "Answered", "Bash · swift test" (a step, as the row says it),
-    /// "Ignored — not an installed event". The detail page's timeline.
+    /// What one heard line did, in a few words: "Asked permission" (the
+    /// banner's and the why's words), "Answered", "Bash · swift test" (a
+    /// step, as the row says it), "Edit ×4 · Bash ×2" (a run of steps),
+    /// "Not used — not an installed event". The detail page's timeline.
     package static func effectText(_ effect: SessionBook.Effect, lang: ResolvedLanguage) -> String {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         switch effect {
@@ -344,9 +393,12 @@ extension TrayRowModel {
         case .step(let tool, let target): return stepText(SessionBook.Step(tool: tool, target: target, ms: 0))
         case .failedStep(let tool, let target):
             return String(format: t(.timelineFailedStep), stepText(SessionBook.Step(tool: tool, target: target, ms: 0)))
+        case .steps(let run):
+            let tools = run.tools.map { $0.count > 1 ? "\($0.tool) ×\($0.count)" : $0.tool }.joined(separator: " · ")
+            return run.failed > 0 ? String(format: t(.timelineStepsFailed), tools, run.failed) : tools
         case .working: return t(.timelineWorking)
         case .status: return t(.timelineStatus)
-        case .raised(let kind): return String(format: t(.timelineRaised), L10n.waitKind(kind, lang))
+        case .raised(let kind): return L10n.waitKind(kind, lang)
         case .again: return t(.timelineAgain)
         case .answered: return t(.timelineAnswered)
         case .yourTurn: return t(.yourTurn)
@@ -365,11 +417,35 @@ extension TrayRowModel {
         }
     }
 
-    /// One heard line's words on the timeline: what it did, marked
-    /// "Subagent · …" when a subagent said it.
+    /// One heard line's words on the timeline: what it did, how long a
+    /// single step ran ("Bash · swift test · 2.3s"), marked "Subagent · …"
+    /// when a subagent said it.
     package static func heardText(_ heard: SessionBook.Heard, lang: ResolvedLanguage) -> String {
-        let text = effectText(heard.effect, lang: lang)
+        var text = effectText(heard.effect, lang: lang)
+        switch heard.effect {
+        case .step, .failedStep:
+            let took = tookText(heard.tookMs, lang: lang)
+            if !took.isEmpty { text += " · " + took }
+        default:
+            break
+        }
         return heard.sub.isEmpty ? text : String(format: L10n.t(.timelineBySubagent, lang), text)
+    }
+
+    /// This turn as the detail page says it: "14m · 23 steps (2 failed)" —
+    /// the duration when its start is known, the steps when any were
+    /// taken; "" when neither.
+    package static func turnText(_ facts: SessionFacts, nowMs: Int64, lang: ResolvedLanguage) -> String {
+        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
+        var parts: [String] = []
+        let duration = turnDuration(facts, nowMs: nowMs, lang: lang)
+        if !duration.isEmpty { parts.append(duration) }
+        if facts.turnSteps > 0 {
+            var steps = facts.turnSteps == 1 ? t(.turnStepsOne) : String(format: t(.turnStepsN), facts.turnSteps)
+            if facts.turnFailedSteps > 0 { steps = String(format: t(.turnStepsFailed), steps, facts.turnFailedSteps) }
+            parts.append(steps)
+        }
+        return parts.joined(separator: " · ")
     }
 
     // MARK: - Time
@@ -449,6 +525,8 @@ package struct DetailModel: Equatable {
         package enum Tone: Equatable {
             /// The lamp went red.
             case alert
+            /// A step or a turn failed.
+            case failure
             /// It moved the session.
             case plain
             /// Heard, and nothing new: said again, held, status, ignored.
@@ -479,8 +557,12 @@ package struct DetailModel: Equatable {
     package var timeline: [Entry]
     package var lastMessage: String?
     package var error: String?
-    /// This turn's duration (the page's one clock) and the folder.
+    /// This turn (its duration — the page's one clock — and its steps) and
+    /// the folder.
     package var facts: [Fact]
+    /// "This agent doesn't report waits" — only for an agent whose hook
+    /// cannot (`WaitingSource.none`); nil otherwise.
+    package var caveat: String?
     package var canFocus: Bool
     package var focusTitle: String
     package var canDismiss: Bool
@@ -493,7 +575,8 @@ package struct DetailModel: Equatable {
         facts said: SessionFacts = SessionFacts(),
         lang: ResolvedLanguage,
         nowMs: Int64,
-        notice: RowNotice? = nil
+        notice: RowNotice? = nil,
+        connected: Bool = true
     ) -> DetailModel {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         typealias Words = TrayRowModel
@@ -501,7 +584,7 @@ package struct DetailModel: Equatable {
 
         var facts: [Fact] = []
         if row.isRunning || row.isBlocked {
-            let turn = Words.turnDuration(said, nowMs: nowMs, lang: lang)
+            let turn = Words.turnText(said, nowMs: nowMs, lang: lang)
             if !turn.isEmpty { facts.append(Fact(label: t(.stepThisTurn), value: turn)) }
         }
         if !row.displayPath.isEmpty { facts.append(Fact(label: t(.detailFolder), value: row.displayPath)) }
@@ -514,7 +597,7 @@ package struct DetailModel: Equatable {
                 tone: tone(heard.effect)
             )
         }
-        let why = Words.why(row, facts: said, lang: lang, nowMs: nowMs)
+        let why = Words.why(row, facts: said, lang: lang, nowMs: nowMs, connected: connected)
         let second = Words.secondLine(row, facts: said, why: why, lang: lang, nowMs: nowMs)
 
         return DetailModel(
@@ -530,6 +613,7 @@ package struct DetailModel: Equatable {
             lastMessage: fresh && !said.lastWords.isEmpty ? said.lastWords : nil,
             error: said.lastError.isEmpty ? nil : said.lastError,
             facts: facts,
+            caveat: row.agent.waitingSource == .none ? t(.detailNoWaits) : nil,
             canFocus: row.canFocusTerminal,
             focusTitle: Words.focusTitle(row, lang: lang),
             canDismiss: row.isBlocked,
@@ -537,13 +621,15 @@ package struct DetailModel: Equatable {
         )
     }
 
-    /// How loud a timeline line is: red for a raise, quiet for a line that
-    /// changed nothing anyone waits on.
+    /// How loud a timeline line is: red for a raise, the warning tone for
+    /// a failure, quiet for a line that changed nothing anyone waits on.
     package static func tone(_ effect: SessionBook.Effect) -> Entry.Tone {
         switch effect {
         case .raised: return .alert
+        case .failedStep, .failed: return .failure
+        case .steps(let run): return run.failed > 0 ? .failure : .plain
         case .again, .held, .status, .atPrompt, .skipped, .subagent, .named: return .quiet
-        case .started, .prompt, .step, .failedStep, .working, .answered, .yourTurn, .turnEnded, .failed,
+        case .started, .prompt, .step, .working, .answered, .yourTurn, .turnEnded,
              .resolved, .dismissed, .seen, .stopped, .ended:
             return .plain
         }

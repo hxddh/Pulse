@@ -134,12 +134,66 @@ package struct SessionBook: Equatable {
         package var effect: Effect
         /// The subagent the line came from; "" for the main agent.
         package var sub: String
+        /// How long a single step ran, in ms (`took`); 0 unknown, and 0
+        /// for anything that is not one step.
+        package var tookMs: Int64
 
-        package init(ms: Int64, event: String, effect: Effect, sub: String = "") {
+        package init(ms: Int64, event: String, effect: Effect, sub: String = "", tookMs: Int64 = 0) {
             self.ms = ms
             self.event = event
             self.effect = effect
             self.sub = sub
+            self.tookMs = tookMs
+        }
+    }
+
+    /// Consecutive steps of one speaker, said as one timeline entry ("Edit
+    /// ×4 · Bash ×2"): each tool once, in the order it first ran, with how
+    /// many times; how many steps in all and how many failed. So the
+    /// timeline's `maxTimeline` entries cover a whole turn, not its last
+    /// dozen tool calls.
+    package struct StepRun: Hashable, Sendable {
+        package struct Tally: Hashable, Sendable {
+            package var tool: String
+            package var count: Int
+
+            package init(tool: String, count: Int) {
+                self.tool = tool
+                self.count = count
+            }
+        }
+
+        package var tools: [Tally]
+        package var count: Int
+        package var failed: Int
+
+        package init(tools: [Tally] = [], count: Int = 0, failed: Int = 0) {
+            self.tools = tools
+            self.count = count
+            self.failed = failed
+        }
+
+        /// One more step of `tool`.
+        package mutating func add(_ tool: String, failed stepFailed: Bool) {
+            count += 1
+            if stepFailed { failed += 1 }
+            if let index = tools.firstIndex(where: { $0.tool == tool }) {
+                tools[index].count += 1
+            } else {
+                tools.append(Tally(tool: tool, count: 1))
+            }
+        }
+
+        /// The run a single step's effect starts; nil for any other effect.
+        package static func of(_ effect: Effect) -> StepRun? {
+            var run = StepRun()
+            switch effect {
+            case .step(let tool, _): run.add(tool, failed: false)
+            case .failedStep(let tool, _): run.add(tool, failed: true)
+            case .steps(let existing): return existing
+            default: return nil
+            }
+            return run
         }
     }
 
@@ -154,6 +208,9 @@ package struct SessionBook: Equatable {
         case step(tool: String, target: String)
         /// A tool ran and failed: a step marked failed.
         case failedStep(tool: String, target: String)
+        /// Two or more consecutive steps of one speaker, as one entry
+        /// (`StepRun`) — the timeline's grouping, decided as it is heard.
+        case steps(StepRun)
         /// Activity that named no tool.
         case working
         /// Work goes on, no tool ran (`status`).
@@ -240,6 +297,17 @@ package struct SessionBook: Equatable {
         package var turnStartMs: Int64 = 0
         /// The last `maxSteps` tool steps, oldest first.
         package var steps: [Step] = []
+        /// Steps the current turn has taken (its subagents' among them),
+        /// and how many of them failed — counted as the lines apply, so a
+        /// replay counts them again.
+        package var turnSteps = 0
+        package var turnFailedSteps = 0
+        /// The latest turn ended on an error (a `failed` line); cleared by
+        /// the next turn.
+        package var failedTurn = false
+        /// The person stopped the run (`stopped`) and nothing has moved the
+        /// session since.
+        package var stopped = false
         /// The tool a `status` line said started and no `tool` line has
         /// finished yet — what runs now. While it is set a silence is not a
         /// stall (a 25-minute build says nothing until it ends).
@@ -339,7 +407,7 @@ package struct SessionBook: Equatable {
 
         if !sub.isEmpty {
             Self.applySubagent(record, sub: sub, at: ms, new: before == nil, into: &session)
-            Self.hear(&session, Heard(ms: ms, event: event, effect: Self.effect(of: record, prior: prior, now: session), sub: sub))
+            Self.hear(&session, Heard(ms: ms, event: event, effect: Self.effect(of: record, prior: prior, now: session), sub: sub, tookMs: Self.took(record)))
             sessions[key] = session
             guard let before else { return true }
             var unheard = session
@@ -388,9 +456,14 @@ package struct SessionBook: Equatable {
                     if Self.answers(record, block) { Self.answer(&session, at: ms, event: event) }
                 case .idle, .yourTurn, .ended:
                     // A turn whose prompt Pulse did not see starts here;
-                    // the error of the last one is over.
+                    // the error of the last one is over, and its count is
+                    // this line's step alone.
                     session.turnStartMs = ms
                     session.lastError = ""
+                    session.failedTurn = false
+                    let step = kind == .tool ? Self.stepOf(record) : nil
+                    session.turnSteps = step == nil ? 0 : 1
+                    session.turnFailedSteps = step?.failed == true ? 1 : 0
                     Self.set(&session, .working, at: ms, event: event)
                 }
             }
@@ -406,6 +479,7 @@ package struct SessionBook: Equatable {
             if !message.isEmpty {
                 if kind == .failed { session.lastError = message } else { session.message = message }
             }
+            session.failedTurn = kind == .failed
             Self.turn(&session, at: ms, front: record.front == true, event: event)
         case .idle:
             // Sat at its prompt a while: news only if Pulse had not seen the
@@ -413,6 +487,7 @@ package struct SessionBook: Equatable {
             // no Stop — or a session met just now).
             switch session.state {
             case .working, .blocked:
+                session.failedTurn = false
                 Self.turn(&session, at: ms, front: record.front == true, event: event)
             case .idle where before == nil:
                 Self.turn(&session, at: ms, front: record.front == true, event: event)
@@ -426,7 +501,7 @@ package struct SessionBook: Equatable {
         case .ignored:
             return false
         }
-        Self.hear(&session, Heard(ms: ms, event: event, effect: Self.effect(of: record, prior: prior, now: session)))
+        Self.hear(&session, Heard(ms: ms, event: event, effect: Self.effect(of: record, prior: prior, now: session), tookMs: Self.took(record)))
         sessions[key] = session
         guard let before else { return true }
         var unheard = session
@@ -504,8 +579,10 @@ package struct SessionBook: Equatable {
         case .blocked, .yourTurn:
             guard ms >= session.stateSinceMs else { return }
             set(&session, .idle, at: ms, event: event)
+            session.stopped = true
         case .working:
             set(&session, .idle, at: ms, event: event)
+            session.stopped = true
         case .idle, .ended:
             break
         }
@@ -513,9 +590,27 @@ package struct SessionBook: Equatable {
 
     /// One heard line on the session's timeline; the oldest beyond
     /// `maxTimeline` goes.
+    ///
+    /// A step heard right after a step (or a run of them) of the same
+    /// speaker joins it: one entry, "Edit ×4 · Bash ×2", at the newest
+    /// line's clock and event. A single step keeps its own words, target
+    /// and duration.
     private static func hear(_ session: inout Session, _ heard: Heard) {
+        if let last = session.timeline.last, last.sub == heard.sub,
+           var run = StepRun.of(last.effect), let next = StepRun.of(heard.effect), next.count == 1,
+           let tool = next.tools.first?.tool {
+            run.add(tool, failed: next.failed > 0)
+            session.timeline[session.timeline.count - 1] = Heard(ms: max(last.ms, heard.ms), event: heard.event, effect: .steps(run), sub: heard.sub)
+            return
+        }
         session.timeline.append(heard)
         if session.timeline.count > maxTimeline { session.timeline.removeFirst(session.timeline.count - maxTimeline) }
+    }
+
+    /// How long a `tool` line's step ran (`took`), for its timeline entry;
+    /// 0 for any other line.
+    private static func took(_ record: AttentionRecord) -> Int64 {
+        record.kind == .tool ? max(0, record.tookMs) : 0
     }
 
     /// What one applied line did, from the state before it (`prior`, after
@@ -612,6 +707,9 @@ package struct SessionBook: Equatable {
     private static func prompt(_ raw: String, at ms: Int64, into session: inout Session) {
         session.turnStartMs = ms
         session.lastError = ""
+        session.failedTurn = false
+        session.turnSteps = 0
+        session.turnFailedSteps = 0
         session.running = nil
         let text = TitleHeuristics.promptTitle(raw)
         guard !text.isEmpty else { return }
@@ -634,6 +732,8 @@ package struct SessionBook: Equatable {
             session.running = nil
         }
         guard let step else { return }
+        session.turnSteps += 1
+        if step.failed { session.turnFailedSteps += 1 }
         session.steps.append(step)
         if session.steps.count > maxSteps { session.steps.removeFirst(session.steps.count - maxSteps) }
     }
@@ -734,6 +834,8 @@ package struct SessionBook: Equatable {
         session.state = state
         session.stateSinceMs = ms
         session.stateEvent = event
+        // Only `stop` says the person stopped it, right after this.
+        session.stopped = false
         switch state {
         case .blocked: return
         case .working: break
@@ -918,7 +1020,11 @@ package struct SessionBook: Equatable {
             activityMs: session.activityMs,
             stateEvent: session.stateEvent,
             lastEvent: session.lastEvent,
-            timeline: session.timeline
+            timeline: session.timeline,
+            turnSteps: session.turnSteps,
+            turnFailedSteps: session.turnFailedSteps,
+            failedTurn: session.failedTurn,
+            stopped: session.stopped
         )
     }
 

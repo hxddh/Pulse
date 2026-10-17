@@ -959,19 +959,119 @@ struct SessionBookTests {
         #expect(effects == [.raised(.permission), .held, .dismissed, .prompt, .turnEnded, .atPrompt])
     }
 
-    /// The ring keeps the newest `maxTimeline` lines.
+    /// The ring keeps the newest `maxTimeline` entries.
     @Test func theTimelineKeepsTheNewestLines() {
         var book = SessionBook()
         for i in 0..<(SessionBook.maxTimeline + 5) {
             book.apply(AttentionRecord(
-                agent: .claude, kind: .tool, ms: t0 + Int64(i) * second, message: "t\(i)",
-                session: "s1", tool: "Read", event: "PostToolUse"
+                agent: .claude, kind: .working, ms: t0 + Int64(i) * second, message: "p\(i)",
+                session: "s1", event: "UserPromptSubmit"
             ), nowMs: t0 + minute)
         }
         let timeline = book.facts(for: SessionKey(.claude, "s1")).timeline
         #expect(timeline.count == SessionBook.maxTimeline)
-        #expect(timeline.last?.effect == .step(tool: "Read", target: "t\(SessionBook.maxTimeline + 4)"))
+        #expect(timeline.last?.effect == .prompt)
         #expect(timeline.first?.ms == t0 + 5 * second)
+    }
+
+    /// Consecutive steps of one speaker are one entry — each tool once,
+    /// with its count, and how many failed — at the newest step's clock and
+    /// event; a raise, an answer or another speaker starts a new entry. So
+    /// a long turn still fits the timeline. A single step keeps its target
+    /// and how long it ran.
+    @Test func consecutiveStepsAreOneTimelineEntry() throws {
+        var book = SessionBook()
+        func tool(_ name: String, _ at: Int64, sub: String = "", failed: Bool = false, took: Int64 = 0) {
+            book.apply(AttentionRecord(
+                agent: .claude, kind: .tool, ms: t0 + at, message: "x", session: "s1", tool: name,
+                event: failed ? "PostToolUseFailure" : "PostToolUse", sub: sub, failed: failed, tookMs: took
+            ), nowMs: t0 + 10 * minute)
+        }
+        book.apply(AttentionRecord(agent: .claude, kind: .working, ms: t0, message: "Go", session: "s1", event: "UserPromptSubmit"), nowMs: t0)
+        tool("Edit", second)
+        tool("Edit", 2 * second)
+        tool("Bash", 3 * second, failed: true)
+        tool("Edit", 4 * second)
+        tool("Bash", 5 * second)
+        tool("Edit", 6 * second)
+        tool("Grep", 7 * second, sub: "a1")
+        tool("Grep", 8 * second, sub: "a1")
+        tool("Read", 9 * second, took: 2_300)
+        let timeline = book.facts(for: SessionKey(.claude, "s1")).timeline
+        #expect(timeline.count == 4, "prompt, the main agent's run, the subagent's run, one step")
+        let run = SessionBook.StepRun(
+            tools: [.init(tool: "Edit", count: 4), .init(tool: "Bash", count: 2)], count: 6, failed: 1
+        )
+        let main = try #require(timeline.dropFirst().first)
+        #expect(main.effect == .steps(run))
+        #expect(main.ms == t0 + 6 * second, "the newest step's clock")
+        #expect(main.event == "PostToolUse")
+        #expect(TrayRowModel.effectText(main.effect, lang: .en) == "Edit ×4 · Bash ×2 · 1 failed")
+        #expect(TrayRowModel.effectText(main.effect, lang: .zh) == "Edit ×4 · Bash ×2 · 1 步失败")
+        #expect(DetailModel.tone(main.effect) == .failure)
+        let sub = try #require(timeline.dropFirst(2).first)
+        #expect(sub.sub == "a1")
+        #expect(TrayRowModel.heardText(sub, lang: .en) == "Subagent · Grep ×2")
+        let single = try #require(timeline.last)
+        #expect(single.effect == .step(tool: "Read", target: "x"))
+        #expect(TrayRowModel.heardText(single, lang: .en) == "Read · x · 2.3s")
+        #expect(TrayRowModel.heardText(single, lang: .zh) == "Read · x · 2.3秒")
+        #expect(SettingsModel.ReportSession.word(main.effect) == "steps Edit×4 Bash×2 (1 failed)")
+        let facts = book.facts(for: SessionKey(.claude, "s1"))
+        #expect(facts.turnSteps == 9, "every step of the turn, the subagent's among them")
+        #expect(facts.turnFailedSteps == 1)
+    }
+
+    /// A turn's step count starts over with its prompt — or with the step
+    /// that starts a turn whose prompt Pulse did not see.
+    @Test func theTurnsStepCountStartsWithTheTurn() {
+        let run = playAt(.claude, [
+            (0, "UserPromptSubmit", ["prompt": "One"]),
+            (second, "PostToolUse", ["tool_name": "Read", "tool_input": ["file_path": "/w/a.swift"]]),
+            (2 * second, "PostToolUseFailure", ["tool_name": "Bash", "tool_input": ["command": "swift test"]]),
+            (3 * second, "Stop", [:]),
+            (minute, "PostToolUse", ["tool_name": "Read", "tool_input": ["file_path": "/w/b.swift"]]),
+        ])
+        let after = run.book.facts(for: SessionKey(.claude, "s1"))
+        #expect(after.turnSteps == 1, "a new turn, started by its first step")
+        #expect(after.turnFailedSteps == 0)
+        let prompted = playAt(.claude, [
+            (0, "UserPromptSubmit", ["prompt": "One"]),
+            (second, "PostToolUseFailure", ["tool_name": "Bash", "tool_input": ["command": "swift test"]]),
+            (2 * second, "UserPromptSubmit", ["prompt": "Two"]),
+        ])
+        let fresh = prompted.book.facts(for: SessionKey(.claude, "s1"))
+        #expect(fresh.turnSteps == 0)
+        #expect(fresh.turnFailedSteps == 0)
+    }
+
+    /// A turn that ended on an error says so until the next turn; a stop by
+    /// the person says so until anything moves the session.
+    @Test func aFailedTurnAndAStopAreFacts() throws {
+        let failed = playAt(.claude, [
+            (0, "UserPromptSubmit", ["prompt": "Ship it"]),
+            (5 * second, "StopFailure", ["last_assistant_message": "API Error: Rate limit reached"]),
+        ])
+        let turn = failed.book.facts(for: SessionKey(.claude, "s1"))
+        #expect(turn.failedTurn)
+        let again = playAt(.claude, [
+            (0, "UserPromptSubmit", ["prompt": "Ship it"]),
+            (5 * second, "StopFailure", ["last_assistant_message": "API Error: Rate limit reached"]),
+            (minute, "UserPromptSubmit", ["prompt": "Again"]),
+            (2 * minute, "Stop", [:]),
+        ])
+        #expect(!again.book.facts(for: SessionKey(.claude, "s1")).failedTurn)
+        let stopped = playAt(.pi, [
+            (0, "message_start", ["prompt": "Refactor the queue"]),
+            (second, "agent_settled", ["aborted": true]),
+        ])
+        #expect(stopped.book.facts(for: SessionKey(.pi, "s1")).stopped)
+        let resumed = playAt(.pi, [
+            (0, "message_start", ["prompt": "Refactor the queue"]),
+            (second, "agent_settled", ["aborted": true]),
+            (minute, "message_start", ["prompt": "Go on"]),
+        ])
+        #expect(!resumed.book.facts(for: SessionKey(.pi, "s1")).stopped)
     }
 
     /// An `ignored` line goes on the timeline of a session the book holds —

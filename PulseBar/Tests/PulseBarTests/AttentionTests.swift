@@ -1765,15 +1765,17 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertEqual(
             claude.detail,
             String(format: L10n.t(.settingsHookHeard, .en), "Stop", L10n.ago(now - 12 * 60_000, nowMs: now, .en))
-                + " · " + L10n.t(.settingsHookReportsWaits, .en)
         )
+        XCTAssertEqual(claude.capability, "Reports waits, steps, last words, titles")
         let codex = lines.first { $0.agent == .codex }
         XCTAssertEqual(codex?.state, String(format: L10n.t(.settingsHookPartial, .en), 4, 6))
-        XCTAssertEqual(codex?.detail, L10n.t(.settingsHookNoEvent, .en) + " · " + L10n.t(.settingsHookNoWait, .en))
-        XCTAssertTrue(lines.first { $0.agent == .cursor }?.detail.hasSuffix(L10n.t(.settingsHookNoWait, .en)) == true)
+        XCTAssertEqual(codex?.detail, L10n.t(.settingsHookNoEvent, .en))
+        XCTAssertEqual(codex?.capability.hasSuffix("— not waits"), true)
+        XCTAssertEqual(lines.first { $0.agent == .cursor }?.capability.hasSuffix("— not waits"), true)
         let copilot = lines.first { $0.agent == .copilot }
         XCTAssertEqual(copilot?.state, L10n.t(.hooksMissing, .en))
-        XCTAssertEqual(copilot?.detail, L10n.t(.settingsHookReportsWaits, .en), "nothing heard is said only where a hook is")
+        XCTAssertEqual(copilot?.detail, "", "nothing heard is said only where a hook is")
+        XCTAssertEqual(copilot?.capability, "Reports waits, steps, titles")
         XCTAssertEqual(copilot?.installed, false, "an agent here without its hook says so; Install all fixes it")
         let model = SettingsModel(
             lang: .en, launchAtLogin: false, notifications: .allowed, hooksStatus: "", hooksInstalled: true,

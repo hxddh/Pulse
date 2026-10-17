@@ -43,10 +43,10 @@ struct ReportTests {
         let text = SettingsModel.report(input())
         #expect(text.hasPrefix("Pulse report"))
         #expect(text.contains("Pulse 25.0.0 · preview"))
-        #expect(text.contains("  claude: installed, heard Stop 42s ago, reports waits"), "\(text)")
-        #expect(text.contains("  opencode: installed, nothing heard yet, reports waits"), "\(text)")
-        #expect(text.contains("  codex: not installed, doesn't report waits"), "\(text)")
-        #expect(text.contains("  cursor: needs update (3 of 5 events), heard stop 9s ago, doesn't report waits"), "\(text)")
+        #expect(text.contains("  claude: installed, heard Stop 42s ago, capabilities: waits steps words titles"), "\(text)")
+        #expect(text.contains("  opencode: installed, nothing heard yet, capabilities: waits steps titles"), "\(text)")
+        #expect(text.contains("  codex: not installed, capabilities: steps words titles"), "\(text)")
+        #expect(text.contains("  cursor: needs update (3 of 5 events), heard stop 9s ago, capabilities: steps words"), "\(text)")
         #expect(text.contains("  copilot: install failed (unwritable)\n"), "\(text)")
         #expect(text.contains("  pi: not on this Mac\n"), "\(text)")
         for agent in AgentID.allCases {
@@ -58,7 +58,7 @@ struct ReportTests {
         var stale = input()
         stale.connections = [Connection(agent: .claude, install: .staleLauncher)]
         let text = SettingsModel.report(stale)
-        #expect(text.contains("  claude: needs update (stale launcher), nothing heard yet, reports waits"), "\(text)")
+        #expect(text.contains("  claude: needs update (stale launcher), nothing heard yet, capabilities: waits steps words titles"), "\(text)")
         #expect(text.contains("  pi: not on this Mac"), "an agent with no connection given is not installed: \(text)")
     }
 
@@ -86,16 +86,18 @@ struct ReportTests {
     /// an ignored line, all under a secret session id in a secret folder.
     func secretFacts() -> (AgentRow, SessionFacts) {
         let key = SessionKey(.claude, "secret-session")
-        func line(_ kind: AttentionKind, _ ms: Int64, _ event: String, tool: String = "", message: String = "") -> AttentionRecord {
+        func line(_ kind: AttentionKind, _ ms: Int64, _ event: String, tool: String = "", message: String = "", failed: Bool = false) -> AttentionRecord {
             AttentionRecord(
                 agent: .claude, kind: kind, ms: ms, message: message,
-                session: "secret-session", cwd: "/Users/me/secret-project", tool: tool, event: event
+                session: "secret-session", cwd: "/Users/me/secret-project", tool: tool, event: event,
+                failed: failed
             )
         }
         var book = SessionBook()
         for record in [
             line(.working, now - 60_000, "UserPromptSubmit", message: "a private prompt"),
             line(.tool, now - 50_000, "PostToolUse", tool: "Read", message: "/Users/me/secret-project/private.swift"),
+            line(.tool, now - 45_000, "PostToolUseFailure", tool: "Edit", message: "/Users/me/secret-project/token.swift", failed: true),
             line(.permission, now - 40_000, "PermissionRequest", tool: "Bash", message: "Bash: cat /Users/me/secret-token"),
             line(.ignored, now - 30_000, "/Users/me/secret", message: "a private reason"),
             line(.tool, now - 20_000, "PostToolUse", tool: "Bash", message: "cat /Users/me/secret-token"),
@@ -123,7 +125,11 @@ struct ReportTests {
             lastIgnored: Connection.Ignored(event: "/Users/me/secret", reason: "a private reason", ms: now - 1_000)
         )]
         let text = SettingsModel.report(withSession)
+        #expect(text.contains("steps 3 (1 failed)"), "counts, never targets: \(text)")
+        #expect(text.contains("capabilities: waits steps words titles"), "\(text)")
         #expect(!text.contains("/"), "not even a folder: \(text)")
+        #expect(!text.contains(".swift"), "no file name from a step's target: \(text)")
+        #expect(!text.contains("cat "), "no command from a step's target: \(text)")
         #expect(!text.contains("secret"), "\(text)")
         #expect(!text.contains("private"), "\(text)")
         #expect(!text.contains("token"), "\(text)")
@@ -137,7 +143,7 @@ struct ReportTests {
         let text = SettingsModel.report(chosen)
         let expected = [
             "    20s ago · PostToolUse · answered",
-            "    30s ago · ? · ignored (other)",
+            "    30s ago · ? · not used (other)",
             "    40s ago · PermissionRequest · raised permission",
         ].joined(separator: "\n")
         #expect(text.contains(expected), "\(text)")
@@ -181,8 +187,8 @@ struct ReportTests {
             ),
         ]
         let text = SettingsModel.report(heard)
-        #expect(text.contains("last ignored PreCompact (not an installed event) 3s ago"), "\(text)")
-        #expect(text.contains("last ignored ? (payload is not a JSON object) 5s ago"), "\(text)")
+        #expect(text.contains("last not used PreCompact (not an installed event) 3s ago"), "\(text)")
+        #expect(text.contains("last not used ? (payload is not a JSON object) 5s ago"), "\(text)")
         #expect(!text.contains("secret"), "\(text)")
     }
 
@@ -280,16 +286,19 @@ struct ConnectionTests {
         let line = SettingsModel.HookAgent(claude, nowMs: now, lang: .en)
         #expect(line.state == "Installed")
         #expect(line.tone == .ok)
-        #expect(line.detail == "Heard PermissionRequest · 4m ago · Reports when it waits")
-        #expect(line.ignored == "Last ignored PreCompact — not an installed event · 2m ago")
+        #expect(line.capability == "Reports waits, steps, last words, titles")
+        #expect(line.detail == "Heard PermissionRequest · 4m ago")
+        #expect(line.notUsed == "Last not used PreCompact — not an installed event · 2m ago")
         let zh = SettingsModel.HookAgent(claude, nowMs: now, lang: .zh)
-        #expect(zh.detail == "最近听到 PermissionRequest · " + L10n.ago(now - 4 * 60_000, nowMs: now, .zh) + " · 会报告它在等你")
-        #expect(zh.ignored == "最近未采用 PreCompact——不是已安装的事件 · " + L10n.ago(now - 2 * 60_000, nowMs: now, .zh))
+        #expect(zh.capability == "报告等待、步骤、最后一句话和标题")
+        #expect(zh.detail == "最近听到 PermissionRequest · " + L10n.ago(now - 4 * 60_000, nowMs: now, .zh))
+        #expect(zh.notUsed == "最近未采用 PreCompact——不是已安装的事件 · " + L10n.ago(now - 2 * 60_000, nowMs: now, .zh))
 
         let codex = SettingsModel.HookAgent(Connection(agent: .codex, install: .partial(found: 9, of: 11)), nowMs: now, lang: .en)
         #expect(codex.state == "Needs update — 9 of 11 events")
         #expect(codex.tone == .warning)
-        #expect(codex.detail == "Nothing heard yet · " + L10n.t(.settingsHookNoWait, .en))
+        #expect(codex.detail == "Nothing heard yet")
+        #expect(codex.capability == "Reports turns, steps, last words, titles — not waits")
         #expect(SettingsModel.HookAgent(Connection(agent: .codex, install: .partial(found: 9, of: 11)), nowMs: now, lang: .zh).state == "需要更新——9 / 11 个事件")
 
         let stale = SettingsModel.HookAgent(Connection(agent: .pi, install: .staleLauncher), nowMs: now, lang: .en)
@@ -299,8 +308,9 @@ struct ConnectionTests {
         let missing = SettingsModel.HookAgent(Connection(agent: .opencode, install: .notInstalled), nowMs: now, lang: .en)
         #expect(missing.state == L10n.t(.hooksMissing, .en))
         #expect(missing.tone == .quiet)
-        #expect(missing.detail == L10n.t(.settingsHookReportsWaits, .en), "nothing to hear without a hook")
-        #expect(missing.ignored == nil)
+        #expect(missing.detail == "", "nothing to hear without a hook")
+        #expect(missing.capability == "Reports waits, steps, titles", "what it reports, whatever the install")
+        #expect(missing.notUsed == nil)
     }
 
     /// A reason the receiver never writes is not repeated: its words could
@@ -351,7 +361,7 @@ struct ConnectionTests {
             if case .partial = install { return true }
             return false
         }
-        let ignored = model.hookAgents.contains { $0.ignored != nil }
+        let ignored = model.hookAgents.contains { $0.notUsed != nil }
         #expect(installs.contains(.complete))
         #expect(partial)
         #expect(installs.contains(.staleLauncher))
@@ -360,6 +370,26 @@ struct ConnectionTests {
         #expect(model.absentAgents == [.pi])
         #expect(model.hooksNeedUpdate)
         #expect(ignored)
+    }
+
+    /// The caveats capture: every line says what its agent reports, then
+    /// its state — turned off, untrusted, nothing heard yet, a missing
+    /// config folder — in calm tones: only a silenced or untrusted install
+    /// is a warning.
+    @Test func theCaveatsFixtureSaysEachCaveatUnderItsCapability() {
+        let model = SurfaceFixtures.settingsCaveats(lang: .en)
+        let said = model.hookAgents.allSatisfy { $0.capability.hasPrefix("Reports ") }
+        #expect(said)
+        let tones = Dictionary(uniqueKeysWithValues: model.hookAgents.map { ($0.agent, $0.tone) })
+        #expect(tones[.claude] == .warning)
+        #expect(tones[.codex] == .warning)
+        #expect(tones[.copilot] == .ok, "nothing heard yet is not a fault")
+        #expect(tones[.cursor] == .ok)
+        let pi = model.hookAgents.first { $0.agent == .pi }
+        #expect(pi?.detail.contains("PI_CODING_AGENT_DIR") == true)
+        let cursor = model.hookAgents.first { $0.agent == .cursor }
+        #expect(cursor?.notUsed?.hasPrefix("Last not used ") == true)
+        #expect(cursor?.capability == "Reports turns, steps, last words — not waits")
     }
 
     /// A module carries the events its list names.
@@ -483,7 +513,7 @@ struct ConnectionTests {
         let line = SettingsModel.HookAgent(copilot, nowMs: now, lang: .en)
         #expect(line.state == "Installed — nothing heard yet")
         #expect(line.tone == .ok, "not a fault: it may not have run yet")
-        #expect(line.detail == L10n.t(.settingsHookReportsWaits, .en), "said once")
+        #expect(line.detail == "", "said once — on the state line")
         #expect(SettingsModel.HookAgent(copilot, nowMs: now, lang: .zh).state == "已安装——还没有听到事件")
         let report = copilot.reportLine(present: true, nowMs: now)
         #expect(report.contains("nothing heard through it since it was installed"))
@@ -520,12 +550,11 @@ struct ConnectionTests {
 @Suite("Hooks section")
 struct HooksSectionTests {
     /// No setting makes Codex or Cursor report a wait, so their line offers
-    /// no "connect" action — it says what they do not report.
+    /// no "connect" action — its capability line says what they report, and
+    /// that waits are not among it.
     @Test func aWaitingNoneAgentSaysWhatItDoesNotReport() {
-        #expect(L10n.t(.settingsHookNoWait, .en) == "Doesn't report when it waits — running and your turn only")
-        #expect(L10n.t(.settingsHookNoWait, .zh).hasPrefix("不会报告它在等你"))
         for lang in [ResolvedLanguage.en, .zh] {
-            let copy = L10n.t(.settingsHookNoWait, lang)
+            let copy = L10n.t(.capReportsNoWaits, lang)
             #expect(!copy.localizedCaseInsensitiveContains("bridge"))
             #expect(!copy.contains("桥"))
         }
@@ -536,8 +565,34 @@ struct HooksSectionTests {
         #expect(lines.count == AgentID.allCases.count)
         for line in lines {
             let none = AgentID.waitingNoneAgents.contains(line.agent)
-            #expect(line.detail.hasSuffix(L10n.t(none ? .settingsHookNoWait : .settingsHookReportsWaits, .en)), "\(line.agent.rawValue)")
+            #expect(line.capability.hasSuffix("— not waits") == none, "\(line.agent.rawValue): \(line.capability)")
+            #expect(line.capability.hasPrefix("Reports waits") == !none, "\(line.agent.rawValue): \(line.capability)")
         }
+        let cursor = lines.first { $0.agent == .cursor }
+        #expect(cursor?.capability == "Reports turns, steps, last words — not waits")
+        let zh = SettingsModel.HookAgent(Connection(agent: .cursor, install: .complete), nowMs: 0, lang: .zh)
+        #expect(zh.capability == "报告回合、步骤和最后一句话——不报告等待")
+    }
+
+    /// What each agent reports is read from its adapter, not written per
+    /// agent here: waits from its waiting source, steps from a per-tool
+    /// event, titles from a prompt or name event, last words declared.
+    @Test func eachAgentsCapabilitiesComeFromItsAdapter() {
+        let table: [AgentID: AgentCapabilities] = [
+            .claude: AgentCapabilities(waits: true, steps: true, lastWords: true, titles: true),
+            .codex: AgentCapabilities(waits: false, steps: true, lastWords: true, titles: true),
+            .cursor: AgentCapabilities(waits: false, steps: true, lastWords: true, titles: false),
+            .copilot: AgentCapabilities(waits: true, steps: true, lastWords: false, titles: true),
+            .opencode: AgentCapabilities(waits: true, steps: true, lastWords: false, titles: true),
+            .pi: AgentCapabilities(waits: true, steps: true, lastWords: true, titles: true),
+        ]
+        for agent in AgentID.allCases {
+            let can = agent.spec.capabilities
+            #expect(can == table[agent], "\(agent.rawValue)")
+            #expect(can.waits == (agent.waitingSource == .hooks))
+            #expect(can.steps == agent.reportsToolActivity)
+        }
+        #expect(AgentID.claude.spec.capabilities.reportWords == ["waits", "steps", "words", "titles"])
     }
 
     @Test func waitingNoneAgentsCoverEveryWaitingNoneContract() {
