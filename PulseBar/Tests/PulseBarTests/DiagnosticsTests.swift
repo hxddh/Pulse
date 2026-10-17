@@ -173,7 +173,7 @@ struct ReportTests {
         heard.connections = [
             Connection(
                 agent: .claude, install: .complete,
-                lastIgnored: Connection.Ignored(event: "SubagentStop", reason: PulseHookReceiver.Ignored.notInstalled.rawValue, ms: now - 3_000)
+                lastIgnored: Connection.Ignored(event: "PreCompact", reason: PulseHookReceiver.Ignored.notInstalled.rawValue, ms: now - 3_000)
             ),
             Connection(
                 agent: .cursor, install: .complete,
@@ -181,7 +181,7 @@ struct ReportTests {
             ),
         ]
         let text = SettingsModel.report(heard)
-        #expect(text.contains("last ignored SubagentStop (not an installed event) 3s ago"), "\(text)")
+        #expect(text.contains("last ignored PreCompact (not an installed event) 3s ago"), "\(text)")
         #expect(text.contains("last ignored ? (payload is not a JSON object) 5s ago"), "\(text)")
         #expect(!text.contains("secret"), "\(text)")
     }
@@ -275,16 +275,16 @@ struct ConnectionTests {
         let claude = Connection(
             agent: .claude, install: .complete,
             lastHeard: Connection.Heard(event: "PermissionRequest", ms: now - 4 * 60_000),
-            lastIgnored: Connection.Ignored(event: "SubagentStop", reason: PulseHookReceiver.Ignored.notInstalled.rawValue, ms: now - 2 * 60_000)
+            lastIgnored: Connection.Ignored(event: "PreCompact", reason: PulseHookReceiver.Ignored.notInstalled.rawValue, ms: now - 2 * 60_000)
         )
         let line = SettingsModel.HookAgent(claude, nowMs: now, lang: .en)
         #expect(line.state == "Installed")
         #expect(line.tone == .ok)
         #expect(line.detail == "Heard PermissionRequest · 4m ago · Reports when it waits")
-        #expect(line.ignored == "Last ignored SubagentStop — not an installed event · 2m ago")
+        #expect(line.ignored == "Last ignored PreCompact — not an installed event · 2m ago")
         let zh = SettingsModel.HookAgent(claude, nowMs: now, lang: .zh)
         #expect(zh.detail == "最近听到 PermissionRequest · " + L10n.ago(now - 4 * 60_000, nowMs: now, .zh) + " · 会报告它在等你")
-        #expect(zh.ignored == "最近未采用 SubagentStop——不是已安装的事件 · " + L10n.ago(now - 2 * 60_000, nowMs: now, .zh))
+        #expect(zh.ignored == "最近未采用 PreCompact——不是已安装的事件 · " + L10n.ago(now - 2 * 60_000, nowMs: now, .zh))
 
         let codex = SettingsModel.HookAgent(Connection(agent: .codex, install: .partial(found: 9, of: 11)), nowMs: now, lang: .en)
         #expect(codex.state == "Needs update — 9 of 11 events")
@@ -399,6 +399,85 @@ struct ConnectionTests {
         #expect(SettingsModel.absentAgents(connections: [pi], present: []).contains(.pi) == false)
         #expect(pi.reportLine(present: true, nowMs: now).contains("installs to ~/.pi/agent, not there"))
         #expect(Connection(agent: .pi, install: .complete).configDirText(lang: .en) == nil)
+    }
+
+    /// A vendor setting that silences every hook is read, never written:
+    /// a managed policy first, then the person's own `disableAllHooks`. A
+    /// key that is not JSON `true`, or a file that is not a JSON object,
+    /// says nothing.
+    @Test func aSettingThatSilencesHooksIsRead() {
+        let switches = AgentID.claude.spec.hooks.offSwitches
+        let managedFolder = Claude.managedSettingsFolder
+        func off(_ files: [String: String]) -> Connection.Caveat? {
+            Connection.offBy(
+                switches,
+                read: { files[$0] },
+                list: { folder in files.keys.filter { $0.hasPrefix(folder + "/") }.map { String($0.dropFirst(folder.count + 1)) } }
+            )
+        }
+        #expect(off([:]) == nil)
+        #expect(off([".claude/settings.json": #"{"disableAllHooks": true}"#]) == .turnedOff)
+        #expect(off([".claude/settings.json": #"{"disableAllHooks": false}"#]) == nil)
+        #expect(off([".claude/settings.json": #"{"disableAllHooks": "true"}"#]) == nil, "only JSON true")
+        #expect(off([".claude/settings.json": "// not JSON"]) == nil)
+        #expect(off([Claude.managedSettings: #"{"allowManagedHooksOnly": true}"#]) == .managedOnly)
+        #expect(off([managedFolder + "/10-hooks.json": #"{"allowManagedHooksOnly": true}"#]) == .managedOnly)
+        #expect(off([managedFolder + "/10-hooks.txt": #"{"allowManagedHooksOnly": true}"#]) == nil, "only *.json drop-ins")
+        #expect(off([
+            ".claude/settings.json": #"{"disableAllHooks": true}"#,
+            Claude.managedSettings: #"{"disableAllHooks": true}"#,
+        ]) == .managedOnly, "the policy is the more specific reason")
+        #expect(AgentID.codex.spec.hooks.offSwitches.isEmpty, "config.toml is never read")
+    }
+
+    /// Codex runs a hook only once trusted, bound to its text: a whole
+    /// install that a Codex started since the file changed has not spoken
+    /// through waits to be trusted. Anything heard since, no Codex since, or
+    /// an agent that is not trust-bound: nothing to say.
+    @Test func anUntrustedCodexHookIsSaid() {
+        let changed: Int64 = 1_800_000_000_000
+        let config = Connection.Config(changedMs: changed)
+        func caveat(_ agent: AgentID, _ install: Connection.Install = .complete, heard: Int64? = nil, running: [Int64]) -> Connection.Caveat? {
+            Connection.caveat(agent: agent, install: install, config: config, heardMs: heard, runningSince: running)
+        }
+        #expect(caveat(.codex, running: [changed + 5_000]) == .untrusted)
+        #expect(caveat(.codex, running: [0]) == .untrusted, "a start time not read counts")
+        #expect(caveat(.codex, heard: changed + 1_000, running: [changed + 5_000]) == nil, "heard since the change")
+        #expect(caveat(.codex, running: [changed - 5_000]) == nil, "only a Codex that read the changed file")
+        #expect(caveat(.codex, running: []) == nil, "no Codex ran")
+        #expect(caveat(.codex, .partial(found: 5, of: 7), running: [changed + 5_000]) == nil, "Install all says that")
+        #expect(caveat(.claude, running: [changed + 5_000]) == nil, "Claude's hooks need no trust")
+        #expect(AgentID.codex.spec.hooks.trustBound)
+        #expect(!AgentID.claude.spec.hooks.trustBound)
+        let silenced = Connection.caveat(
+            agent: .claude, install: .complete, config: Connection.Config(offBy: .turnedOff), heardMs: nil, runningSince: []
+        )
+        #expect(silenced == .turnedOff)
+        #expect(Connection.caveat(agent: .claude, install: .notInstalled, config: Connection.Config(offBy: .turnedOff), heardMs: nil, runningSince: []) == nil)
+    }
+
+    /// The words: an installed hook that may not run says why on its state
+    /// line, as a warning, in both languages and in the report.
+    @Test func aCaveatIsSaidOnTheLine() {
+        let now: Int64 = 1_800_000_000_000
+        let codex = Connection.make(
+            agent: .codex, probed: .complete, failure: nil, heard: nil, ignored: nil,
+            config: Connection.Config(changedMs: now - 60_000), runningSince: [now - 30_000]
+        )
+        #expect(codex.caveat == .untrusted)
+        let line = SettingsModel.HookAgent(codex, nowMs: now, lang: .en)
+        #expect(line.state == "Installed — Codex hasn't run it since it changed: trust it in Codex (/hooks)")
+        #expect(line.tone == .warning)
+        #expect(SettingsModel.HookAgent(codex, nowMs: now, lang: .zh).state.contains("/hooks"))
+        #expect(codex.reportLine(present: true, nowMs: now).contains("untrusted?"))
+
+        let claude = Connection(agent: .claude, install: .complete, caveat: .turnedOff)
+        #expect(SettingsModel.HookAgent(claude, nowMs: now, lang: .en).state == "Installed — but hooks are turned off in Claude's settings (disableAllHooks)")
+        #expect(claude.reportLine(present: true, nowMs: now).contains("disableAllHooks"))
+        let policy = Connection(agent: .claude, install: .partial(found: 9, of: 13), caveat: .managedOnly)
+        let partial = SettingsModel.HookAgent(policy, nowMs: now, lang: .en)
+        #expect(partial.state == "Needs update — 9 of 13 events")
+        #expect(partial.detail.contains("a managed policy keeps Claude from running it"))
     }
 }
 

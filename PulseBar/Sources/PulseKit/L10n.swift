@@ -146,9 +146,14 @@ package enum L10n {
         case ignoredNoSession
         case ignoredSilent
         case ignoredNotABlock
+        case ignoredNoPrompt
+        case ignoredOtherSession
         case ignoredOther
         case settingsHookNoWait
         case settingsHookConfigDir
+        case settingsHookTurnedOff
+        case settingsHookManagedOnly
+        case settingsHookUntrusted
         case waitingBannerFailed
         case lampRuleBlocked
         case lampRuleStalled
@@ -324,8 +329,13 @@ extension L10n.Key {
         case .ignoredNoSession: return ("no session", "没有会话")
         case .ignoredSilent: return ("nothing to show", "没有可显示的内容")
         case .ignoredNotABlock: return ("a prompt that does not block", "不阻塞的提示")
+        case .ignoredNoPrompt: return ("no prompt can be shown", "没有可显示的提示")
+        case .ignoredOtherSession: return ("may be about another session", "可能属于另一个会话")
         case .ignoredOther: return ("not used", "未采用")
         case .settingsHookNoWait: return ("Doesn't report when it waits — running and your turn only", "不会报告它在等你——只显示运行中和轮到你")
+        case .settingsHookTurnedOff: return ("Installed — but hooks are turned off in %@'s settings (disableAllHooks)", "已安装——但 %@ 的设置关掉了所有 hooks（disableAllHooks）")
+        case .settingsHookManagedOnly: return ("Installed — but a managed policy keeps %@ from running it", "已安装——但管理策略不让 %@ 运行它")
+        case .settingsHookUntrusted: return ("Installed — %@ hasn't run it since it changed: trust it in %@ (/hooks)", "已安装——改动后 %@ 还没运行过它：请在 %@ 里信任它（/hooks）")
         case .settingsHookConfigDir: return ("Pulse installs to ~/%@, which isn't there yet — a %@ set to another folder (%@) won't load it", "Pulse 装在 ~/%@，这个文件夹还不存在——若 %@ 用了别的文件夹（%@），就不会加载它")
         case .waitingBannerFailed: return ("macOS did not show the last “needs you” banner — check Notifications", "macOS 没有显示上一条「需要你」通知——请检查通知设置")
         case .lampRuleBlocked: return ("Red: an agent is waiting on you.", "红：有 Agent 在等你。")

@@ -32,6 +32,14 @@ package enum PulseHookReceiver {
         /// A prompt the vendor shows that does not block the agent (Pi's
         /// `custom` view): not a wait.
         case notABlock = "a prompt that does not block"
+        /// A request nobody can be shown — the run has no prompt (Claude's
+        /// `-p` without a permission host, its `dontAsk` mode): the vendor
+        /// denies it itself. Not a wait.
+        case noPrompt = "no prompt can be shown"
+        /// A notice that may be about another session than the one whose
+        /// hook heard it (Claude's `agent_needs_input`, raised in the agent
+        /// view's terminal for a background session): not this one's wait.
+        case otherSession = "may be about another session"
     }
 
     /// Always returns 0 — vendor hooks must never be broken by Pulse.
@@ -53,7 +61,8 @@ package enum PulseHookReceiver {
         nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
         locate: (AgentID, [String: String]) -> (pid: Int32, landing: String) = HookLanding.current,
         front: () -> Bool? = { nil },
-        parent: Int32 = getppid()
+        parent: Int32 = getppid(),
+        argumentsOf: (AgentID, Int32) -> [String]? = HookLanding.agentArguments
     ) -> Int32 {
         let args = Array(arguments.drop(while: { $0 != "--hook" }).dropFirst())
         let agentRaw = (args.first ?? "claude").lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
@@ -77,12 +86,22 @@ package enum PulseHookReceiver {
             // JSON: it is heard, and said to be unreadable — nothing else.
             written = ignored(.unparsable, agent: agent, event: event, context: HookContext(payload: [:]), nowMs: nowMs)
         }
+        let located = locate(agent, environment)
+        let pid = claimed > 1 ? claimed : located.pid
+        // A block raised in a run nobody sits at (`AgentProcessRule
+        // .cannotPrompt`, read from the agent process's own argv): the
+        // vendor denies it itself, and no lamp turns red for it.
+        if written.kind.isBlocking, pid > 1, !agent.spec.process.promptlessFlags.isEmpty,
+           let argv = argumentsOf(agent, pid), agent.spec.process.cannotPrompt(argv: argv) {
+            written = AttentionRecord(
+                agent: agent, kind: .ignored, ms: nowMs, message: Ignored.noPrompt.rawValue,
+                session: written.session, cwd: written.cwd, event: written.event
+            )
+        }
         // Was the prompt's own window in front as this was raised? A turn
         // the user watched finish is not owed to them, and a blocked prompt
         // already on screen needs no banner.
         if written.kind.isOpen { written.front = front() }
-        let located = locate(agent, environment)
-        let pid = claimed > 1 ? claimed : located.pid
         written.pid = pid > 1 ? pid : 0
         written.landing = cleanField(located.landing, limit: 240)
         EventLog.append(written, at: logURL, nowMs: nowMs)
@@ -121,15 +140,16 @@ package enum PulseHookReceiver {
         if case .blocked = reading.action, agent.waitingSource == .none {
             return ignored(.cannotWait, agent: agent, event: event, context: context, nowMs: nowMs)
         }
-        let tool = cleanField(string(payload, keys: ["tool_name", "toolName"]), limit: 64)
+        let tool = toolLabel(string(payload, keys: ["tool_name", "toolName"]))
         let kind: AttentionKind
         var message = ""
         var toolColumn = ""
         var failed = false
         var tookMs: Int64 = 0
-        /// The tool's target, as a step says it: `Tool: target` without
-        /// the tool.
+        /// The tool's target, as a step says it: the adapter's own reading
+        /// when it has one, else `Tool: target` without the tool.
         func target() -> String {
+            if let target = reading.target { return target }
             let descriptor = toolDescriptor(from: payload)
             guard !tool.isEmpty, descriptor.hasPrefix(tool + ": ") else { return "" }
             return String(descriptor.dropFirst(tool.count + 2))
@@ -155,10 +175,16 @@ package enum PulseHookReceiver {
                 return ignored(.noSession, agent: agent, event: event, context: context, nowMs: nowMs)
             }
             kind = .status
-            // A tool that has started (Pi's `tool_execution_start`): what
-            // runs now. Never a step and never an answer.
-            toolColumn = tool
-            message = target()
+            if reading.note.isEmpty {
+                // A tool that has started (Pi's `tool_execution_start`):
+                // what runs now. Never a step and never an answer.
+                toolColumn = tool
+                message = target()
+            } else {
+                // The adapter's own words (a compaction, an auto-mode
+                // denial): no tool runs.
+                message = reading.note
+            }
         case .title:
             guard !context.session.isEmpty else {
                 return ignored(.noSession, agent: agent, event: event, context: context, nowMs: nowMs)
@@ -352,7 +378,7 @@ package enum PulseHookReceiver {
     /// object it encodes. Everything here still passes through `cleanField`,
     /// which redacts credentials and bounds the field.
     package static func toolDescriptor(from payload: [String: Any]) -> String {
-        let tool = string(payload, keys: ["tool_name", "toolName"])
+        let tool = toolLabel(string(payload, keys: ["tool_name", "toolName"]))
         guard !tool.isEmpty else { return "" }
         guard let input = toolInput(payload) else { return tool }
         for key in ["command", "file_path", "url", "path", "notebook_path", "pattern", "query"] {
@@ -362,6 +388,24 @@ package enum PulseHookReceiver {
             return "\(tool): \(target)"
         }
         return tool
+    }
+
+    /// The tool column's name for a vendor's tool, at most 64 characters:
+    /// an MCP tool (`mcp__<server>__<tool>`, Claude's and Codex's spelling)
+    /// is "server · tool", the server shortened first so the tool's own
+    /// name survives the bound; any other name as it is, bounded. Pure.
+    package static func toolLabel(_ raw: String) -> String {
+        let limit = 64
+        let parts = raw.components(separatedBy: "__")
+        guard parts.count >= 3, parts[0] == "mcp" else { return cleanField(raw, limit: limit) }
+        let server = cleanField(parts[1], limit: limit)
+        let name = cleanField(parts.dropFirst(2).joined(separator: "__"), limit: limit)
+        guard !server.isEmpty, !name.isEmpty else { return cleanField(raw, limit: limit) }
+        let joiner = " · "
+        let room = limit - joiner.count - name.count
+        guard room >= 2 else { return name }
+        let shown = server.count > room ? String(server.prefix(room - 1)) + "…" : server
+        return shown + joiner + name
     }
 
     /// A tool call's arguments: `tool_input` / `toolArgs` as an object, or

@@ -104,9 +104,11 @@ package enum HookAction: Equatable, Sendable {
 }
 
 /// One event read by an agent's adapter: the action and, for a block, what
-/// is being asked; for a tool, whether it failed and how long it took; and
-/// which subagent spoke (`AgentSpec.subagentKeys`, filled by
-/// `AgentSpec.reading` for every event).
+/// is being asked; for a tool, whether it failed, how long it took and —
+/// when the adapter knows the tool better than the generic reading — its
+/// target; for a `status` that names no tool, what it says; and which
+/// subagent spoke (`AgentSpec.subagentKeys`, filled by `AgentSpec.reading`
+/// for every event).
 package struct HookReading: Equatable, Sendable {
     package var action: HookAction
     package var ask: String
@@ -116,13 +118,25 @@ package struct HookReading: Equatable, Sendable {
     package var failed: Bool
     /// How long the tool ran, in ms; 0 unknown.
     package var tookMs: Int64
+    /// The tool's target as the adapter reads it (Claude's `Agent` task's
+    /// description, a `Skill`'s name); nil leaves the generic one
+    /// (`PulseHookReceiver.toolDescriptor`).
+    package var target: String?
+    /// What a `status` line that names no tool says ("compacted"): fixed
+    /// words of the adapter's, never the payload's prose.
+    package var note: String
 
-    package init(action: HookAction, ask: String = "", sub: String = "", failed: Bool = false, tookMs: Int64 = 0) {
+    package init(
+        action: HookAction, ask: String = "", sub: String = "", failed: Bool = false, tookMs: Int64 = 0,
+        target: String? = nil, note: String = ""
+    ) {
         self.action = action
         self.ask = ask
         self.sub = sub
         self.failed = failed
         self.tookMs = tookMs
+        self.target = target
+        self.note = note
     }
 }
 
@@ -149,18 +163,57 @@ package struct HookEvent: Sendable, Equatable {
 /// shape and differ only here.
 package struct NestedFlavor: Sendable {
     /// Every entry runs in the background (`"async": true`): the vendor
-    /// ignores anything it could return.
+    /// reads no decision from it (an async hook's `decision`, `retry` or
+    /// `continue` has nothing left to control).
     package var async: Bool
     /// Events the vendor always runs synchronously, with the timeout it caps
     /// them at (Codex's `SessionEnd`, 3 s): no `async`, a capped timeout.
     package var synchronous: [String: Int]
+    /// Events that stay `async` but whose timeout the vendor caps (Codex's
+    /// `Interrupt`, 3 s): written at the cap, so the vendor has nothing to
+    /// clamp or warn about.
+    package var timeoutCaps: [String: Int]
+    /// The vendor runs an entry only once the person has trusted it, and
+    /// the trust is bound to the entry's exact text (Codex's `/hooks`,
+    /// `engine/discovery.rs`): any change Pulse makes leaves it "modified"
+    /// and silent until trusted again. Settings says so when nothing was
+    /// heard since the file changed (`Connection.Caveat.untrusted`).
+    package var trustBound: Bool
     /// A word the install report adds (a step the person takes once).
     package var installNote: String?
 
-    package init(async: Bool, synchronous: [String: Int] = [:], installNote: String? = nil) {
+    package init(
+        async: Bool, synchronous: [String: Int] = [:], timeoutCaps: [String: Int] = [:],
+        trustBound: Bool = false, installNote: String? = nil
+    ) {
         self.async = async
         self.synchronous = synchronous
+        self.timeoutCaps = timeoutCaps
+        self.trustBound = trustBound
         self.installNote = installNote
+    }
+}
+
+/// A setting in the vendor's own config that keeps every hook Pulse
+/// installed from running, read-only (Claude's `disableAllHooks`, its
+/// managed `allowManagedHooksOnly`): Settings says the hook is installed
+/// and silenced, instead of "nothing heard yet". Pulse never writes it.
+package struct HookSwitch: Sendable, Equatable {
+    /// The file: home-relative, or absolute when it starts with `/`.
+    package let path: String
+    /// `path` is a folder whose `*.json` files are each read (a drop-in
+    /// directory, `managed-settings.d`).
+    package let folder: Bool
+    /// The top-level key whose `true` silences Pulse's hook.
+    package let key: String
+    /// What Settings says when it is set.
+    package let caveat: Connection.Caveat
+
+    package init(path: String, folder: Bool = false, key: String, caveat: Connection.Caveat) {
+        self.path = path
+        self.folder = folder
+        self.key = key
+        self.caveat = caveat
     }
 }
 
@@ -195,8 +248,10 @@ package enum HookFormat: Sendable {
 /// The rule: install only the vendor's documented hook, plugin or
 /// extension; only events that cannot change the agent's decisions — never a
 /// tool-gating event, never anything that returns a decision (Pulse's hook
-/// prints nothing and exits 0; Claude and Codex entries also run `async`);
-/// and every install is reversible byte for byte.
+/// prints nothing and exits 0; Claude and Codex entries also run `async`,
+/// and an async entry's decision output is never read — so an event whose
+/// only control is a decision, Claude's `PermissionDenied` `retry`, is
+/// observe-only there); and every install is reversible byte for byte.
 package struct HookContract: Sendable {
     package let format: HookFormat
     /// Home-relative file Pulse edits (or, for an owned format, owns whole).
@@ -227,12 +282,28 @@ package struct HookContract: Sendable {
         }
     }
 
-    package init(format: HookFormat, path: String, home: String, events: [HookEvent], relocation: Relocation? = nil) {
+    /// Vendor settings that silence every hook Pulse installed, read only
+    /// to say so (`HookSwitch`); the most specific first — a managed policy
+    /// before the person's own setting.
+    package let offSwitches: [HookSwitch]
+
+    package init(
+        format: HookFormat, path: String, home: String, events: [HookEvent], relocation: Relocation? = nil,
+        offSwitches: [HookSwitch] = []
+    ) {
         self.format = format
         self.path = path
         self.home = home
         self.events = events
         self.relocation = relocation
+        self.offSwitches = offSwitches
+    }
+
+    /// The vendor runs an entry only once it is trusted, bound to its exact
+    /// text (`NestedFlavor.trustBound`).
+    package var trustBound: Bool {
+        if case .nested(let flavor) = format { return flavor.trustBound }
+        return false
     }
 
     /// The installed event of this name; nil for one Pulse does not install
@@ -242,11 +313,15 @@ package struct HookContract: Sendable {
     }
 
     /// Events that gate a tool call or a permission before the vendor asks
-    /// the user. Pulse never installs one: its answer could change what the
-    /// agent does, and a slow or missing hook could stall it. `catalog_check`
-    /// and `AgentCatalogTests` hold every contract to this list.
+    /// the user — or whose hook takes the vendor's place (Claude's
+    /// `Elicitation` can answer an MCP form, `WorktreeCreate` makes the
+    /// worktree, `MessageDisplay` replaces what is shown). Pulse never
+    /// installs one: its answer could change what the agent does, and a
+    /// slow or missing hook could stall it. `catalog_check` and
+    /// `AgentCatalogTests` hold every contract to this list.
     package static let gatingEvents: Set<String> = [
         "PreToolUse", "preToolUse", "BeforeTool", "BeforeModel", "BeforeToolSelection",
+        "Elicitation", "WorktreeCreate", "MessageDisplay",
         "beforeShellExecution", "beforeMCPExecution", "beforeReadFile", "beforeSubmitPrompt",
         "permissionRequest", "tool.execute.before", "tool_call", "tool_result", "permission.ask",
         "before_agent_start", "input", "turn_end", "message_end", "user_bash",
@@ -295,19 +370,41 @@ package struct AgentProcessRule: Sendable {
     /// Their exact basename is useful evidence after the deny list has run;
     /// length alone must not make a live agent vanish.
     package var allowBareBasename: Bool
+    /// Arguments that run the agent with nobody at a prompt (Claude's
+    /// `-p` / `--print`): a blocked event from such a process is a request
+    /// no one can be shown — an `ignored` line, never a red lamp.
+    package var promptlessFlags: [String]
+    /// Arguments that give such a run a prompt after all (Claude's
+    /// `--permission-prompt-tool`: an SDK host answers it), alone or as
+    /// `flag=value`.
+    package var promptHostFlags: [String]
 
     package init(
         basenames: [String],
         pathNeedles: [String],
         denyNeedles: [String] = [],
         argvDenyNeedles: [String] = [],
-        allowBareBasename: Bool = false
+        allowBareBasename: Bool = false,
+        promptlessFlags: [String] = [],
+        promptHostFlags: [String] = []
     ) {
         self.basenames = basenames
         self.pathNeedles = pathNeedles
         self.denyNeedles = denyNeedles
         self.argvDenyNeedles = argvDenyNeedles
         self.allowBareBasename = allowBareBasename
+        self.promptlessFlags = promptlessFlags
+        self.promptHostFlags = promptHostFlags
+    }
+
+    /// The agent process with this argv can show nobody a prompt: it
+    /// carries a promptless flag and no prompt host. Whole arguments only.
+    /// Pure.
+    package func cannotPrompt(argv: [String]) -> Bool {
+        guard !promptlessFlags.isEmpty, argv.contains(where: { promptlessFlags.contains($0) }) else { return false }
+        return !argv.contains { argument in
+            promptHostFlags.contains { argument == $0 || argument.hasPrefix($0 + "=") }
+        }
     }
 }
 

@@ -38,6 +38,10 @@ final class StatusStore {
     /// — read at launch, when Settings opens and after an install; never on
     /// the scan path.
     var hookInstalls: [AgentID: Connection.Install] = [:]
+    /// What else each agent's config says — a vendor setting that silences
+    /// hooks, when the file Pulse edits last changed (`HooksSupport.config`)
+    /// — read with `hookInstalls`.
+    var hookConfigs: [AgentID: Connection.Config] = [:]
     /// Agents whose vendor folder is on this Mac (`HooksInstaller.vendorPresent`)
     /// — read at launch and when the tray opens; never on the scan path.
     var presentAgents: Set<AgentID> = []
@@ -155,13 +159,16 @@ final class StatusStore {
     func probeHooks() {
         land(\.hooksStatus, HooksSupport.probeStatus())
         land(\.hookInstalls, HooksSupport.inspectAll())
+        land(\.hookConfigs, HooksSupport.configAll())
     }
 
     /// Every agent's connection: its install (the last failure wins), the
-    /// vendor event heard last and the last one not used — the engine's,
-    /// so a redraw reads no file.
+    /// vendor event heard last and the last one not used, and why a whole
+    /// install may say nothing — the engine's and the last probe's, so a
+    /// redraw reads no file.
     var connections: [Connection] {
         let failures = hooksStatus.failures
+        let processes = engine.processes
         return AgentID.priority.map { agent in
             Connection.make(
                 agent: agent,
@@ -170,7 +177,9 @@ final class StatusStore {
                 failure: failures[agent],
                 heard: engine.latestHeard[agent],
                 ignored: engine.latestIgnored[agent],
-                configDirMissing: configDirMissing.contains(agent)
+                configDirMissing: configDirMissing.contains(agent),
+                config: hookConfigs[agent] ?? Connection.Config(),
+                runningSince: processes.filter { $0.agent == agent }.map(\.startedMs)
             )
         }
     }

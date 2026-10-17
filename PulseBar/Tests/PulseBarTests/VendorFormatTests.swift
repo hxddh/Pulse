@@ -77,6 +77,31 @@ struct VendorDriftTests {
         #expect(!AgentID.claude.spec.reportsOwnPID)
     }
 
+    /// Claude (docs checked 2026-10-17) and Codex (pinned at ce0323f): the
+    /// observe-only events step 2 installs, each async; never an event whose
+    /// hook takes Claude's place; Codex's Interrupt at its 3 s cap; Codex's
+    /// hook trust is bound to the entry's text.
+    @Test func claudeAndCodexInstallOnlyObserveOnlyEvents() {
+        let claude = Set(AgentID.claude.spec.hooks.events.map(\.name))
+        #expect(claude.isSuperset(of: ["SubagentStart", "SubagentStop", "PostCompact", "PermissionDenied"]))
+        for never in ["PreToolUse", "MessageDisplay", "Elicitation", "WorktreeCreate"] {
+            #expect(!claude.contains(never), "\(never)")
+            #expect(HookContract.gatingEvents.contains(never), "\(never)")
+        }
+        let codex = Set(AgentID.codex.spec.hooks.events.map(\.name))
+        #expect(codex.isSuperset(of: ["Interrupt", "SubagentStop"]))
+        #expect(!codex.contains("PermissionRequest"))
+        guard case .nested(let flavor) = AgentID.codex.spec.hooks.format else {
+            Issue.record("Codex is nested")
+            return
+        }
+        #expect(flavor.async)
+        #expect(flavor.timeoutCaps["Interrupt"] == 3)
+        #expect(flavor.synchronous["Interrupt"] == nil, "Interrupt honours async")
+        #expect(flavor.trustBound)
+        #expect(PulseHookReceiver.interpret(agent: .codex, event: "Interrupt", payload: [:])?.action == .stopped)
+    }
+
     /// Every contract event Pulse installs is one the receiver knows —
     /// an installed event it could not read would be a hook that says
     /// nothing.

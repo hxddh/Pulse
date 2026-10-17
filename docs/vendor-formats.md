@@ -25,6 +25,17 @@ payload. The tables below are those files in prose.
   any other hook that can gate or change a decision
   (`HookContract.gatingEvents`), and never an answer: `pulse-hook` prints
   nothing and exits 0 at once. Claude's and Codex's entries are `async`.
+- **Async neutralizes decision output.** The vendor runs an async entry in
+  the background and reads no decision from it — Claude: `decision`,
+  `permissionDecision`, `continue` (and `PermissionDenied`'s `retry`) have
+  nothing left to control; Codex never reads an async handler's output. So
+  an event whose only control is a decision output is observe-only when
+  installed async (Claude's `PermissionDenied`, `SubagentStop`; Codex's
+  `SubagentStop`). An event whose hook takes the vendor's place —
+  `PreToolUse` gates a tool, `Elicitation` can answer an MCP form for the
+  person, `WorktreeCreate` makes the worktree, `MessageDisplay` holds every
+  streamed batch and replaces what is shown — is never installed, async or
+  not.
 - **Byte-for-byte reversible.** Before Pulse first writes a file it records
   the file's bytes (or that it did not exist) in
   `~/Library/Application Support/Pulse/hook-installs.json`. A removal puts
@@ -67,8 +78,8 @@ rendered by its adapter).
 
 | Agent | Installed into | Form | Reports "needs you" |
 | --- | --- | --- | --- |
-| Claude Code | `hooks` in `~/.claude/settings.json` | `nested`, every entry `async: true` | yes — `PermissionRequest`, `Notification` permission / question |
-| Codex | `~/.codex/hooks.json` (never `config.toml`) | `nested` (`async`; `SessionEnd` synchronous, ≤ 3 s) | **no** — its `PermissionRequest` fires before its own auto-review: installing it would be a fake wait |
+| Claude Code | `hooks` in `~/.claude/settings.json` | `nested`, every entry `async: true` | yes — `PermissionRequest`, `Notification` permission / question (not when nobody can be shown it: `dontAsk`, `claude -p` without a permission host) |
+| Codex | `~/.codex/hooks.json` (never `config.toml`) | `nested` (`async`; `SessionEnd` synchronous, ≤ 3 s; `Interrupt` async, timeout written at its 3 s cap) | **no** — its `PermissionRequest` fires before its own auto-review: installing it would be a fake wait |
 | Copilot CLI | `~/.copilot/hooks/pulse.json` (Pulse's own file) | `ownedJSON` | yes — `notification` `permission_prompt` / `elicitation_dialog` |
 | OpenCode | `~/.config/opencode/plugins/pulse.js` (Pulse's own file) | `module`: a plugin, `event` only | yes — `permission.asked` / `question.asked` |
 | Cursor | `~/.cursor/hooks.json` | `versioned` | **no** — it has no observe-only wait event |
@@ -103,17 +114,25 @@ silences.
 | --- | --- | --- |
 | **Claude** (`~/.claude/settings.json`, every entry `async: true`) | `SessionStart` | `start` |
 | | `UserPromptSubmit` | `working` (message = `prompt`) |
-| | `PostToolUse`, `PostToolUseFailure` | `tool` (tool = `tool_name`, message = its target; `PostToolUseFailure`: `err` = 1) |
-| | `PermissionRequest` (*payload*) | `permission` — ask = `tool_name: command/file_path/url`, tool = `tool_name`; `AskUserQuestion` → `question`, ask = `tool_input.questions[0].question`; `ExitPlanMode` → ask = the plan's first line |
+| | `PostToolUse`, `PostToolUseFailure` (*payload*) | `tool` (tool = `tool_name`, an MCP tool `mcp__server__tool` as `server · tool`; message = its target — an `Agent` / `Task` call's `description`, else `subagent_type`; a `Skill`'s `skill`; else the command, path, URL, pattern or query; `PostToolUseFailure`: `err` = 1) |
+| | `PostToolUseFailure` with `is_interrupt: true` | `stopped` (the call reached Claude as an abort: the person interrupted) |
+| | `PermissionRequest` (*payload*) | `permission` — ask = `tool_name: command/file_path/url` (an `Agent` call: its description), tool = `tool_name`; `AskUserQuestion` → `question`, ask = `tool_input.questions[0].question`; `ExitPlanMode` → ask = the plan's first line. `ignored` — "no prompt can be shown" — when `permission_mode` is `dontAsk`, or the Claude process runs `-p` / `--print` without `--permission-prompt-tool` (its argv, `AgentProcessRule.promptlessFlags`): Claude denies it itself |
+| | `PermissionDenied` (*payload*; async) | `status` (message = `auto mode denied <tool>`; no tool column — a status that names a tool says it runs now; `reason` is not read) |
 | | `Notification` `permission_prompt` (*payload*, as every `Notification` row) | `permission` |
-| | `Notification` `elicitation_dialog` / `elicitation_url_dialog` / `agent_needs_input` | `question` |
+| | `Notification` `elicitation_dialog` / `elicitation_url_dialog` | `question` |
+| | `Notification` `agent_needs_input` | `ignored` — "may be about another session" (agent view's background session, a teammate's setup question, a billing notice: the payload does not name the session that waits) |
 | | `Notification` `idle_prompt` | `idle` |
 | | `Notification` `elicitation_complete` / `elicitation_response` | `done` |
-| | `Stop` | `turn` (message = `last_assistant_message`) |
+| | `SubagentStart` / `SubagentStop` (*payload*) | `start` / `turn` with `sub` = `agent_id` — the subagent's own lifecycle, timeline only (its `SubagentStop` answers only its own block); without `agent_id`: ignored |
+| | `PostCompact` (*payload*) | `status` (message = `compacted`) when `trigger` is `auto`; a manual `/compact` (the person at the prompt, no `Stop` follows) is ignored. `compact_summary` is never read |
+| | `Stop` | `turn` (message = `last_assistant_message`; `background_tasks` / `session_crons` are not read) |
 | | `StopFailure` | `failed` (message = `last_assistant_message`, else `error_details`, else `error`) |
 | | `SessionEnd` | `end` |
-| **Codex** (`~/.codex/hooks.json` only; `config.toml` is never touched) — never blocked | `SessionStart` / `UserPromptSubmit` / `Stop` / `SessionEnd` | `start` / `working` (message = `prompt`) / `turn` (message = `last_assistant_message`) / `end` |
+| **Codex** (`~/.codex/hooks.json` only; `config.toml` is never touched) — never blocked | `SessionStart` / `UserPromptSubmit` / `Stop` / `SessionEnd` | `start` / `working` (message = `prompt`; a subagent's, with `agent_id`, is its own task) / `turn` (message = `last_assistant_message`) / `end` |
 | | `PostToolUse` (async) | `tool` (the stall rule's evidence; tool = `tool_name`, message = its target) |
+| | `SubagentStop` (*payload*; async) | `turn` with `sub` = `agent_id` (the child thread; `session_id` is the root's) — timeline only, never the end of the person's turn |
+| | `Interrupt` (async, ≤ 3 s; root turns only) | `stopped` (the person interrupted the turn) |
+| | a turn that ends on an error | nothing: Codex fires no `Stop` for it, and Pulse infers nothing — the row stays working until the next event, the process's exit or the silent bound |
 | | `PermissionRequest` | never installed, not read (fires before Codex's own auto-review) |
 | **Copilot CLI** (`~/.copilot/hooks/pulse.json`) | `sessionStart` / `sessionEnd` | `start` / `end` |
 | | `userPromptSubmitted` | `working` (message = `prompt`) |
@@ -145,6 +164,30 @@ silences.
 | | `agent_settled` (*payload*) | `turn` (message = the run's last assistant words, which the extension kept from `agent_end`); `failed` when that message stopped on an error (message = its `errorMessage`); `stopped` when `aborted` (the person pressed Escape: no words) |
 | | `agent_end` | observed by the extension to fill `agent_settled`; never sent |
 
+**What Claude says without a prompt.** Claude runs `PermissionRequest`
+hooks in sessions that cannot show a prompt and denies the call when no hook
+decides; in `dontAsk` mode it denies whatever is not pre-approved. Neither is
+a wait: the line is `ignored`, "no prompt can be shown". A `claude -p` run
+with `--permission-prompt-tool` (the Agent SDK's host — Claude Desktop, the
+VS Code extension) does show its prompt and stays a wait.
+
+**Silenced installs.** Settings → Hooks reads, never writes, what keeps an
+installed hook from running (`HookContract.offSwitches`,
+`Connection.Caveat`): Claude's `disableAllHooks: true` in
+`~/.claude/settings.json` ("turned off in Claude's settings"), and
+`allowManagedHooksOnly` / `disableAllHooks: true` in
+`/Library/Application Support/ClaudeCode/managed-settings.json` or
+`managed-settings.d/*.json` ("a managed policy keeps Claude from running
+it"). A project's own `disableAllHooks: false` can override the user's
+`true`; Pulse reads only the user file and says so as a warning, not a
+verdict. Codex trusts each hook by a hash of its entry
+(`engine/discovery.rs`): any change Pulse makes leaves its entries
+"modified" and silent until the person trusts them again in `/hooks`
+(`NestedFlavor.trustBound`). When the install is whole, a Codex process
+started after `hooks.json` last changed and nothing was heard since,
+Settings says Codex hasn't run it — trust it in `/hooks`. Codex's
+`allow_managed_hooks_only` lives in `config.toml`, which Pulse never reads.
+
 **What Pi cannot report.** Pulse sees only what passes through Pi's
 extension events. Pi's `/login` OAuth wait (`setBlocked("login")`) and its
 "Session cwd not found" confirm on resume (`promptForMissingSessionCwd`)
@@ -161,8 +204,8 @@ prompt's end is never numbered before its start.
 
 | Agent | Title (prompt event) | Step (tool event) | Last words / error |
 | --- | --- | --- | --- |
-| Claude | `UserPromptSubmit` `prompt` | `PostToolUse(Failure)` `tool_name` + `tool_input` | `Stop` `last_assistant_message`; `StopFailure` error |
-| Codex | `UserPromptSubmit` `prompt` | `PostToolUse` `tool_name` + `tool_input` | `Stop` `last_assistant_message` |
+| Claude | `UserPromptSubmit` `prompt` | `PostToolUse(Failure)` `tool_name` (MCP: `server · tool`) + `tool_input` (`Agent`: `description` / `subagent_type`; `Skill`: `skill`) | `Stop` `last_assistant_message`; `StopFailure` error |
+| Codex | `UserPromptSubmit` `prompt` | `PostToolUse` `tool_name` + `tool_input` | `Stop` `last_assistant_message`; none for a turn that ends on an error (no `Stop`) |
 | Copilot | `userPromptSubmitted` `prompt` | `postToolUse` `toolName` + `toolArgs` (a JSON string) | unrecoverable `errorOccurred` `error.message` |
 | Pi | `session_info_changed` / `session_start` name, else `message_start` (the person's message) | `tool_execution_end` + its call's argument from `tool_execution_start` (failed, duration); `tool_execution_start` is what runs now | `agent_settled` with `agent_end`'s last assistant words; its `errorMessage`; none when aborted |
 | OpenCode | — | — (no tool event) | `session.error` message |
@@ -195,8 +238,9 @@ install their per-tool event (`PostToolUse`, `postToolUse`,
 that means a stall
 (`HookContract.reportsToolActivity`). Each was checked non-blocking at exit 0
 with empty output against the pinned source. Claude also installs
-`PostToolUseFailure` (its output cannot change the outcome), never
-`PermissionDenied` (its `retry` can change what the model does).
+`PostToolUseFailure` (its output cannot change the outcome) and, async,
+`PermissionDenied` (its `retry` is a decision output, never read from an
+async hook — "async neutralizes decision output", above).
 **Changing a hook contract means updating its block and its test in the same
 change.**
 

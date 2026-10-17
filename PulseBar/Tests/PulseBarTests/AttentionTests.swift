@@ -262,14 +262,20 @@ final class PulseHookReceiverTests: XCTestCase {
     }
 
     /// Run one vendor event through the receiver, as its installed hook does.
+    /// `argv`: the agent process's arguments, as the receiver would read
+    /// them — never this Mac's real process table.
     @discardableResult
     private func deliver(
         _ agent: String, _ event: String, _ payload: String,
-        locate: ((AgentID, [String: String]) -> (pid: Int32, landing: String))? = nil
+        locate: ((AgentID, [String: String]) -> (pid: Int32, landing: String))? = nil,
+        argv: [String]? = nil
     ) -> Int32 {
         var arguments = ["PulseBar", "--hook", agent]
         if !event.isEmpty { arguments.append(event) }
-        return PulseHookReceiver.run(arguments: arguments, stdin: payload, logURL: log, locate: locate ?? located)
+        return PulseHookReceiver.run(
+            arguments: arguments, stdin: payload, logURL: log, locate: locate ?? located,
+            argumentsOf: { _, _ in argv }
+        )
     }
 
     /// Every line the receiver wrote, `ignored` ones too.
@@ -411,8 +417,106 @@ final class PulseHookReceiverTests: XCTestCase {
         note("agent_needs_input")
         note("idle_prompt")
         note("auth_success")
-        XCTAssertEqual(kinds(), ["permission", "question", "question", "idle"])
-        XCTAssertEqual(ignored(), [PulseHookReceiver.Ignored.silent.rawValue], "auth_success says nothing Pulse shows — and says so")
+        XCTAssertEqual(kinds(), ["permission", "question", "idle"])
+        XCTAssertEqual(ignored(), [
+            PulseHookReceiver.Ignored.otherSession.rawValue,
+            PulseHookReceiver.Ignored.silent.rawValue,
+        ], "agent_needs_input may be another session's wait (agent view, a teammate, a billing notice); auth_success says nothing Pulse shows — each says so")
+    }
+
+    /// A permission request nobody can be shown — `dontAsk`, or `claude -p`
+    /// without a permission host — is denied by Claude itself: an ignored
+    /// line, never a red lamp. A `-p` run with `--permission-prompt-tool`
+    /// (an SDK host) does ask.
+    func testClaudeRequestNobodyCanSeeIsIgnored() {
+        let request = #"{"session_id":"p1","cwd":"/w","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm -rf build"}}"#
+        let dontAsk = #"{"session_id":"p2","cwd":"/w","hook_event_name":"PermissionRequest","permission_mode":"dontAsk","tool_name":"Bash","tool_input":{"command":"ls"}}"#
+        deliver("claude", "PermissionRequest", dontAsk, argv: ["claude"])
+        deliver("claude", "PermissionRequest", request, argv: ["claude", "-p", "clean up"])
+        deliver("claude", "PermissionRequest", request, argv: ["claude", "--print", "clean up"])
+        XCTAssertEqual(kinds(), [])
+        XCTAssertEqual(ignored(), Array(repeating: PulseHookReceiver.Ignored.noPrompt.rawValue, count: 3))
+        XCTAssertEqual(heard().filter { $0.kind == .ignored }.map(\.session), ["p2", "p1", "p1"], "the session it was about")
+        deliver("claude", "PermissionRequest", request, argv: ["claude", "-p", "--permission-prompt-tool", "stdio"])
+        deliver("claude", "PermissionRequest", request, argv: ["claude", "--permission-prompt-tool=mcp__host__ask", "-p"])
+        deliver("claude", "PermissionRequest", request, argv: ["claude", "--resume"])
+        deliver("claude", "PermissionRequest", request, argv: nil)
+        XCTAssertEqual(kinds(), ["permission", "permission", "permission", "permission"])
+        let rule = AgentID.claude.spec.process
+        XCTAssertTrue(rule.cannotPrompt(argv: ["/Users/me/.local/bin/claude", "-p", "hi"]))
+        XCTAssertFalse(rule.cannotPrompt(argv: ["claude", "fix -p in the parser"]), "whole arguments only")
+        XCTAssertFalse(AgentID.codex.spec.process.cannotPrompt(argv: ["codex", "-p", "work"]), "only an agent that says so")
+    }
+
+    /// A tool call that reached Claude as an abort (`is_interrupt`) is the
+    /// person stopping the run, not a failed step.
+    func testClaudeInterruptedToolIsStopped() throws {
+        deliver("claude", "PostToolUseFailure", #"{"session_id":"s1","cwd":"/w","hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"sleep 100"},"error":"Interrupted","is_interrupt":true}"#)
+        deliver("claude", "PostToolUseFailure", #"{"session_id":"s1","cwd":"/w","hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"npm test"},"error":"exit 1","is_interrupt":false}"#)
+        XCTAssertEqual(records().map(\.kind), [.stopped, .tool])
+        XCTAssertEqual(records().first?.message, "", "no words")
+        XCTAssertEqual(records().last?.failed, true)
+    }
+
+    /// A step says what ran: an Agent call by its description (else its
+    /// type), a Skill by its name, an MCP tool as "server · tool" — the
+    /// tool's own name kept whole when the server's is long.
+    func testClaudeStepsNameTasksSkillsAndMCPTools() {
+        deliver("claude", "PostToolUse", #"{"session_id":"s1","cwd":"/w","tool_name":"Agent","tool_input":{"description":"Find API endpoints","prompt":"Look everywhere","subagent_type":"Explore"}}"#)
+        deliver("claude", "PostToolUse", #"{"session_id":"s1","cwd":"/w","tool_name":"Task","tool_input":{"prompt":"Look","subagent_type":"Explore"}}"#)
+        deliver("claude", "PostToolUse", #"{"session_id":"s1","cwd":"/w","tool_name":"Skill","tool_input":{"skill":"pdf","args":"report.pdf"}}"#)
+        deliver("claude", "PostToolUse", #"{"session_id":"s1","cwd":"/w","tool_name":"mcp__memory__create_entities","tool_input":{"query":"cache"}}"#)
+        deliver("claude", "PermissionRequest", #"{"session_id":"s2","cwd":"/w","tool_name":"Agent","tool_input":{"description":"Refactor auth","subagent_type":"general-purpose"}}"#)
+        let tools = records().filter { $0.kind == .tool }
+        XCTAssertEqual(tools.map(\.tool), ["Agent", "Task", "Skill", "memory · create_entities"])
+        XCTAssertEqual(tools.map(\.message), ["Find API endpoints", "Explore", "pdf", "cache"])
+        XCTAssertEqual(records().first { $0.kind == .permission }?.message, "Agent: Refactor auth")
+        XCTAssertEqual(PulseHookReceiver.toolLabel("Bash"), "Bash")
+        XCTAssertEqual(PulseHookReceiver.toolLabel("mcp__"), "mcp__")
+        let longServer = "mcp__" + String(repeating: "s", count: 70) + "__download_file_content"
+        let label = PulseHookReceiver.toolLabel(longServer)
+        XCTAssertTrue(label.hasSuffix(" · download_file_content"), label)
+        XCTAssertLessThanOrEqual(label.count, 64)
+        XCTAssertEqual(PulseHookReceiver.toolLabel("mcp__x__" + String(repeating: "t", count: 70)).count, 64, "a tool name past the bound is the name alone, bounded")
+    }
+
+    /// Auto mode's denial and an automatic compaction are work going on —
+    /// status lines with Pulse's own words, no tool column (a status that
+    /// names a tool says it runs now) and none of the payload's prose; a
+    /// manual `/compact` is the person at the prompt.
+    func testClaudeDenialAndCompactionAreStatus() {
+        deliver("claude", "PermissionDenied", #"{"session_id":"s1","cwd":"/w","permission_mode":"auto","tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/build"},"reason":"[Irreversible Local Destruction]"}"#)
+        deliver("claude", "PostCompact", #"{"session_id":"s1","cwd":"/w","trigger":"auto","compact_summary":"We discussed secrets"}"#)
+        deliver("claude", "PostCompact", #"{"session_id":"s1","cwd":"/w","trigger":"manual","compact_summary":"We discussed secrets"}"#)
+        let status = records().filter { $0.kind == .status }
+        XCTAssertEqual(status.map(\.message), ["auto mode denied Bash", "compacted"])
+        XCTAssertEqual(status.map(\.tool), ["", ""])
+        XCTAssertEqual(status.map(\.event), ["PermissionDenied", "PostCompact"])
+        XCTAssertEqual(ignored(), [PulseHookReceiver.Ignored.silent.rawValue])
+        XCTAssertFalse(heard().contains { $0.message.contains("secrets") || $0.message.contains("Irreversible") })
+    }
+
+    /// A subagent's own start and end carry its `agent_id` (the line's
+    /// sub); one that names none is never the main agent's.
+    func testClaudeSubagentLifecycleCarriesItsId() {
+        deliver("claude", "SubagentStart", #"{"session_id":"s1","cwd":"/w","agent_id":"agent-abc","agent_type":"Explore"}"#)
+        deliver("claude", "SubagentStop", #"{"session_id":"s1","cwd":"/w","agent_id":"agent-abc","agent_type":"Explore","last_assistant_message":"Found 12","background_tasks":[{"id":"t1","type":"shell","status":"running"}]}"#)
+        deliver("claude", "SubagentStop", #"{"session_id":"s1","cwd":"/w","agent_type":""}"#)
+        XCTAssertEqual(records().map(\.kind), [.start, .turn])
+        XCTAssertEqual(records().map(\.sub), ["agent-abc", "agent-abc"])
+        XCTAssertEqual(ignored(), [PulseHookReceiver.Ignored.silent.rawValue])
+    }
+
+    /// Codex: Interrupt is the person stopping the turn; a subagent's
+    /// prompt and its SubagentStop carry its `agent_id` — its own task and
+    /// end, never the person's.
+    func testCodexInterruptAndSubagents() {
+        deliver("codex", "Interrupt", #"{"session_id":"t1","turn_id":"1","cwd":"/w","hook_event_name":"Interrupt","model":"m","permission_mode":"default"}"#)
+        deliver("codex", "UserPromptSubmit", #"{"session_id":"t1","turn_id":"2","agent_id":"th-9","agent_type":"worker","cwd":"/w","prompt":"Index the repo"}"#)
+        deliver("codex", "SubagentStop", #"{"session_id":"t1","turn_id":"2","agent_id":"th-9","agent_type":"worker","cwd":"/w","stop_hook_active":false,"last_assistant_message":"done"}"#)
+        XCTAssertEqual(records().map(\.kind), [.stopped, .working, .turn])
+        XCTAssertEqual(records().map(\.sub), ["", "th-9", "th-9"])
+        XCTAssertEqual(records().map(\.event), ["Interrupt", "UserPromptSubmit", "SubagentStop"])
     }
 
     func testClaudeLifecycleAndTurn() {
@@ -1152,6 +1256,9 @@ final class HooksInstallerTests: XCTestCase {
                         if !exempt.contains(event) {
                             XCTAssertEqual(body["async"] as? Bool, true, "\(path) \(event)")
                         }
+                        if path.hasPrefix(".codex"), event == "Interrupt" {
+                            XCTAssertEqual(body["timeout"] as? Int, 3, "Codex caps Interrupt at 3 s: written at the cap")
+                        }
                     }
                 }
             }
@@ -1792,10 +1899,10 @@ struct TurnTruthTests {
         defer { try? FileManager.default.removeItem(at: home) }
         let stop = PulseHookReceiver.interpret(agent: .claude, event: "Stop", payload: [:])
         let failure = PulseHookReceiver.interpret(agent: .claude, event: "StopFailure", payload: [:])
-        let subagent = PulseHookReceiver.interpret(agent: .claude, event: "SubagentStop", payload: [:])
+        let precompact = PulseHookReceiver.interpret(agent: .claude, event: "PreCompact", payload: [:])
         #expect(stop?.action == .turn)
         #expect(failure?.action == .failedTurn)
-        #expect(subagent == nil, "never installed: not read")
+        #expect(precompact == nil, "never installed: not read")
 
         // The installed Claude hooks pass the vendor's event name.
         let here: (AgentID, [String: String]) -> (pid: Int32, landing: String) = { _, _ in (0, "") }

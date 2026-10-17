@@ -8,8 +8,8 @@
         "urls": [
           "https://code.claude.com/docs/en/hooks"
         ],
-        "checked": "2026-09-30",
-        "note": "Every Pulse entry runs async: true — an async hook cannot block or decide (\"Run hooks in the background\"). PostToolUse is activity (tool_name + tool_input: the step); PostToolUseFailure (after a tool call fails; output cannot change the outcome) is activity too. UserPromptSubmit's prompt is the session's title. Stop's last_assistant_message is the last words; StopFailure's last_assistant_message / error_details / error is the turn's error. PermissionDenied is not installed: its hookSpecificOutput.retry can change what the model does. PermissionRequest AskUserQuestion reads tool_input.questions[0].question; ExitPlanMode reads tool_input.plan. Inside a subagent each event carries `agent_id`, written as the line's sub column (a subagent never answers the main agent's block, never revives an ended turn and is never the person's prompt).",
+        "checked": "2026-10-17",
+        "note": "Every Pulse entry runs async: true — an async hook cannot block or decide (\"Run hooks in the background\": decision, permissionDecision and continue have no effect; only additionalContext and systemMessage are delivered, and Pulse prints nothing). PostToolUse is activity (tool_name + tool_input: the step; an Agent/Task call's step is its description, else subagent_type; a Skill's is skill; an MCP tool mcp__server__tool is \"server · tool\"); PostToolUseFailure (after a tool call fails; output cannot change the outcome) is activity too, except is_interrupt: true (the failure reached Claude as an abort) — a stopped line. UserPromptSubmit's prompt is the session's title. Stop's last_assistant_message is the last words (background_tasks / session_crons are not read); StopFailure's last_assistant_message / error_details / error is the turn's error. PermissionRequest is not a wait when nobody can be shown it: permission_mode dontAsk (in the payload), or a claude -p / --print process without --permission-prompt-tool (its argv, read by sysctl) — an ignored line \"no prompt can be shown\" (the doc: in sessions that can't show a prompt Claude still runs the hook and denies the call). AskUserQuestion reads tool_input.questions[0].question; ExitPlanMode reads tool_input.plan. Notification agent_needs_input fires for a background session while agent view is open, a teammate's terminal setup question or auto mode's classifier billing notice, and its payload (message, title, notification_type) does not name the waiting session: an ignored line \"may be about another session\". permission_prompt / elicitation_dialog / elicitation_url_dialog / idle_prompt / elicitation_complete / elicitation_response keep their meaning. PermissionDenied (auto mode denied a call) is installed async: its only control, hookSpecificOutput.retry, is a decision output an async hook never returns — a status line \"auto mode denied <tool>\" (tool_name only; reason is not read). PostCompact with trigger auto is a status line \"compacted\" (compact_summary is never read); trigger manual (a /compact at the prompt, no Stop follows) says nothing. SubagentStart / SubagentStop carry agent_id and agent_type: the subagent's own start and end of turn (a sub line: timeline only, it answers only that subagent's block, never ends or revives the person's turn); one without agent_id says nothing. Inside a subagent each event carries agent_id, written as the line's sub column. SessionStart's model and any token / cost field are never read. Silenced installs are said in Settings, read-only: disableAllHooks: true in ~/.claude/settings.json, or allowManagedHooksOnly / disableAllHooks: true in /Library/Application Support/ClaudeCode/managed-settings.json or managed-settings.d/*.json. Never installed: PreToolUse, MessageDisplay, Elicitation, WorktreeCreate (each can gate or change what Claude does).",
         "events": [
           "SessionStart",
           "SessionEnd",
@@ -19,7 +19,11 @@
           "PermissionRequest",
           "Notification",
           "Stop",
-          "StopFailure"
+          "StopFailure",
+          "PermissionDenied",
+          "SubagentStart",
+          "SubagentStop",
+          "PostCompact"
         ],
         "tests": [
           "AttentionTests.swift",
@@ -31,19 +35,23 @@
       "hooks": {
         "source": "repo",
         "repo": "https://github.com/openai/codex",
-        "commit": "193632d2448f6b0e9860faab8d6495124e266772",
-        "checked": "2026-09-29",
+        "commit": "ce0323f2f2d3b25e82806cd555237da3db4e1897",
+        "checked": "2026-10-17",
         "watch": [
           "codex-rs/hooks/src/engine/discovery.rs",
-          "codex-rs/hooks/src/schema.rs"
+          "codex-rs/hooks/src/schema.rs",
+          "codex-rs/core/src/hook_runtime.rs",
+          "codex-rs/core/src/tasks/mod.rs"
         ],
-        "note": "hooks.json only — Pulse never touches config.toml (no notify argv). hooks.json shares Claude's nested shape and honours async (SessionEnd always runs synchronously, capped at 3 s). PermissionRequest is never installed: it fires before Codex's own auto-review. Stop is the end of a turn (last_assistant_message: the last words); UserPromptSubmit's prompt is the title. PostToolUse is installed async (engine/discovery.rs: only SessionEnd is forced synchronous; an async handler's output is never read) — the per-tool activity that makes a stall meaningful, and the step. Inside a subagent each event carries `agent_id`, written as the line's sub column (a subagent never answers the main agent's block, never revives an ended turn and is never the person's prompt).",
+        "note": "Pinned at ce0323f (2026-10-17). hooks.json only — Pulse never touches config.toml, neither reads nor writes it (no notify argv; its allow_managed_hooks_only lives there and is not read). hooks.json shares Claude's nested shape and honours async (engine/discovery.rs: SessionEnd always runs synchronously, capped at 3 s; Interrupt runs async with its timeout capped at 3 s, written at the cap; an async handler's output is never read). PermissionRequest is never installed: it fires before Codex's own auto-review. Stop is the end of a root turn (last_assistant_message: the last words); a turn that ends on an error fires no Stop (core session/turn.rs returns before run_turn_stop_hooks) and nothing is inferred. UserPromptSubmit's prompt is the title; inside a subagent it carries agent_id and is the subagent's task, not the person's prompt. PostToolUse is installed async — the per-tool activity that makes a stall meaningful, and the step. SubagentStop (thread-spawned child turns; core hook_runtime.rs run_turn_stop_hooks) is installed async: agent_id is the child's thread id, session_id the root's — a sub line, timeline only, never the end of the person's turn. Interrupt (root turns only, TurnAbortReason::Interrupted; core tasks/mod.rs run_turn_interrupt_hooks; output only systemMessage) is a stopped line. Every thread of a session shares session_id; inside a subagent each event carries agent_id, written as the line's sub column. model / permission_mode are not read. Hook trust is bound to each entry's normalized text (discovery.rs hook_trust_status: Trusted / Modified / Untrusted): any change Pulse makes leaves its entries Modified and silent until trusted again in /hooks — Settings says so when a Codex started since hooks.json changed and nothing was heard.",
         "events": [
           "SessionStart",
           "SessionEnd",
           "UserPromptSubmit",
           "PostToolUse",
-          "Stop"
+          "Stop",
+          "Interrupt",
+          "SubagentStop"
         ],
         "tests": [
           "AttentionTests.swift",

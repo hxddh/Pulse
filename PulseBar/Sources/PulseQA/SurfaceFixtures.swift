@@ -220,7 +220,7 @@ enum SurfaceFixtures {
             line(.permission, 8 * minute - 6_000, notified, message: "Claude needs your permission to use Bash"),
             line(.tool, 6 * minute, tool, tool: "Bash", message: "swift test"),
             // An event Pulse does not install for Claude.
-            line(.ignored, 5 * minute, "SubagentStop", message: PulseHookReceiver.Ignored.notInstalled.rawValue),
+            line(.ignored, 5 * minute, "PreCompact", message: PulseHookReceiver.Ignored.notInstalled.rawValue),
             line(.tool, 3 * minute, tool, tool: "Edit", message: "Sources/Upload/Backoff.swift"),
             line(.tool, 2 * minute, tool, tool: "Bash", message: "swift test"),
         ]
@@ -320,7 +320,7 @@ enum SurfaceFixtures {
             Connection(
                 agent: .claude, install: .complete,
                 lastHeard: Connection.Heard(event: event(.claude, .activity), ms: nowMs - 12_000),
-                lastIgnored: Connection.Ignored(event: "SubagentStop", reason: PulseHookReceiver.Ignored.notInstalled.rawValue, ms: nowMs - 4 * minute)
+                lastIgnored: Connection.Ignored(event: "PreCompact", reason: PulseHookReceiver.Ignored.notInstalled.rawValue, ms: nowMs - 4 * minute)
             ),
             Connection(
                 agent: .codex, install: .partial(found: max(0, codexEvents - 2), of: codexEvents),

@@ -548,7 +548,7 @@ struct SessionBookTests {
         #expect(run.states == ["blocked:permission", "working"])
         let installed = AgentID.claude.spec.hooks.events.map(\.name)
         #expect(installed.contains("PostToolUseFailure"))
-        #expect(!installed.contains("PermissionDenied"), "its output can ask for a retry")
+        #expect(installed.contains("PermissionDenied"), "installed async: its retry is a decision Claude never reads from an async hook")
     }
 
     /// Claude's AskUserQuestion says the question, ExitPlanMode the
@@ -818,7 +818,7 @@ struct SessionBookTests {
             AttentionRecord(agent: .claude, kind: .permission, ms: t0 + 3 * second, message: "Bash: rm -rf build", session: "s1", tool: "Bash", event: "PermissionRequest"),
             AttentionRecord(agent: .claude, kind: .permission, ms: t0 + 9 * second, message: "Claude needs your permission to use Bash", session: "s1", event: "Notification"),
             AttentionRecord(agent: .claude, kind: .tool, ms: t0 + 12 * second, message: "rm -rf build", session: "s1", tool: "Bash", event: "PostToolUse"),
-            AttentionRecord(agent: .claude, kind: .ignored, ms: t0 + 13 * second, message: PulseHookReceiver.Ignored.notInstalled.rawValue, session: "s1", event: "SubagentStop"),
+            AttentionRecord(agent: .claude, kind: .ignored, ms: t0 + 13 * second, message: PulseHookReceiver.Ignored.notInstalled.rawValue, session: "s1", event: "PreCompact"),
             AttentionRecord(agent: .claude, kind: .turn, ms: t0 + 14 * second, session: "s1", event: "Stop"),
             AttentionRecord(agent: .claude, kind: .dismiss, ms: t0 + 15 * second, session: "s1", event: AttentionRecord.seenEvent),
             AttentionRecord(agent: .claude, kind: .end, ms: t0 + 16 * second, session: "s1", event: "SessionEnd"),
@@ -876,21 +876,21 @@ struct SessionBookTests {
         let key = SessionKey(.claude, "s1")
         book.apply(AttentionRecord(agent: .claude, kind: .working, ms: t0, session: "s1", event: "UserPromptSubmit"), nowMs: t0)
         let before = book.sessions[key]
-        let ignored = AttentionRecord(agent: .claude, kind: .ignored, ms: t0 + second, message: PulseHookReceiver.Ignored.silent.rawValue, session: "s1", event: "SubagentStop")
+        let ignored = AttentionRecord(agent: .claude, kind: .ignored, ms: t0 + second, message: PulseHookReceiver.Ignored.silent.rawValue, session: "s1", event: "PreCompact")
         let changed = book.apply(ignored, nowMs: t0 + second)
         #expect(!changed)
         let after = book.sessions[key]
         #expect(after?.lastEventMs == before?.lastEventMs)
         #expect(after?.lastEvent == "UserPromptSubmit")
         #expect(after?.state == before?.state)
-        #expect(after?.timeline.last == SessionBook.Heard(ms: t0 + second, event: "SubagentStop", effect: .skipped(reason: PulseHookReceiver.Ignored.silent.rawValue)))
+        #expect(after?.timeline.last == SessionBook.Heard(ms: t0 + second, event: "PreCompact", effect: .skipped(reason: PulseHookReceiver.Ignored.silent.rawValue)))
     }
 
     /// An `ignored` line records what the receiver heard; it is no state —
     /// it makes no session and moves none.
     @Test func anIgnoredLineIsNoState() {
         var book = SessionBook()
-        let heard = AttentionRecord(agent: .claude, kind: .ignored, ms: t0, message: PulseHookReceiver.Ignored.notInstalled.rawValue, session: "s1", event: "SubagentStop")
+        let heard = AttentionRecord(agent: .claude, kind: .ignored, ms: t0, message: PulseHookReceiver.Ignored.notInstalled.rawValue, session: "s1", event: "PreCompact")
         let made = book.apply(heard, nowMs: t0)
         #expect(!made)
         #expect(book.sessions.isEmpty)
@@ -1024,6 +1024,111 @@ struct SessionBookTests {
         let marked = try #require(session.timeline.first { !$0.sub.isEmpty })
         #expect(TrayRowModel.heardText(marked, lang: .en) == "Subagent · Grep · TODO")
         #expect(SettingsModel.ReportSession.word(.subagent) == "subagent lifecycle")
+    }
+
+    /// Claude's subagent lifecycle (SubagentStart / SubagentStop, each with
+    /// its `agent_id`) is timeline only: it never ends the person's turn,
+    /// and after the turn ended (a background subagent finishing, its
+    /// last tools, the parent's `background_tasks` on Stop) nothing revives
+    /// it.
+    @Test func claudeSubagentsNeverEndOrReviveTheTurn() throws {
+        let run = playAt(.claude, [
+            (0, "UserPromptSubmit", ["prompt": "Map the API"]),
+            (second, "SubagentStart", ["agent_id": "a1", "agent_type": "Explore"]),
+            (2 * second, "PostToolUse", ["tool_name": "Grep", "tool_input": ["pattern": "route"], "agent_id": "a1"]),
+            (3 * second, "SubagentStop", ["agent_id": "a1", "agent_type": "Explore", "last_assistant_message": "Found 12"]),
+            (4 * second, "PostToolUse", ["tool_name": "Read", "tool_input": ["file_path": "/w/api.ts"]]),
+            (5 * second, "Stop", ["last_assistant_message": "Here is the map.", "background_tasks": [["id": "t1", "type": "subagent", "status": "running", "agent_type": "Explore"]]]),
+            (minute, "SubagentStart", ["agent_id": "a2", "agent_type": "Explore"]),
+            (2 * minute, "PostToolUse", ["tool_name": "Grep", "agent_id": "a2"]),
+            (3 * minute, "SubagentStop", ["agent_id": "a2", "agent_type": "Explore"]),
+        ])
+        #expect(run.states == ["working", "working", "working", "working", "working", "turn", "turn", "turn", "turn"])
+        let session = try #require(run.book.sessions[SessionKey(.claude, "s1")])
+        #expect(session.message == "Here is the map.", "a subagent's last words are not the turn's")
+        #expect(session.title == "Map the API")
+        let lifecycle = session.timeline.filter { $0.event == "SubagentStart" || $0.event == "SubagentStop" }
+        #expect(lifecycle.map(\.effect) == [.subagent, .subagent, .subagent, .subagent])
+        #expect(lifecycle.map(\.sub) == ["a1", "a1", "a2", "a2"])
+    }
+
+    /// A subagent's own block is answered by its SubagentStop; the main
+    /// agent's is not.
+    @Test func claudeSubagentStopAnswersOnlyItsOwnBlock() {
+        let own = playAt(.claude, [
+            (0, "UserPromptSubmit", ["prompt": "Audit"]),
+            (2 * second, "PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "rm -rf build"], "agent_id": "a1"]),
+            (4 * second, "SubagentStop", ["agent_id": "a1"]),
+        ])
+        #expect(own.states == ["working", "blocked:permission", "working"])
+        let main = playAt(.claude, [
+            (0, "UserPromptSubmit", ["prompt": "Audit"]),
+            (2 * second, "PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "npm publish"]]),
+            (4 * second, "SubagentStop", ["agent_id": "a1"]),
+        ])
+        #expect(main.states == ["working", "blocked:permission", "blocked:permission"])
+    }
+
+    /// Requests nobody sees and notices that may be another session's are
+    /// never red: `dontAsk`'s PermissionRequest, `agent_needs_input`. The
+    /// person interrupting a tool (`is_interrupt`) stops the run.
+    @Test func claudeNeverRedForWhatNobodyIsAsked() {
+        let run = playAt(.claude, [
+            (0, "UserPromptSubmit", ["prompt": "Clean up"]),
+            (second, "PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "rm -rf build"], "permission_mode": "dontAsk"]),
+            (2 * second, "Notification", ["notification_type": "agent_needs_input", "message": "A background session needs your input"]),
+            (3 * second, "PostToolUseFailure", ["tool_name": "Bash", "tool_input": ["command": "sleep 100"], "is_interrupt": true]),
+        ])
+        #expect(run.states == ["working", "working", "working", "idle"])
+        let blocked = playAt(.claude, [
+            (0, "PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "npm publish"]]),
+            (2 * second, "PostToolUseFailure", ["tool_name": "Bash", "is_interrupt": true]),
+        ])
+        #expect(blocked.states == ["blocked:permission", "idle"], "the person was at the prompt: nothing owed")
+    }
+
+    /// An automatic compaction and auto mode's denial are work going on;
+    /// a manual `/compact` at the prompt moves nothing.
+    @Test func claudeCompactionAndAutoDenialAreWork() throws {
+        let run = playAt(.claude, [
+            (0, "UserPromptSubmit", ["prompt": "Refactor"]),
+            (minute, "tick", [:]),
+            (2 * minute, "PostCompact", ["trigger": "auto"]),
+            (3 * minute, "PermissionDenied", ["tool_name": "Bash", "tool_input": ["command": "rm -rf /"], "reason": "[Irreversible Local Destruction]"]),
+            (4 * minute, "Stop", [:]),
+            (5 * minute, "PostCompact", ["trigger": "manual"]),
+        ])
+        #expect(run.states == ["working", "working", "working", "working", "turn", "turn"])
+        let session = try #require(run.book.sessions[SessionKey(.claude, "s1")])
+        #expect(session.steps.isEmpty, "neither is a step")
+        #expect(session.running == nil, "nor a tool that runs now")
+        #expect(session.toolMs == t0 + 3 * minute, "work: a silence after it is not a stall")
+    }
+
+    /// Codex: Interrupt is the person stopping the turn — at its prompt,
+    /// nothing owed; a subagent's prompt and SubagentStop (each with its
+    /// `agent_id`) are its own task and end, never the person's; after the
+    /// turn ended nothing of a subagent revives it.
+    @Test func codexInterruptAndSubagentStop() throws {
+        let run = playAt(.codex, [
+            (0, "SessionStart", [:]),
+            (second, "UserPromptSubmit", ["prompt": "Index the repo"]),
+            (2 * second, "UserPromptSubmit", ["prompt": "List the modules", "agent_id": "th-9", "agent_type": "worker"]),
+            (3 * second, "PostToolUse", ["tool_name": "shell", "agent_id": "th-9"]),
+            (4 * second, "SubagentStop", ["agent_id": "th-9", "agent_type": "worker", "last_assistant_message": "12 modules"]),
+            (5 * second, "Interrupt", [:]),
+            (minute, "UserPromptSubmit", ["prompt": "Go on"]),
+            (2 * minute, "Stop", ["last_assistant_message": "Indexed."]),
+            (3 * minute, "SubagentStop", ["agent_id": "th-10", "agent_type": "worker"]),
+        ])
+        #expect(run.states == ["idle", "working", "working", "working", "working", "idle", "working", "turn", "turn"])
+        let session = try #require(run.book.sessions[SessionKey(.codex, "s1")])
+        #expect(session.title == "Index the repo")
+        #expect(session.lastPrompt == "Go on")
+        #expect(session.message == "Indexed.")
+        let stop = session.timeline.first { $0.event == "SubagentStop" }
+        #expect(stop?.effect == .subagent)
+        #expect(stop?.sub == "th-9")
     }
 
     // MARK: - Failed steps, stops, names, running tools

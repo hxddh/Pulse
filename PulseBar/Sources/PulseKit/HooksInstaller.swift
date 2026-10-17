@@ -256,8 +256,11 @@ package enum HooksInstaller {
                 // and warns when either is asked otherwise.
                 body.append(("timeout", String(min(hookTimeoutSeconds, cap))))
             } else {
-                body.append(("timeout", String(hookTimeoutSeconds)))
-                // Async: the vendor runs it in the background and ignores any
+                // A vendor cap on an async event's timeout (Codex's
+                // `Interrupt`, 3 s): written at the cap, never clamped.
+                let cap = flavor.timeoutCaps[event.name] ?? hookTimeoutSeconds
+                body.append(("timeout", String(min(hookTimeoutSeconds, cap))))
+                // Async: the vendor runs it in the background and reads no
                 // decision it could return.
                 if flavor.async { body.append(("async", "true")) }
             }

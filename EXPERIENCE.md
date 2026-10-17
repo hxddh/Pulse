@@ -28,6 +28,11 @@ Claude Code、Codex、Copilot CLI、OpenCode、Cursor（编辑器与 `cursor-age
 
 后两者在设置里明说「不会报告它在等你」，不伪造红灯，也没有任何让它们报告等待的设置。
 
+没人能看见的请求也不变红：Claude 在 `dontAsk` 模式下、或以 `claude -p` 运行又没有权限宿主
+（`--permission-prompt-tool`）时，它的 PermissionRequest 由 Claude 自己拒绝 —— 记一行「未采用：没有可显示的提示」。
+Claude 的 `agent_needs_input` 可能是另一个会话在等（agent view 里的后台会话、队友的终端设置问题、计费提示），
+通知里也没说是谁 —— 不变红，记一行「未采用：可能属于另一个会话」。
+
 **红灯怎么熄。** 在厂商提示里回答后，同一个工具开始运行（Claude / Codex `PostToolUse`、Copilot `postToolUse`、
 Pi `tool_execution_end`）就熄灭；并行的别的工具结束不算回答。拒绝或取消时没有工具运行，回合几秒后结束 ——
 这个「轮到你」在 20 秒宽限期满时落地。同一次提问报两次（Claude 先 PermissionRequest、约 6 秒后再发通知）
@@ -188,10 +193,17 @@ Pulse；什么都没落到就说没能打开并重扫。提示停留 8 秒，没
 - 知道进程的会话只在进程活着时算在跑；不知道进程的 30 分钟无事件转为「最近」并照实说明。工作中的会话
   （被打断的回合不报 Stop）20 分钟无事件先变橙，两小时无任何消息转为「最近」—— 不会一直橙着。停滞只对逐个报告
   工具调用的 Agent 成立；Cursor、OpenCode 的长回合不算停滞。Agent 报了一个工具开始、还没报它结束时（Pi 的
-  `tool_execution_start`），沉默不算停滞 —— 25 分钟的构建不会变橙。
+  `tool_execution_start`），沉默不算停滞 —— 25 分钟的构建不会变橙。Codex 的回合以错误结束时不报 Stop，
+  Pulse 也不去猜：这一行照常按上面的沉默规则走。Claude 自动压缩上下文（`PostCompact`，只说「已压缩」，
+  不读摘要、不报数字）和 auto 模式拒绝一个调用（`PermissionDenied`）都算工作在继续，不是一步；手动 `/compact`
+  是你在提示符前，不算工作。
 - **子代理不是你**：子代理的事件不会回答主 Agent（或另一个子代理）的提问，不会让已结束的回合重新「运行中」，
-  它的任务不算你的提示。你在 Agent 自己的提示符前按 Esc 停下（Pi 的 aborted）就是停在提示符、什么也不欠，
-  不算「轮到你」，也不把半截的话当最后的话。
+  它的任务不算你的提示。子代理自己的开始与结束（Claude `SubagentStart` / `SubagentStop`、Codex `SubagentStop`）
+  只进时间线，从不结束你的回合；回合结束后后台子代理才收尾，也不会让它重新「运行中」。你在 Agent 自己的提示符前
+  按 Esc 停下（Pi 的 aborted、Codex 的 `Interrupt`、Claude 打断工具时 `is_interrupt` 的 `PostToolUseFailure`）
+  就是停在提示符、什么也不欠，不算「轮到你」，也不把半截的话当最后的话。
+- **一步说清做了什么**：Claude 的 `Agent` 调用写它的描述（没有就写子代理类型），`Skill` 写技能名，MCP 工具
+  `mcp__服务__工具` 写成「服务 · 工具」—— 服务名太长先缩服务名，工具名保持完整。
 - 「最近」的会话 45 分钟后离开列表。活着的进程只留住工作中与需要你的会话。进程号换成了别的程序就当会话已结束。
 - 不知道就不写：从不靠进程数、CPU、文件名或任意 JSON 的 `name` 猜；成对的量只印测到的那一半。
 
@@ -216,8 +228,14 @@ Pulse；什么都没落到就说没能打开并重扫。提示停留 8 秒，没
    路径）；下面一行小字：「最近听到 PermissionRequest · 4分钟前」或「还没有听到事件」、「会报告它在等你」或
    「不会报告它在等你——只显示运行中和轮到你」；Pi 在这台 Mac 上但 `~/.pi/agent` 不存在时再加一句「Pulse 装在
    ~/.pi/agent，这个文件夹还不存在——若 Pi 用了别的文件夹（PI_CODING_AGENT_DIR），就不会加载它」（Pulse 不读
-   环境变量）；最近有没采用的事件时再一行「最近未采用 SubagentStop——不是已
-   安装的事件 · 2分钟前」。有需要更新的 Agent 时，按钮下说一次「「全部安装」会更新所有需要更新的 Agent」——
+   环境变量）；最近有没采用的事件时再一行「最近未采用 PreCompact——不是已
+   安装的事件 · 2分钟前」。装好了却可能不跑时，状态写原因（橙色）：Claude 的 `~/.claude/settings.json` 里
+   `disableAllHooks: true` →「已安装——但 Claude 的设置关掉了所有 hooks」；管理设置
+   （`/Library/Application Support/ClaudeCode/managed-settings.json` 或 `managed-settings.d/*.json`）里
+   `allowManagedHooksOnly` 或 `disableAllHooks` →「已安装——但管理策略不让 Claude 运行它」（只读，从不改）；
+   Codex 按条目内容的哈希信任 hook，Pulse 一改就变「已修改」、不再运行 —— 装全了、`hooks.json` 改动后有 Codex
+   进程启动过、却一个 Codex 事件也没听到 →「已安装——改动后 Codex 还没运行过它：请在 Codex 里信任它（/hooks）」。
+   Codex 的 `allow_managed_hooks_only` 在 `config.toml` 里，Pulse 不读它。有需要更新的 Agent 时，按钮下说一次「「全部安装」会更新所有需要更新的 Agent」——
    没有逐个 Agent 的按钮。不在这台 Mac 上的合成一行。运行期间按钮置灰。「**复制报告**」把版本与分发通道、
    macOS 版本、每个 Agent 的连接（安装、最近听到的事件、最近未采用的事件及原因、是否报告等待）、通知授权、
    登录项、每个会话 Pulse 怎么读它及最近 3 条时间线写成纯文本放进剪贴板，不含路径、提示、会话或项目：步骤只写

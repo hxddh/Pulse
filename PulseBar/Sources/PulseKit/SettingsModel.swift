@@ -119,7 +119,7 @@ package struct SettingsModel: Equatable {
         /// "Heard PermissionRequest · 4m ago" · "Reports when it waits";
         /// what was heard only when a hook is there to hear.
         package var detail: String
-        /// "Last ignored SubagentStop — not an installed event · 2m ago".
+        /// "Last ignored PreCompact — not an installed event · 2m ago".
         package var ignored: String?
 
         package var agent: AgentID { connection.agent }
@@ -130,12 +130,18 @@ package struct SettingsModel: Equatable {
             self.connection = connection
             state = connection.stateText(lang: lang)
             switch connection.install {
-            case .complete: tone = .ok
+            case .complete: tone = connection.caveat == nil ? .ok : .warning
             case .partial, .staleLauncher, .failed: tone = .warning
             case .notInstalled: tone = .quiet
             }
             let heard = connection.heardText(nowMs: nowMs, lang: lang)
-            detail = [heard, connection.waitsText(lang: lang), connection.configDirText(lang: lang) ?? ""]
+            // A caveat the state line does not already say (an install that
+            // is not whole and is silenced too).
+            var caveat = ""
+            if let reason = connection.caveat, connection.install != .complete {
+                caveat = connection.caveatText(reason, lang: lang)
+            }
+            detail = [heard, connection.waitsText(lang: lang), caveat, connection.configDirText(lang: lang) ?? ""]
                 .filter { !$0.isEmpty }.joined(separator: " · ")
             ignored = connection.ignoredText(nowMs: nowMs, lang: lang)
         }

@@ -1189,7 +1189,7 @@ struct RowWordsTests {
         #expect(lines == [
             "PostToolUse Bash · swift test",
             "PostToolUse Edit · Sources/Upload/Backoff.swift",
-            "SubagentStop Ignored — not an installed event",
+            "PreCompact Ignored — not an installed event",
             "PostToolUse Answered",
             "Notification Same ask again",
             "PermissionRequest Raised · Permission",

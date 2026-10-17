@@ -131,12 +131,12 @@ Readers skip blank lines and `#` comments.
 | | `dismiss` | Pulse's own: the person set the wait aside (`pulse.dismiss`) or looked at a finished turn (`pulse.seen`). Written by the app alone |
 | Lifecycle | `start` | The session started or resumed (message = the vendor's name for it, when it has one) |
 | | `working` | The user submitted a prompt (message = its text: the title's source) |
-| | `stopped` | The person stopped the run at the agent's own prompt (Pi's aborted `agent_settled`): the turn is over and nothing is owed — no last words, never "your turn" |
+| | `stopped` | The person stopped the run at the agent's own prompt (Pi's aborted `agent_settled`, Codex's `Interrupt`, Claude's `PostToolUseFailure` with `is_interrupt`): the turn is over and nothing is owed — no last words, never "your turn" |
 | | `title` | The vendor named the session (Pi's `session_info_changed`): message = the name, which is the row's title over the first prompt; empty clears it. No state, and it makes no session |
 | | `end` | The session ended |
 | Activity | `tool` | A tool ran (or a reply streamed): the session is working, and — when it names its tool — its last step and the answer to a block raised for that tool |
 | | `status` | Work goes on and no tool finished (a status, a retry, a recoverable error, or a tool that started — `tool` names it, `message` its target: what runs now): never a step, never an answer |
-| Heard | `ignored` | The receiver heard an event it did not turn into state: an event Pulse does not install, a payload that is not a JSON object, a blocked event from an agent that cannot report one, activity or a prompt with no session, an event that says nothing Pulse shows, a prompt that does not block (Pi's `custom` view). `message` says which (`PulseHookReceiver.Ignored`) — never the payload's words. The reducer changes no state for it; it goes on its session's timeline and is Settings' "last ignored" |
+| Heard | `ignored` | The receiver heard an event it did not turn into state: an event Pulse does not install, a payload that is not a JSON object, a blocked event from an agent that cannot report one, activity or a prompt with no session, an event that says nothing Pulse shows, a prompt that does not block (Pi's `custom` view), a request no prompt can show (Claude's `dontAsk`, a `claude -p` run without a permission host — read from the agent process's argv), a notice that may be about another session (Claude's `agent_needs_input`). `message` says which (`PulseHookReceiver.Ignored`) — never the payload's words. The reducer changes no state for it; it goes on its session's timeline and is Settings' "last ignored" |
 
 `working`, `done`, `dismiss`, `stopped` and `end` clear the session's
 block; `start` does unless the session is working — each only when the

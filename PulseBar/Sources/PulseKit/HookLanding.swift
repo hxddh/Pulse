@@ -101,6 +101,19 @@ package enum HookLanding {
         return (pid, handles(environment: environment, tty: terminal))
     }
 
+    /// The argv of `pid` when it is still this agent by its catalog
+    /// process rule (the pid `current` found) — what the receiver reads a
+    /// promptless run from (`AgentProcessRule.cannotPrompt`); nil when it
+    /// cannot be read or is not the agent. `sysctl` only.
+    package static func agentArguments(agent: AgentID, pid: Int32) -> [String]? {
+        guard pid > 1 else { return nil }
+        var buffer = [UInt8](repeating: 0, count: AgentProcesses.argumentsMax())
+        guard let argv = AgentProcesses.argv(of: pid, buffer: &buffer), !argv.isEmpty else { return nil }
+        let line = AgentProcesses.commandLine(path: AgentProcesses.executablePath(of: pid), argv: argv)
+        guard AgentProcesses.match(args: line) == agent else { return nil }
+        return argv
+    }
+
     /// The terminal on this process's own stdin, stdout or stderr.
     package static func ownTTY() -> String? {
         for fd: Int32 in [STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO] where isatty(fd) != 0 {
