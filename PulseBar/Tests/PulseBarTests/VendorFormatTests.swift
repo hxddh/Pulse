@@ -49,7 +49,9 @@ struct VendorDriftTests {
         }
         for agent in AgentID.allCases {
             for event in agent.spec.hooks.events where HookContract.toolActivityEvents.contains(event.name) {
-                let reading = PulseHookReceiver.interpret(agent: agent, event: event.name, payload: [:])
+                // OpenCode's 1.x part event says its phase; a finished tool's
+                // is `done`. Every other adapter ignores the key.
+                let reading = PulseHookReceiver.interpret(agent: agent, event: event.name, payload: ["phase": "done"])
                 #expect(reading?.action == .activity, "\(agent.rawValue) \(event.name)")
             }
         }
@@ -100,6 +102,70 @@ struct VendorDriftTests {
         #expect(flavor.synchronous["Interrupt"] == nil, "Interrupt honours async")
         #expect(flavor.trustBound)
         #expect(PulseHookReceiver.interpret(agent: .codex, event: "Interrupt", payload: [:])?.action == .stopped)
+    }
+
+    /// OpenCode (pinned at v1.19.3 and v2.0.32): one plugin for both
+    /// lines, reading the bus only — never a hook that can change a tool, a
+    /// message or a permission. Its per-tool events make silence mean
+    /// something; its asks are answered by the vendor's replies; the folder
+    /// it loads from can be moved by the environment, which Pulse does not
+    /// follow.
+    @Test func openCodeServesBothLinesFromTheBusOnly() {
+        let names = Set(AgentID.opencode.spec.hooks.events.map(\.name))
+        #expect(names.isDisjoint(with: HookContract.gatingEvents))
+        for never in ["tool.execute.before", "tool.execute.after", "chat.message", "chat.params", "permission.ask"] {
+            #expect(HookContract.gatingEvents.contains(never), "\(never)")
+        }
+        #expect(names.isSuperset(of: ["message.part.updated", "session.updated", "session.compacted"]), "1.x")
+        #expect(names.isSuperset(of: [
+            "session.execution.started", "session.execution.succeeded", "session.execution.failed",
+            "session.execution.interrupted", "session.tool.success", "session.tool.failed",
+            "form.created", "form.replied", "form.cancelled",
+        ]), "2.x")
+        #expect(AgentID.opencode.reportsToolActivity)
+        #expect(HookContract.answerEvents.isSuperset(of: ["form.replied", "form.cancelled", "permission.replied"]))
+        #expect(AgentID.opencode.spec.hooks.relocation == HookContract.Relocation(dir: ".config/opencode", variable: "OPENCODE_CONFIG_DIR"))
+        let start = PulseHookReceiver.interpret(agent: .opencode, event: "session.tool.called", payload: ["tool_name": "bash"])
+        #expect(start?.action == .status, "a tool that started is what runs now, never an answer")
+        let busy = PulseHookReceiver.interpret(agent: .opencode, event: "session.status", payload: ["status": "busy"])
+        #expect(busy?.action == .status)
+    }
+
+    /// Copilot (docs at dae83f7): the launcher runs without a shell, the
+    /// notification and compaction hooks are filtered by the vendor's own
+    /// matcher, and `subagentStart` / `preCompact` cannot block.
+    /// `agentStop` / `postToolUse` are synchronous — an owner-approved
+    /// exception, harmless because the hook prints nothing.
+    @Test func copilotRunsWithoutAShellAndFiltersAtTheSource() {
+        guard case .ownedJSON(let command, let timeoutKey) = AgentID.copilot.spec.hooks.format else {
+            Issue.record("Copilot is ownedJSON")
+            return
+        }
+        #expect(command == .exec)
+        #expect(timeoutKey == "timeoutSec")
+        let events = AgentID.copilot.spec.hooks.events
+        let notification = events.first { $0.name == "notification" }
+        #expect(notification?.matcher == "permission_prompt|elicitation_dialog|agent_idle")
+        let compact = events.first { $0.name == "preCompact" }
+        #expect(compact?.matcher == "auto")
+        let names = Set(events.map(\.name))
+        #expect(names.isSuperset(of: ["subagentStart", "preCompact", "agentStop", "postToolUse"]))
+        #expect(!names.contains("subagentStop"), "it can block and force a continuation")
+        #expect(!names.contains("userPromptTransformed"))
+        #expect(HookContract.gatingEvents.contains("userPromptTransformed"))
+        #expect(names.isDisjoint(with: HookContract.gatingEvents))
+    }
+
+    /// Cursor (docs unreachable; third-party bindings and forum reports):
+    /// only `after*` and lifecycle events, never a `before*` one; still
+    /// never blocked; its conversation is its session.
+    @Test func cursorInstallsOnlyAfterEvents() {
+        let names = Set(AgentID.cursor.spec.hooks.events.map(\.name))
+        #expect(names == ["sessionStart", "sessionEnd", "afterShellExecution", "afterFileEdit", "afterMCPExecution", "afterAgentResponse", "stop"])
+        #expect(names.allSatisfy { !$0.hasPrefix("before") })
+        #expect(AgentID.cursor.waitingSource == .none)
+        #expect(AgentID.cursor.spec.sessionKeys.first == "conversation_id")
+        #expect(AgentID.claude.spec.sessionKeys == HookContext.sessionKeys)
     }
 
     /// Every contract event Pulse installs is one the receiver knows —

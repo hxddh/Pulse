@@ -125,10 +125,22 @@ package struct HookReading: Equatable, Sendable {
     /// What a `status` line that names no tool says ("compacted"): fixed
     /// words of the adapter's, never the payload's prose.
     package var note: String
+    /// The tool's name as the adapter reads it (Cursor's
+    /// `afterShellExecution` is `Shell`, an MCP call `server · tool`); nil
+    /// leaves the payload's `tool_name` / `toolName`.
+    package var tool: String?
+    /// The reply's words on an activity line that names no tool (Cursor's
+    /// `afterAgentResponse` `text`): the turn's last words so far, kept
+    /// for a turn line that carries none.
+    package var words: String
+    /// The session's name as the adapter reads it, for a `start` or a
+    /// `title` line (Copilot's `initialPrompt`, a `-p` run's prompt); nil
+    /// leaves the payload's `session_name`.
+    package var name: String?
 
     package init(
         action: HookAction, ask: String = "", sub: String = "", failed: Bool = false, tookMs: Int64 = 0,
-        target: String? = nil, note: String = ""
+        target: String? = nil, note: String = "", tool: String? = nil, words: String = "", name: String? = nil
     ) {
         self.action = action
         self.ask = ask
@@ -137,6 +149,9 @@ package struct HookReading: Equatable, Sendable {
         self.tookMs = tookMs
         self.target = target
         self.note = note
+        self.tool = tool
+        self.words = words
+        self.name = name
     }
 }
 
@@ -228,8 +243,8 @@ package enum HookFormat: Sendable {
     /// Only `hooks` is rewritten; it stays (maybe empty) on removal.
     case versioned(commandKey: String)
     /// A JSON hook file Pulse owns whole: `{"version": 1, "hooks": {event:
-    /// [{"type": "command", <commandKey>, <timeoutKey>}]}}`.
-    case ownedJSON(commandKey: String, timeoutKey: String)
+    /// [{"type": "command", <command>, <timeoutKey>, "matcher"?}]}}`.
+    case ownedJSON(command: OwnedCommand, timeoutKey: String)
     /// A JavaScript module Pulse owns whole (a plugin, an extension),
     /// rendered from the launcher path and the event names.
     case module(render: @Sendable (_ launcher: String, _ events: [String]) -> String)
@@ -241,6 +256,17 @@ package enum HookFormat: Sendable {
         case .ownedJSON, .module: return true
         }
     }
+}
+
+/// How an `ownedJSON` entry runs Pulse's launcher.
+package enum OwnedCommand: Sendable, Equatable {
+    /// A shell command line under this key (`"bash": "<launcher> <agent>
+    /// <event>"`).
+    case shell(key: String)
+    /// The launcher run directly, no shell (Copilot CLI's `exec` +
+    /// `args`): `"exec": "<launcher>", "args": [<agent>, <event>]` — a path
+    /// with a space needs no quoting, and nothing is interpreted.
+    case exec
 }
 
 /// The documented, non-blocking hook Pulse installs for one agent.
@@ -323,20 +349,27 @@ package struct HookContract: Sendable {
         "PreToolUse", "preToolUse", "BeforeTool", "BeforeModel", "BeforeToolSelection",
         "Elicitation", "WorktreeCreate", "MessageDisplay",
         "beforeShellExecution", "beforeMCPExecution", "beforeReadFile", "beforeSubmitPrompt",
-        "permissionRequest", "tool.execute.before", "tool_call", "tool_result", "permission.ask",
+        "permissionRequest", "userPromptTransformed",
+        "tool.execute.before", "tool.execute.after", "chat.message", "chat.params",
+        "tool_call", "tool_result", "permission.ask",
         "before_agent_start", "input", "turn_end", "message_end", "user_bash",
         "session_before_switch", "session_before_fork", "session_before_compact", "session_before_tree",
     ]
 
     /// Observe-only events that fire once per tool call, after it ran
     /// (Claude and Codex `PostToolUse`, Copilot `postToolUse`, Pi
-    /// `tool_execution_end`). An agent whose contract installs one reports
+    /// `tool_execution_end`, OpenCode's finished tool part — 1.x
+    /// `message.part.updated`, 2.x `session.tool.success` / `failed` —
+    /// and Cursor's `afterShellExecution` / `afterFileEdit` /
+    /// `afterMCPExecution`). An agent whose contract installs one reports
     /// its work as it goes: silence from it means something, so only such an
     /// agent can be stalled — and its tool name is what answers a block
     /// raised for that tool.
     package static let toolActivityEvents: Set<String> = [
         "PostToolUse", "PostToolUseFailure", "postToolUse", "postToolUseFailure",
         "tool_execution_end",
+        "message.part.updated", "session.tool.success", "session.tool.failed",
+        "afterShellExecution", "afterFileEdit", "afterMCPExecution",
     ]
 
     /// Events that say a block was answered: a tool ran after it, or the
@@ -345,6 +378,7 @@ package struct HookContract: Sendable {
     /// must have a way to go out besides the end of the turn.
     package static let answerEvents: Set<String> = toolActivityEvents.union([
         "permission.replied", "question.replied", "question.rejected", "ui_prompt_end",
+        "form.replied", "form.cancelled",
     ])
 
     /// This contract installs a per-tool activity event (`toolActivityEvents`).
@@ -432,6 +466,11 @@ package struct AgentSpec: Sendable {
     /// the hook directly: the receiver takes it only when it is the hook's
     /// own parent (`PulseHookReceiver.claimedPID`).
     package let reportsOwnPID: Bool
+    /// Payload keys that name the session, most trusted first
+    /// (`HookContext.sessionKeys` unless the vendor spells it otherwise:
+    /// Cursor's `conversation_id` is the one every event carries, its
+    /// `session_id` only some).
+    package let sessionKeys: [String]
     /// The reading of an event whose meaning is in its payload; nil leaves
     /// the event's own action (`HookEvent.action`). Called only for an
     /// installed event.
@@ -447,6 +486,7 @@ package struct AgentSpec: Sendable {
         foreignCallers: [String] = [],
         subagentKeys: [String] = [],
         reportsOwnPID: Bool = false,
+        sessionKeys: [String] = HookContext.sessionKeys,
         read: @escaping @Sendable (_ event: String, _ payload: [String: Any]) -> HookReading? = { _, _ in nil }
     ) {
         self.id = id
@@ -458,6 +498,7 @@ package struct AgentSpec: Sendable {
         self.foreignCallers = foreignCallers
         self.subagentKeys = subagentKeys
         self.reportsOwnPID = reportsOwnPID
+        self.sessionKeys = sessionKeys
         self.read = read
     }
 

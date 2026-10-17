@@ -284,14 +284,22 @@ package enum HooksInstaller {
     /// (the OpenCode plugin, the Pi extension).
     package static func ownedFile(_ agent: AgentID, _ contract: HookContract) -> String {
         switch contract.format {
-        case .ownedJSON(let commandKey, let timeoutKey):
+        case .ownedJSON(let command, let timeoutKey):
             var hooks: [String: Any] = [:]
             for event in contract.events {
-                let entry: [String: Any] = [
-                    "type": "command",
-                    commandKey: hookCommand(agent: agent, event: event.name),
-                    timeoutKey: hookTimeoutSeconds,
-                ]
+                var entry: [String: Any] = ["type": "command", timeoutKey: hookTimeoutSeconds]
+                switch command {
+                case .shell(let key):
+                    entry[key] = hookCommand(agent: agent, event: event.name)
+                case .exec:
+                    // The launcher itself, no shell: nothing in its path is
+                    // interpreted, and a space needs no quoting.
+                    entry["exec"] = launcherURL.path
+                    entry["args"] = [agent.rawValue, event.name]
+                }
+                // The vendor's filter (Copilot's notification types, its
+                // compaction trigger): only those reach the hook.
+                if let matcher = event.matcher { entry["matcher"] = matcher }
                 hooks[event.name] = [entry]
             }
             let root: [String: Any] = ["version": 1, "hooks": hooks]

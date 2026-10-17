@@ -626,7 +626,106 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertNil(PulseHookReceiver.toolInput(["toolArgs": "not json"]))
     }
 
-    // MARK: - OpenCode (plugin events, SDK v2)
+    /// Copilot: a `-p` run's `initialPrompt` names the session; a
+    /// subagent's start is a status of that subagent's; an automatic
+    /// compaction is work going on, a manual one says nothing.
+    func testCopilotStartPromptSubagentAndCompaction() throws {
+        deliver("copilot", "sessionStart", #"{"sessionId":"cp3","cwd":"/w","source":"new","initialPrompt":"Bump the version\nand tag it"}"#)
+        deliver("copilot", "subagentStart", #"{"sessionId":"cp3","cwd":"/w","transcriptPath":"/t","agentName":"explore","agentDisplayName":"Explore"}"#)
+        deliver("copilot", "preCompact", #"{"sessionId":"cp3","cwd":"/w","transcriptPath":"/t","trigger":"auto","customInstructions":""}"#)
+        deliver("copilot", "preCompact", #"{"sessionId":"cp3","cwd":"/w","transcriptPath":"/t","trigger":"manual","customInstructions":""}"#)
+        let lines = records()
+        XCTAssertEqual(lines.map(\.kind), [.start, .status, .status])
+        XCTAssertEqual(lines[0].message, "Bump the version and tag it", "the run's prompt is its name")
+        XCTAssertEqual(lines[1].sub, "explore")
+        XCTAssertEqual(lines[1].message, "subagent started")
+        XCTAssertEqual(lines[1].tool, "")
+        XCTAssertEqual(lines[2].message, "compacting")
+        XCTAssertEqual(ignored(), [PulseHookReceiver.Ignored.silent.rawValue])
+        deliver("copilot", "sessionStart", #"{"sessionId":"cp4","cwd":"/w","source":"startup"}"#)
+        XCTAssertEqual(records().last?.message, "", "an interactive start has no name")
+    }
+
+    // MARK: - OpenCode (plugin events, 1.x and 2.x)
+
+    /// 1.x: the plugin sends a tool part's start and its end, and a user
+    /// message's first text: what runs now, a step (failed, how long), the
+    /// prompt. A title change is a `title` line.
+    func testOpenCodeLegacyStepsPromptAndTitle() throws {
+        deliver("opencode", "message.part.updated", #"{"sessionID":"ses_2","directory":"/w","phase":"prompt","prompt":"Fix the login test"}"#)
+        deliver("opencode", "message.part.updated", #"{"sessionID":"ses_2","directory":"/w","phase":"running","tool_name":"bash","target":"npm test"}"#)
+        deliver("opencode", "message.part.updated", #"{"sessionID":"ses_2","directory":"/w","phase":"done","tool_name":"bash","target":"npm test","is_error":true,"duration_ms":4200}"#)
+        deliver("opencode", "session.updated", #"{"sessionID":"ses_2","directory":"/w","session_name":"Login test fix"}"#)
+        deliver("opencode", "message.part.updated", #"{"sessionID":"ses_2","directory":"/w"}"#)
+        let lines = records()
+        XCTAssertEqual(lines.map(\.kind), [.working, .status, .tool, .title])
+        XCTAssertEqual(lines[0].message, "Fix the login test")
+        XCTAssertEqual(lines[1].tool, "bash")
+        XCTAssertEqual(lines[1].message, "npm test")
+        XCTAssertEqual(lines[2].tool, "bash")
+        XCTAssertTrue(lines[2].failed)
+        XCTAssertEqual(lines[2].tookMs, 4200)
+        XCTAssertEqual(lines[3].message, "Login test fix")
+        XCTAssertEqual(ignored(), [PulseHookReceiver.Ignored.silent.rawValue], "a part with no phase is no step")
+    }
+
+    /// 1.x `session.error`: Esc (`MessageAbortedError`) is the person
+    /// stopping the run; an overflow OpenCode compacts away is work going
+    /// on; any other error ends the turn; one that names no session is
+    /// heard and belongs to no row.
+    func testOpenCodeErrorsByName() throws {
+        deliver("opencode", "session.error", #"{"sessionID":"ses_3","directory":"/w","error":"The operation was aborted","error_name":"MessageAbortedError"}"#)
+        deliver("opencode", "session.error", #"{"sessionID":"ses_3","directory":"/w","error":"prompt is too long","error_name":"ContextOverflowError"}"#)
+        deliver("opencode", "session.error", #"{"sessionID":"ses_3","directory":"/w","error":"Model unavailable","error_name":"APIError"}"#)
+        deliver("opencode", "session.error", #"{"sessionID":"","directory":"/w","error":"Failed to load plugin","error_name":"UnknownError"}"#)
+        let lines = records()
+        XCTAssertEqual(lines.map(\.kind), [.stopped, .status, .failed])
+        XCTAssertEqual(lines[0].message, "", "a stop has no words")
+        XCTAssertEqual(lines[1].message, "compacting")
+        XCTAssertEqual(lines[2].message, "Model unavailable")
+        XCTAssertEqual(ignored(), [PulseHookReceiver.Ignored.noSession.rawValue])
+    }
+
+    /// Two asks open at once: the first answer says one is still open and
+    /// is heard as nothing; the last one clears the block.
+    func testOpenCodeAnAnswerWithAsksStillOpenIsNotTheAnswer() throws {
+        deliver("opencode", "permission.asked", #"{"sessionID":"ses_4","directory":"/w","permission":"bash","patterns":["rm a"],"tool_name":"bash"}"#)
+        deliver("opencode", "permission.asked", #"{"sessionID":"ses_4","directory":"/w","permission":"edit","patterns":["b.ts"],"tool_name":"write"}"#)
+        deliver("opencode", "permission.replied", #"{"sessionID":"ses_4","directory":"/w","pending":1}"#)
+        deliver("opencode", "permission.replied", #"{"sessionID":"ses_4","directory":"/w","pending":0}"#)
+        XCTAssertEqual(kinds(), ["permission", "permission", "done"])
+        XCTAssertEqual(records().first?.tool, "bash", "the ask names the asking tool")
+        XCTAssertEqual(ignored(), [PulseHookReceiver.Ignored.silent.rawValue])
+    }
+
+    /// 2.x: a run's start and its prompt, a tool's call and its end, a
+    /// form (the question tool), and the run's end — success, failure, or
+    /// the person's interrupt.
+    func testOpenCodeCurrentRunToolsFormsAndEnds() throws {
+        deliver("opencode", "session.created", #"{"sessionID":"ses_5","directory":"/w","session_name":"Port the cache"}"#)
+        deliver("opencode", "session.execution.started", #"{"sessionID":"ses_5","directory":"/w"}"#)
+        deliver("opencode", "session.inbox.enqueued", #"{"sessionID":"ses_5","directory":"/w","prompt":"Move the cache to Redis"}"#)
+        deliver("opencode", "session.tool.called", #"{"sessionID":"ses_5","directory":"/w","tool_name":"read","target":"src/cache.ts"}"#)
+        deliver("opencode", "session.tool.success", #"{"sessionID":"ses_5","directory":"/w","tool_name":"read","target":"src/cache.ts","is_error":false,"duration_ms":30}"#)
+        deliver("opencode", "session.tool.failed", #"{"sessionID":"ses_5","directory":"/w","tool_name":"bash","target":"redis-cli ping","is_error":true,"duration_ms":900}"#)
+        deliver("opencode", "form.created", #"{"sessionID":"ses_5","directory":"/w","questions":[{"question":"Which Redis host?","header":"Host"}]}"#)
+        deliver("opencode", "form.replied", #"{"sessionID":"ses_5","directory":"/w","pending":0}"#)
+        deliver("opencode", "session.execution.failed", #"{"sessionID":"ses_5","directory":"/w","error":"Rate limited","error_name":"api"}"#)
+        deliver("opencode", "session.execution.interrupted", #"{"sessionID":"ses_5","directory":"/w","reason":"user"}"#)
+        deliver("opencode", "session.execution.interrupted", #"{"sessionID":"ses_5","directory":"/w","reason":"superseded"}"#)
+        deliver("opencode", "session.execution.succeeded", #"{"sessionID":"ses_5","directory":"/w"}"#)
+        let lines = records()
+        XCTAssertEqual(lines.map(\.kind), [.start, .working, .working, .status, .tool, .tool, .question, .done, .failed, .stopped, .turn])
+        XCTAssertEqual(lines[0].message, "Port the cache")
+        XCTAssertEqual(lines[2].message, "Move the cache to Redis")
+        XCTAssertEqual(lines[4].tool, "read")
+        XCTAssertEqual(lines[4].message, "src/cache.ts")
+        XCTAssertTrue(lines[5].failed)
+        XCTAssertEqual(lines[6].message, "Which Redis host?")
+        XCTAssertEqual(lines[8].message, "Rate limited")
+        XCTAssertEqual(ignored(), [PulseHookReceiver.Ignored.silent.rawValue], "a superseded run says nothing")
+    }
+
 
     func testOpenCodePermissionAskedThenReplied() throws {
         deliver("opencode", "permission.asked", #"{"sessionID":"ses_1","directory":"/w","permission":"bash","patterns":["npm test"]}"#)
@@ -662,18 +761,59 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertFalse(try String(contentsOf: log, encoding: .utf8).contains("cu1.jsonl"))
     }
 
+    /// Cursor's `after*` events are its steps: the shell command (and how
+    /// long it ran), the edited file relative to its workspace, the MCP
+    /// tool as "server · tool". A reply names no tool: its text is the
+    /// turn's last words so far. `stop` says how the turn ended.
+    func testCursorAfterEventsAreStepsAndItsReplyIsTheLastWords() throws {
+        deliver("cursor", "afterShellExecution", #"{"conversation_id":"cu3","workspace_roots":["/Users/me/app"],"command":"npm test","output":"ok","duration":1200}"#)
+        deliver("cursor", "afterFileEdit", #"{"conversation_id":"cu3","workspace_roots":["/Users/me/app"],"file_path":"/Users/me/app/src/login.ts","edits":[{"old_string":"a","new_string":"b"}]}"#)
+        deliver("cursor", "afterMCPExecution", #"{"conversation_id":"cu3","workspace_roots":["/Users/me/app"],"tool_name":"create_issue","server_name":"linear","tool_input":"{}","result_json":"{}"}"#)
+        deliver("cursor", "afterAgentResponse", #"{"conversation_id":"cu3","workspace_roots":["/Users/me/app"],"text":"All tests pass.\nDone."}"#)
+        deliver("cursor", "stop", #"{"conversation_id":"cu3","workspace_roots":["/Users/me/app"],"status":"error","loop_count":0}"#)
+        deliver("cursor", "stop", #"{"conversation_id":"cu3","workspace_roots":["/Users/me/app"],"status":"aborted","loop_count":0}"#)
+        let lines = records()
+        XCTAssertEqual(lines.map(\.kind), [.tool, .tool, .tool, .tool, .failed, .stopped])
+        XCTAssertEqual(lines[0].tool, "Shell")
+        XCTAssertEqual(lines[0].message, "npm test")
+        XCTAssertEqual(lines[0].tookMs, 1200)
+        XCTAssertEqual(lines[1].tool, "Edit")
+        XCTAssertEqual(lines[1].message, "src/login.ts", "short: relative to the workspace")
+        XCTAssertEqual(lines[2].tool, "linear · create_issue")
+        XCTAssertEqual(lines[3].tool, "", "a reply names no tool")
+        XCTAssertEqual(lines[3].message, "All tests pass. Done.")
+        XCTAssertFalse(try String(contentsOf: log, encoding: .utf8).contains("old_string"), "an edit's text is never read")
+        XCTAssertEqual(Cursor.shortPath(["file_path": "/elsewhere/x.swift"]), "x.swift")
+        XCTAssertEqual(Cursor.duration(["duration": -5]), 0)
+    }
+
+    /// Cursor's session is its conversation: `sessionStart` carries both a
+    /// `session_id` and the `conversation_id`, the tool events only the
+    /// conversation — every line lands on one session.
+    func testCursorPrefersTheConversationOverTheSession() throws {
+        deliver("cursor", "sessionStart", #"{"session_id":"sess-9","conversation_id":"conv-9","workspace_roots":["/w"]}"#)
+        deliver("cursor", "afterShellExecution", #"{"conversation_id":"conv-9","workspace_roots":["/w"],"command":"ls"}"#)
+        deliver("cursor", "stop", #"{"conversation_id":"conv-9","workspace_roots":["/w"],"status":"completed"}"#)
+        XCTAssertEqual(records().map(\.session), ["conv-9", "conv-9", "conv-9"])
+        let claude = PulseHookReceiver.record(agent: .claude, event: "SessionStart", payload: ["session_id": "s", "conversation_id": "c"], nowMs: 1)
+        XCTAssertEqual(claude.session, "s", "only Cursor orders its keys so")
+        var book = SessionBook()
+        for line in records() { book.apply(line, nowMs: line.ms) }
+        XCTAssertEqual(Array(book.sessions.keys), [SessionKey(.cursor, "conv-9")])
+    }
+
     /// Only the events Pulse installs are read: an event it never installs
     /// writes nothing, for Cursor, Pi and Claude alike.
     func testNeverInstalledEventsWriteNothing() {
-        deliver("cursor", "afterShellExecution", #"{"conversation_id":"cu2","command":"ls"}"#)
-        deliver("cursor", "afterFileEdit", #"{"conversation_id":"cu2","file_path":"/w/a"}"#)
+        deliver("cursor", "afterTabFileEdit", #"{"conversation_id":"cu2","file_path":"/w/a"}"#)
+        deliver("cursor", "beforeShellExecution", #"{"conversation_id":"cu2","command":"ls"}"#)
         deliver("pi", "tool_execution_update", #"{"session_id":"p2","cwd":"/w"}"#)
         deliver("pi", "agent_end", #"{"session_id":"p2","cwd":"/w"}"#)
         deliver("pi", "turn_end", #"{"session_id":"p2","cwd":"/w"}"#)
         deliver("claude", "PreToolUse", #"{"session_id":"c2","cwd":"/w","tool_name":"Bash"}"#)
         XCTAssertTrue(records().isEmpty, "\(records().map(\.kind))")
         XCTAssertEqual(ignored(), Array(repeating: PulseHookReceiver.Ignored.notInstalled.rawValue, count: 6), "heard, and said why")
-        XCTAssertEqual(heard().map(\.event), ["afterShellExecution", "afterFileEdit", "tool_execution_update", "agent_end", "turn_end", "PreToolUse"])
+        XCTAssertEqual(heard().map(\.event), ["afterTabFileEdit", "beforeShellExecution", "tool_execution_update", "agent_end", "turn_end", "PreToolUse"])
     }
 
     // MARK: - Pi (extension events)
@@ -1316,23 +1456,69 @@ final class HooksInstallerTests: XCTestCase {
         let copilot = try XCTUnwrap(read(".copilot/hooks/pulse.json"))
         XCTAssertTrue(copilot.contains("\"version\" : 1"))
         XCTAssertFalse(copilot.contains("preToolUse"))
+        XCTAssertFalse(copilot.contains("permissionRequest"))
     }
 
-    /// An OpenCode subagent runs in a child session. Its lifecycle
-    /// never reaches Pulse (its idle is not the person's turn, and it is not
-    /// a row); its asks block the parent's work and land on the parent.
-    func testOpenCodeSubagentsFoldIntoTheirParent() {
+    /// Copilot's hook file runs the launcher directly — `exec` and `args`,
+    /// no shell — and filters what reaches it: the notification types Pulse
+    /// reads, the automatic compaction only. Pulse's own entries are still
+    /// found, and their launcher read, so the install reads whole.
+    func testCopilotRunsTheLauncherWithoutAShell() throws {
+        try seedVendors()
+        try HooksInstaller.install(agents: [.copilot])
+        let text = try XCTUnwrap(read(".copilot/hooks/pulse.json"))
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+        let hooks = try XCTUnwrap(root["hooks"] as? [String: [[String: Any]]])
+        XCTAssertEqual(Set(hooks.keys), Set(AgentID.copilot.spec.hooks.events.map(\.name)))
+        let stop = try XCTUnwrap(hooks["agentStop"]?.first)
+        XCTAssertEqual(stop["exec"] as? String, HooksInstaller.launcherURL.path)
+        XCTAssertEqual(stop["args"] as? [String], ["copilot", "agentStop"])
+        XCTAssertEqual(stop["type"] as? String, "command")
+        XCTAssertNil(stop["bash"], "no shell")
+        XCTAssertNil(stop["command"])
+        XCTAssertNil(stop["matcher"])
+        XCTAssertEqual(hooks["notification"]?.first?["matcher"] as? String, "permission_prompt|elicitation_dialog|agent_idle")
+        XCTAssertEqual(hooks["preCompact"]?.first?["matcher"] as? String, "auto")
+        XCTAssertEqual(HooksSupport.inspect(.copilot), .complete)
+        XCTAssertEqual(HooksInstaller.launcherPaths(in: text), [HooksInstaller.launcherURL.path])
+        HooksInstaller.uninstall(agents: [.copilot])
+        XCTAssertNil(read(".copilot/hooks/pulse.json"), "Pulse's own file goes on removal")
+    }
+
+    /// One plugin for both OpenCode lines: a default export with an `id`,
+    /// 1.x's `server` and 2.x's `setup`, and no named export. A subagent's
+    /// child session (its `parentID`, from any session event) is not the
+    /// person's: its lifecycle is dropped, its asks land on the root. Each
+    /// root keeps its open asks by id and every answer says how many are
+    /// left.
+    func testTheOpenCodePluginServesBothLinesAndFoldsSubagents() {
         let plugin = OpenCode.plugin(
             launcher: "/x/pulse-hook", events: AgentID.opencode.spec.hooks.events.map(\.name)
         )
-        XCTAssertTrue(plugin.contains("if (event.type === \"session.created\" && info.parentID && info.id) {"))
-        XCTAssertTrue(plugin.contains("PARENTS.set(info.id, info.parentID)"))
-        XCTAssertTrue(plugin.contains("if (child && !ASKS.has(event.type)) {"), "a child's lifecycle is dropped")
-        XCTAssertTrue(plugin.contains("sessionID: child ? rootOf(own) : own"), "a child's ask lands on its root session")
-        XCTAssertTrue(plugin.contains("PARENTS.size > 512"), "the map is bounded")
-        for ask in ["permission.asked", "permission.replied", "question.asked", "question.replied", "question.rejected"] {
-            XCTAssertTrue(plugin.contains("\"\(ask)\""), ask)
+        XCTAssertTrue(plugin.contains("export default {"))
+        XCTAssertTrue(plugin.contains(#"id: "pulse","#))
+        XCTAssertTrue(plugin.contains("server: async ({ directory }) => ({"))
+        XCTAssertTrue(plugin.contains("setup: (ctx) => {"))
+        XCTAssertTrue(plugin.contains("ctx.event.subscribe({ signal: controller.signal })"))
+        XCTAssertTrue(plugin.contains("controller.abort()"), "the subscription ends when the plugin unloads")
+        XCTAssertFalse(plugin.contains("export const"), "a named export would be loaded a second time by 1.x")
+        XCTAssertFalse(plugin.contains("export function"))
+        XCTAssertTrue(plugin.contains("if (info.parentID) learn(id, info.parentID)"), "1.x learns the parent from created, updated and deleted")
+        XCTAssertTrue(plugin.contains("if (d.parentID) learn(own, d.parentID)"))
+        XCTAssertTrue(plugin.contains("const payload = { sessionID: own ? rootOf(own) : \"\""), "an ask lands on its root session")
+        XCTAssertTrue(plugin.contains("pending: closed(rootOf(own), p.requestID)"))
+        XCTAssertTrue(plugin.contains("pending: closed(rootOf(own), d.requestID)"))
+        XCTAssertTrue(plugin.contains("if (name === \"MessageAbortedError\" && own) mark(ABORTED, own, 256)"))
+        XCTAssertTrue(plugin.contains("if (ABORTED.has(own)) {"), "the idle after an abort is not a turn")
+        XCTAssertTrue(plugin.contains("if (map.size > max) map.delete(map.keys().next().value)"), "every map is bounded")
+        XCTAssertTrue(plugin.contains("if (base && where && where !== base) continue"), "2.x: another folder's events are not this one's")
+        for never in ["tool.execute", "chat.message", "chat.params", "permission.ask\"", ".hook(", ".transform("] {
+            XCTAssertFalse(plugin.contains(never), never)
         }
+        for word in ["cost", "tokens", "usage", "model"] {
+            XCTAssertFalse(plugin.contains("." + word), "nothing reads \(word)")
+        }
+        XCTAssertEqual(HooksInstaller.moduleEvents(plugin), Set(AgentID.opencode.spec.hooks.events.map(\.name)))
     }
 
     /// Codex is hooks.json only: an install and an uninstall never touch

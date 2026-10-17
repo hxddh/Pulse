@@ -108,6 +108,13 @@ package struct Connection: Equatable, Sendable {
         /// since the file last changed and nothing was heard: the changed
         /// entries wait to be trusted (`/hooks`).
         case untrusted
+        /// The install is whole and nothing was ever heard from the agent
+        /// through it: no line in the log — or, for a file Pulse owns
+        /// whole (whose last change is Pulse's install), none since it was
+        /// written. Not a fault (the agent may not have run yet), but the
+        /// first thing to check when it has: a sandbox that keeps the hook
+        /// from Pulse's folder, a config folder moved by the environment.
+        case neverHeard
     }
 
     package var agent: AgentID
@@ -176,17 +183,26 @@ package struct Connection: Equatable, Sendable {
     /// it; else, for a trust-bound vendor, a process of the agent that
     /// started after the file last changed (`runningSince`: start times of
     /// its running processes, 0 unknown) while nothing was heard since that
-    /// change. Nil for an install that is not whole. Pure.
+    /// change; else nothing heard through it at all (`neverHeard`: no line
+    /// from the agent — or, in a file Pulse owns whole, none since it was
+    /// written). Nil for an install that is not whole. Pure.
     package static func caveat(
         agent: AgentID, install: Install, config: Config, heardMs: Int64?, runningSince: [Int64]
     ) -> Caveat? {
         guard install.carriesHook else { return nil }
         if let off = config.offBy { return off }
-        guard install == .complete, agent.spec.hooks.trustBound, config.changedMs > 0,
-              (heardMs ?? 0) < config.changedMs,
-              runningSince.contains(where: { $0 == 0 || $0 >= config.changedMs })
-        else { return nil }
-        return .untrusted
+        guard install == .complete else { return nil }
+        if agent.spec.hooks.trustBound, config.changedMs > 0,
+           (heardMs ?? 0) < config.changedMs,
+           runningSince.contains(where: { $0 == 0 || $0 >= config.changedMs }) {
+            return .untrusted
+        }
+        // A file the person edits too (Claude's settings) changes for
+        // reasons of its own: only no line at all says nothing was heard.
+        // A file Pulse owns changes only when Pulse writes it.
+        guard let heardMs, heardMs > 0 else { return .neverHeard }
+        if agent.spec.hooks.format.ownsFile, config.changedMs > 0, heardMs < config.changedMs { return .neverHeard }
+        return nil
     }
 
     /// The vendor setting that silences hooks, first of `switches` that is
@@ -257,6 +273,7 @@ package struct Connection: Equatable, Sendable {
         case .turnedOff: return String(format: L10n.t(.settingsHookTurnedOff, lang), agent.displayName)
         case .managedOnly: return String(format: L10n.t(.settingsHookManagedOnly, lang), agent.displayName)
         case .untrusted: return String(format: L10n.t(.settingsHookUntrusted, lang), agent.displayName, agent.displayName)
+        case .neverHeard: return L10n.t(.settingsHookNeverHeard, lang)
         }
     }
 
@@ -340,11 +357,12 @@ package struct Connection: Equatable, Sendable {
         case .turnedOff?: parts.append("hooks turned off by its settings (disableAllHooks)")
         case .managedOnly?: parts.append("blocked by managed policy (allowManagedHooksOnly / disableAllHooks)")
         case .untrusted?: parts.append("not run since its file changed while it ran (untrusted?)")
+        case .neverHeard?: parts.append("nothing heard through it since it was installed")
         case nil: break
         }
         if let heard = lastHeard, heard.ms > 0 {
             parts.append("heard \(Self.reportEvent(heard.event)) \(age(heard.ms))")
-        } else if install.carriesHook {
+        } else if install.carriesHook, caveat != .neverHeard {
             parts.append("nothing heard yet")
         }
         if let ignored = lastIgnored, ignored.ms > 0 {

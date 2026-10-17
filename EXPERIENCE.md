@@ -24,7 +24,7 @@ Claude Code、Codex、Copilot CLI、OpenCode、Cursor（编辑器与 `cursor-age
 
 | 会变红（厂商报告阻塞） | 只会「运行中 / 轮到你」 |
 | --- | --- |
-| Claude（PermissionRequest、权限 / 提问通知）· Copilot（`permission_prompt` / `elicitation_dialog`）· OpenCode（`permission.asked` / `question.asked`）· Pi（`ui_prompt_start`） | Codex（它的 PermissionRequest 在自动审查之前触发，装了就是假等待）· Cursor（没有不拦截的等待事件） |
+| Claude（PermissionRequest、权限 / 提问通知）· Copilot（`permission_prompt` / `elicitation_dialog`）· OpenCode（1.x `permission.asked` / `question.asked`，2.x `permission.asked` / `form.created`）· Pi（`ui_prompt_start`） | Codex（它的 PermissionRequest 在自动审查之前触发，装了就是假等待）· Cursor（没有不拦截的等待事件） |
 
 后两者在设置里明说「不会报告它在等你」，不伪造红灯，也没有任何让它们报告等待的设置。
 
@@ -34,7 +34,8 @@ Claude 的 `agent_needs_input` 可能是另一个会话在等（agent view 里�
 通知里也没说是谁 —— 不变红，记一行「未采用：可能属于另一个会话」。
 
 **红灯怎么熄。** 在厂商提示里回答后，同一个工具开始运行（Claude / Codex `PostToolUse`、Copilot `postToolUse`、
-Pi `tool_execution_end`）就熄灭；并行的别的工具结束不算回答。拒绝或取消时没有工具运行，回合几秒后结束 ——
+Pi `tool_execution_end`、OpenCode 的工具完成）就熄灭；OpenCode 同时开着两个提问时，要两个都答完才熄 ——
+它的插件按提问 id 记着哪些还没答；并行的别的工具结束不算回答。拒绝或取消时没有工具运行，回合几秒后结束 ——
 这个「轮到你」在 20 秒宽限期满时落地。同一次提问报两次（Claude 先 PermissionRequest、约 6 秒后再发通知）
 只算一次，保留第一次的时间与更具体的问题。Claude 的 `idle_prompt` 不会让已经看过的回合重新变成「轮到你」。
 
@@ -126,7 +127,8 @@ Pi `tool_execution_end`）就熄灭；并行的别的工具结束不算回答。
   最后一次动静。不到一分钟写「刚刚」，不显示秒。
 - **第二行只有三种**：需要你 → 问题本身（原话；没有原话时写等待种类）；停滞 → 橙色的原因，点名上一步；
   运行中 → 安静的上一步「Bash · swift test · 12 分钟前」—— 已经发生的一步，**从不写「正在」/ running**。
-  Cursor、OpenCode 的 hook 不报工具，它们的行始终一行。
+  Cursor 的上一步是它跑的命令、改的文件（相对工作区）或 MCP 工具（「服务 · 工具」）；OpenCode 的上一步是工具与
+  它的一个参数（命令、路径、模式）。Cursor 的回合没有最后的话时，用它最后一次回复（`afterAgentResponse`）的原话。
 - 「轮到你」的行带一个灰色小字。没有行底色、芯片、「新」点、透明度或分组表头。
 - **点哪儿去哪儿**（`TrayRowModel.clickAction`）：点行身 = 前往（没有可落地的句柄时打开详情）；行尾常驻的「›」
   （约 28 pt 宽、与整行等高）= 详情；⌥-点 = 详情。
@@ -192,15 +194,19 @@ Pulse；什么都没落到就说没能打开并重扫。提示停留 8 秒，没
 - Pulse 启动前就在跑的会话先显示为「仅进程」，「为什么」说「在 Pulse 之前启动——下一步之后显示详情」。
 - 知道进程的会话只在进程活着时算在跑；不知道进程的 30 分钟无事件转为「最近」并照实说明。工作中的会话
   （被打断的回合不报 Stop）20 分钟无事件先变橙，两小时无任何消息转为「最近」—— 不会一直橙着。停滞只对逐个报告
-  工具调用的 Agent 成立；Cursor、OpenCode 的长回合不算停滞。Agent 报了一个工具开始、还没报它结束时（Pi 的
-  `tool_execution_start`），沉默不算停滞 —— 25 分钟的构建不会变橙。Codex 的回合以错误结束时不报 Stop，
+  工具调用的 Agent 成立（现在 Cursor、OpenCode 也逐个报告）。Agent 报了一个工具开始、还没报它结束时（Pi 的
+  `tool_execution_start`、OpenCode 的工具开始），沉默不算停滞 —— 25 分钟的构建不会变橙；Cursor 不报工具开始，
+  它的长命令和 Copilot、Codex 一样，20 分钟无事件会变橙。「工作在继续」这类不点名工具的状态（重试、可恢复的错误、
+  压缩）只让进行中的回合不算停滞，从不开始一个回合：回合结束后到达的不会让行重新「运行中」。Codex 的回合以错误结束时不报 Stop，
   Pulse 也不去猜：这一行照常按上面的沉默规则走。Claude 自动压缩上下文（`PostCompact`，只说「已压缩」，
   不读摘要、不报数字）和 auto 模式拒绝一个调用（`PermissionDenied`）都算工作在继续，不是一步；手动 `/compact`
-  是你在提示符前，不算工作。
+  是你在提示符前，不算工作。OpenCode 上下文溢出后自动压缩（1.x `ContextOverflowError`）、Copilot 自动压缩
+  （`preCompact`）同样只算工作在继续。
 - **子代理不是你**：子代理的事件不会回答主 Agent（或另一个子代理）的提问，不会让已结束的回合重新「运行中」，
   它的任务不算你的提示。子代理自己的开始与结束（Claude `SubagentStart` / `SubagentStop`、Codex `SubagentStop`）
   只进时间线，从不结束你的回合；回合结束后后台子代理才收尾，也不会让它重新「运行中」。你在 Agent 自己的提示符前
-  按 Esc 停下（Pi 的 aborted、Codex 的 `Interrupt`、Claude 打断工具时 `is_interrupt` 的 `PostToolUseFailure`）
+  按 Esc 停下（Pi 的 aborted、Codex 的 `Interrupt`、Claude 打断工具时 `is_interrupt` 的 `PostToolUseFailure`、
+  OpenCode 1.x 的 `MessageAbortedError` 与 2.x 的 `session.execution.interrupted`、Cursor `stop` 的 `aborted`）
   就是停在提示符、什么也不欠，不算「轮到你」，也不把半截的话当最后的话。
 - **一步说清做了什么**：Claude 的 `Agent` 调用写它的描述（没有就写子代理类型），`Skill` 写技能名，MCP 工具
   `mcp__服务__工具` 写成「服务 · 工具」—— 服务名太长先缩服务名，工具名保持完整。
@@ -235,7 +241,10 @@ Pulse；什么都没落到就说没能打开并重扫。提示停留 8 秒，没
    `allowManagedHooksOnly` 或 `disableAllHooks` →「已安装——但管理策略不让 Claude 运行它」（只读，从不改）；
    Codex 按条目内容的哈希信任 hook，Pulse 一改就变「已修改」、不再运行 —— 装全了、`hooks.json` 改动后有 Codex
    进程启动过、却一个 Codex 事件也没听到 →「已安装——改动后 Codex 还没运行过它：请在 Codex 里信任它（/hooks）」。
-   Codex 的 `allow_managed_hooks_only` 在 `config.toml` 里，Pulse 不读它。有需要更新的 Agent 时，按钮下说一次「「全部安装」会更新所有需要更新的 Agent」——
+   Codex 的 `allow_managed_hooks_only` 在 `config.toml` 里，Pulse 不读它。装全了却从没听到过这个 Agent 的任何事件
+   （Pulse 自己整份拥有的文件 —— Copilot、OpenCode、Pi —— 则是装好以后一个也没听到）时，状态写「已安装——还没有
+   听到事件」（不标橙：可能只是还没用过它），小字不再重复；它是排查的起点：Copilot 的会话沙箱没放行 Pulse 的文件夹、
+   `COPILOT_HOME` / `OPENCODE_CONFIG_DIR` 把配置挪走了。有需要更新的 Agent 时，按钮下说一次「「全部安装」会更新所有需要更新的 Agent」——
    没有逐个 Agent 的按钮。不在这台 Mac 上的合成一行。运行期间按钮置灰。「**复制报告**」把版本与分发通道、
    macOS 版本、每个 Agent 的连接（安装、最近听到的事件、最近未采用的事件及原因、是否报告等待）、通知授权、
    登录项、每个会话 Pulse 怎么读它及最近 3 条时间线写成纯文本放进剪贴板，不含路径、提示、会话或项目：步骤只写

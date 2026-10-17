@@ -130,11 +130,15 @@ package struct SettingsModel: Equatable {
             self.connection = connection
             state = connection.stateText(lang: lang)
             switch connection.install {
-            case .complete: tone = connection.caveat == nil ? .ok : .warning
+            // Nothing heard yet is said, not warned about: the agent may
+            // simply not have run since the install.
+            case .complete: tone = connection.caveat == nil || connection.caveat == .neverHeard ? .ok : .warning
             case .partial, .staleLauncher, .failed: tone = .warning
             case .notInstalled: tone = .quiet
             }
-            let heard = connection.heardText(nowMs: nowMs, lang: lang)
+            // The state line already says nothing was heard.
+            let heard = connection.caveat == .neverHeard && connection.lastHeard == nil
+                ? "" : connection.heardText(nowMs: nowMs, lang: lang)
             // A caveat the state line does not already say (an install that
             // is not whole and is silenced too).
             var caveat = ""

@@ -15,23 +15,41 @@ extension AgentSpec {
             pathNeedles: ["/bin/copilot", "github/gh-copilot", "@github/copilot", "copilot-cli"],
             argvDenyNeedles: ["crashpad", "language-server", "copilot-language-server", "Copilot.Helper", "Copilot for Xcode"]
         ),
+        // Each entry runs the launcher directly (`exec` + `args`, CLI only):
+        // no shell reads its path.
+        //
         // postToolUse / postToolUseFailure: empty output keeps the tool's own
         // result (hooks-reference.md, "postToolUse output"); the tool ran, so
-        // a permission raised for it was answered.
+        // a permission raised for it was answered. `agentStop` and
+        // `postToolUse` are synchronous and could return a decision — an
+        // owner-approved exception to the install rule: Pulse's hook appends
+        // one line and prints nothing, so it never decides.
         hooks: HookContract(
-            format: .ownedJSON(commandKey: "bash", timeoutKey: "timeoutSec"),
+            format: .ownedJSON(command: .exec, timeoutKey: "timeoutSec"),
             path: ".copilot/hooks/pulse.json",
             home: ".copilot",
             events: [
+                // A `-p` run's `initialPrompt` is its title.
                 HookEvent("sessionStart", .start),
                 HookEvent("sessionEnd", .end),
                 HookEvent("userPromptSubmitted", .prompt),
                 HookEvent("postToolUse", .activity),
                 HookEvent("postToolUseFailure", .activity),
                 HookEvent("agentStop", .turn),
-                HookEvent("notification", .ignore),
+                // Only the types Pulse reads reach the hook: a background
+                // agent's idle is heard and said to mean nothing here.
+                HookEvent("notification", .ignore, matcher: "permission_prompt|elicitation_dialog|agent_idle"),
                 HookEvent("errorOccurred", .status),
-            ]
+                // Cannot block creation: a subagent began, on the timeline.
+                HookEvent("subagentStart", .status),
+                // Notification only; a manual `/compact` is the person at
+                // the prompt, so only the automatic one is installed.
+                HookEvent("preCompact", .status, matcher: "auto"),
+            ],
+            // `COPILOT_HOME` moves the folder hooks load from
+            // (`$COPILOT_HOME/hooks/`); a GUI app cannot see it, so Pulse
+            // installs to the default and says so.
+            relocation: HookContract.Relocation(dir: ".copilot", variable: "COPILOT_HOME")
         ),
         // A subagent's events carry its `agentId`; the main agent's none.
         subagentKeys: ["agentId"],
@@ -43,14 +61,31 @@ extension AgentSpec {
 package enum Copilot {
     package static func read(_ event: String, _ payload: [String: Any]) -> HookReading? {
         switch event {
+        case "sessionStart":
+            // A one-shot run (`copilot -p`) says its prompt here: the row's
+            // title before any prompt event.
+            let initial = PulseHookReceiver.string(payload, keys: ["initialPrompt", "initial_prompt"])
+            return initial.isEmpty ? nil : HookReading(action: .start, name: TitleHeuristics.promptTitle(initial, limit: 200))
         case "postToolUseFailure":
             // The tool ran and failed: a step marked failed.
             return HookReading(action: .activity, failed: true)
         case "errorOccurred":
             // An unrecoverable error ends the turn; a recoverable one is work
-            // going on — not a tool that ran, so never an answer.
+            // going on — not a tool that ran, so never an answer, and after
+            // the turn ended it moves nothing (a `status` that names no tool
+            // never starts a turn).
             let recoverable = payload["recoverable"] as? Bool ?? true
             return HookReading(action: recoverable ? .status : .failedTurn)
+        case "subagentStart":
+            // Its payload names the agent, not the `agentId` its own events
+            // will carry: the name marks the line as the subagent's.
+            let name = PulseHookReceiver.string(payload, keys: ["agentName", "agentDisplayName"])
+            return HookReading(action: .status, sub: String(name.prefix(80)), note: "subagent started")
+        case "preCompact":
+            // The matcher installs the automatic one; a manual one says
+            // nothing if it ever arrives.
+            if PulseHookReceiver.string(payload, keys: ["trigger"]) == "manual" { return HookReading(action: .ignore) }
+            return HookReading(action: .status, note: "compacting")
         case "notification":
             let words = PulseHookReceiver.string(payload, keys: ["message", "title"])
             switch PulseHookReceiver.string(payload, keys: ["notification_type", "notificationType"]) {

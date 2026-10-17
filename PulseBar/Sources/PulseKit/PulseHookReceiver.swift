@@ -130,7 +130,7 @@ package enum PulseHookReceiver {
     /// (front, pid, landing) and its `seq` are added — a state, or an
     /// `ignored` line saying why not. Pure.
     package static func record(agent: AgentID, event rawEvent: String, payload: [String: Any], nowMs: Int64) -> AttentionRecord {
-        let context = HookContext(payload: payload)
+        let context = HookContext(payload: payload, sessionKeys: agent.spec.sessionKeys)
         let event = rawEvent.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let reading = interpret(agent: agent, event: event, payload: payload) else {
             return ignored(event.isEmpty ? .noEvent : .notInstalled, agent: agent, event: event, context: context, nowMs: nowMs)
@@ -140,7 +140,9 @@ package enum PulseHookReceiver {
         if case .blocked = reading.action, agent.waitingSource == .none {
             return ignored(.cannotWait, agent: agent, event: event, context: context, nowMs: nowMs)
         }
-        let tool = toolLabel(string(payload, keys: ["tool_name", "toolName"]))
+        // The adapter's own name for the tool (Cursor's shell, an MCP
+        // server's tool), else the payload's.
+        let tool = toolLabel(reading.tool ?? string(payload, keys: ["tool_name", "toolName"]))
         let kind: AttentionKind
         var message = ""
         var toolColumn = ""
@@ -167,7 +169,9 @@ package enum PulseHookReceiver {
             }
             kind = .tool
             toolColumn = tool
-            message = target()
+            // A reply that names no tool (Cursor's `afterAgentResponse`):
+            // its words are the turn's last words so far.
+            message = tool.isEmpty && !reading.words.isEmpty ? condenseOneLine(reading.words, limit: 200) : target()
             failed = reading.failed
             tookMs = max(0, reading.tookMs)
         case .status:
@@ -191,7 +195,7 @@ package enum PulseHookReceiver {
             }
             kind = .title
             // The vendor's name for the session; empty: the name was cleared.
-            message = condenseOneLine(string(payload, keys: ["session_name"]), limit: 200)
+            message = condenseOneLine(reading.name ?? string(payload, keys: ["session_name"]), limit: 200)
         case .stopped:
             kind = .stopped
         case .prompt:
@@ -205,8 +209,10 @@ package enum PulseHookReceiver {
             message = TitleHeuristics.promptTitle(string(payload, keys: ["prompt"]), limit: 200)
         case .start:
             kind = .start
-            // A session the vendor has already named (a resume).
-            message = condenseOneLine(string(payload, keys: ["session_name"]), limit: 200)
+            // A session the vendor has already named (a resume), or the
+            // prompt a one-shot run was started with (Copilot's
+            // `initialPrompt`).
+            message = condenseOneLine(reading.name ?? string(payload, keys: ["session_name"]), limit: 200)
         case .blocked(let blocked):
             kind = blocked.isBlocking ? blocked : .waiting
             message = reading.ask.isEmpty ? genericMessage(from: payload, blocked: true) : reading.ask
@@ -459,11 +465,15 @@ package struct HookContext: Equatable {
     /// to name a session that has no id; never written, never read.
     package var transcript: String
 
-    package init(payload: [String: Any]) {
-        session = String(PulseHookReceiver.string(payload, keys: [
-            "session_id", "sessionId", "sessionID", "thread_id", "threadId",
-            "conversation_id", "conversationId",
-        ]).prefix(80))
+    /// The keys that name a session, in the order they are trusted —
+    /// unless an adapter orders them its own way (`AgentSpec.sessionKeys`).
+    package static let sessionKeys = [
+        "session_id", "sessionId", "sessionID", "thread_id", "threadId",
+        "conversation_id", "conversationId",
+    ]
+
+    package init(payload: [String: Any], sessionKeys: [String] = HookContext.sessionKeys) {
+        session = String(PulseHookReceiver.string(payload, keys: sessionKeys).prefix(80))
         transcript = PulseHookReceiver.string(payload, keys: [
             "transcript_path", "transcriptPath", "session_file", "sessionFile", "rollout_path",
         ])

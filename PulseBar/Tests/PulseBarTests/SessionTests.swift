@@ -210,34 +210,81 @@ struct SessionBookTests {
         ])
     }
 
+    /// OpenCode 1.x: the prompt starts the turn (busy only says work goes
+    /// on), a tool's start and end are what runs and a step, two asks
+    /// open at once need both answers, an abort is a stop and an idle the
+    /// turn's end.
     @Test func openCode() {
         let run = play(.opencode, [
             ("session.created", [:]),
             ("session.status", ["status": ["type": "busy"]]),
-            ("permission.asked", ["permission": "bash", "patterns": ["npm test"]]),
-            ("permission.replied", [:]),
+            ("message.part.updated", ["phase": "prompt", "prompt": "Fix the login test"]),
+            ("message.part.updated", ["phase": "running", "tool_name": "bash", "target": "npm test"]),
+            ("permission.asked", ["permission": "bash", "patterns": ["npm test"], "tool_name": "bash"]),
+            ("permission.asked", ["permission": "edit", "patterns": ["src/a.ts"], "tool_name": "write"]),
+            ("permission.replied", ["pending": 1]),
+            ("permission.replied", ["pending": 0]),
+            ("message.part.updated", ["phase": "done", "tool_name": "bash", "target": "npm test"]),
             ("question.asked", ["questions": [["question": "Which DB?"]]]),
             ("question.rejected", [:]),
             ("session.idle", [:]),
+            ("session.updated", ["session_name": "Login test"]),
+            ("message.part.updated", ["phase": "prompt", "prompt": "Now the signup test"]),
+            ("session.error", ["sessionID": "s1", "error": "aborted", "error_name": "MessageAbortedError"]),
             ("session.deleted", [:]),
         ])
         #expect(run.states == [
-            "idle", "working", "blocked:permission", "working", "blocked:question", "working", "turn", "ended",
+            "idle", "idle", "working", "working", "blocked:permission", "blocked:permission", "blocked:permission",
+            "working", "working", "blocked:question", "working", "turn", "turn", "working", "idle", "ended",
         ])
+        let session = run.book.sessions[SessionKey(.opencode, "s1")]
+        #expect(session?.shownTitle == "Login test", "the vendor's name over the first prompt")
+        #expect(session?.title == "Fix the login test")
+        #expect(session?.steps.map(\.tool) == ["bash"])
+        #expect(session?.steps.first?.target == "npm test")
         let ask = HookFeed.write(.opencode, "permission.asked", ["permission": "bash", "patterns": ["npm test"]], at: t0).lines.first?.message
         #expect(ask == "bash: npm test")
     }
 
+    /// OpenCode 2.x: the run's start and its prompt, a tool call and its
+    /// success, a form (the question tool) and its reply, and the run's end.
+    @Test func openCodeCurrent() {
+        let run = play(.opencode, [
+            ("session.created", ["session_name": "Port the cache"]),
+            ("session.execution.started", [:]),
+            ("session.inbox.enqueued", ["prompt": "Move the cache to Redis"]),
+            ("session.tool.called", ["tool_name": "bash", "target": "redis-cli ping"]),
+            ("session.tool.success", ["tool_name": "bash", "target": "redis-cli ping", "duration_ms": 800]),
+            ("form.created", ["questions": [["question": "Which host?"]]]),
+            ("form.cancelled", ["pending": 0]),
+            ("session.retry.scheduled", [:]),
+            ("session.execution.succeeded", [:]),
+            ("session.compaction.ended", [:]),
+            ("session.execution.started", [:]),
+            ("session.execution.interrupted", ["reason": "user"]),
+        ])
+        #expect(run.states == [
+            "idle", "working", "working", "working", "working", "blocked:question", "working", "working", "turn",
+            "turn", "working", "idle",
+        ])
+        let session = run.book.sessions[SessionKey(.opencode, "s1")]
+        #expect(session?.steps.first == SessionBook.Step(tool: "bash", target: "redis-cli ping", ms: t0 + 4 * minute, tookMs: 800))
+        #expect(session?.name == "Port the cache")
+    }
+
     /// Each agent's own tool event becomes a step with its tool and target —
-    /// Copilot's `toolArgs` as a JSON string, Pi's forwarded summary — and
-    /// its own prompt event becomes the title. Cursor and OpenCode activity
-    /// names no tool: no step.
+    /// Copilot's `toolArgs` as a JSON string, Pi's and OpenCode's forwarded
+    /// summary, Cursor's command — and its own prompt event becomes the
+    /// title. Cursor's reply and OpenCode's busy name no tool: no step.
     @Test func everyAgentsStepsComeFromItsOwnHook() {
         let cases: [(AgentID, String, [String: Any], String, String)] = [
             (.claude, "PostToolUse", ["tool_name": "Bash", "tool_input": ["command": "swift test"]], "Bash", "swift test"),
             (.codex, "PostToolUse", ["tool_name": "shell", "tool_input": ["command": "cargo build"]], "shell", "cargo build"),
             (.copilot, "postToolUse", ["toolName": "bash", "toolArgs": #"{"command":"npm test"}"#], "bash", "npm test"),
             (.pi, "tool_execution_end", ["tool_name": "edit", "tool_input": ["path": "src/x.ts"]], "edit", "src/x.ts"),
+            (.opencode, "message.part.updated", ["phase": "done", "tool_name": "read", "target": "src/x.ts"], "read", "src/x.ts"),
+            (.opencode, "session.tool.success", ["tool_name": "grep", "target": "TODO"], "grep", "TODO"),
+            (.cursor, "afterShellExecution", ["command": "make test"], "Shell", "make test"),
         ]
         for (agent, event, payload, tool, target) in cases {
             var book = SessionBook()
@@ -252,10 +299,13 @@ struct SessionBookTests {
             let steps = book.sessions[SessionKey(agent, "s1")]?.steps ?? []
             #expect(steps.isEmpty, "\(agent.rawValue)")
         }
-        let prompts: [(AgentID, String)] = [(.claude, "UserPromptSubmit"), (.codex, "UserPromptSubmit"), (.copilot, "userPromptSubmitted"), (.pi, "message_start")]
+        let prompts: [(AgentID, String)] = [
+            (.claude, "UserPromptSubmit"), (.codex, "UserPromptSubmit"), (.copilot, "userPromptSubmitted"), (.pi, "message_start"),
+            (.opencode, "message.part.updated"), (.opencode, "session.inbox.enqueued"),
+        ]
         for (agent, event) in prompts {
             var book = SessionBook()
-            for line in HookFeed.write(agent, event, ["prompt": "Fix the flaky login test"], at: t0).lines { book.apply(line, nowMs: t0) }
+            for line in HookFeed.write(agent, event, ["prompt": "Fix the flaky login test", "phase": "prompt"], at: t0).lines { book.apply(line, nowMs: t0) }
             let title = book.sessions[SessionKey(agent, "s1")]?.title
             #expect(title == "Fix the flaky login test", "\(agent.rawValue)")
         }
@@ -290,6 +340,57 @@ struct SessionBookTests {
             (14 * second, "agentStop", [:]),
         ])
         #expect(run.states == ["working", "blocked:permission", "working", "turn"])
+    }
+
+    /// Copilot: a subagent's tool (its `agentId`) is not the person
+    /// answering the main agent's prompt, even the same tool; only the main
+    /// agent's own tool is. A subagent's start is its own status, and a
+    /// recoverable error is work going on only while the turn is — after
+    /// the turn ended it revives nothing.
+    @Test func copilotSubagentToolsNeverAnswerTheRootAndARecoverableErrorRevivesNothing() throws {
+        let run = playAt(.copilot, [
+            (0, "userPromptSubmitted", ["prompt": "Audit the repo"]),
+            (2 * second, "subagentStart", ["agentName": "explore"]),
+            (4 * second, "notification", ["notification_type": "permission_prompt", "message": "Allow bash: rm -rf build?"]),
+            (6 * second, "postToolUse", ["toolName": "bash", "agentId": "sub-1"]),
+            (8 * second, "postToolUseFailure", ["toolName": "view", "agentId": "sub-1"]),
+            (9 * second, "errorOccurred", ["recoverable": true, "error": ["message": "Rate limited"]]),
+            (30 * second, "postToolUse", ["toolName": "bash"]),
+            (40 * second, "agentStop", [:]),
+            (50 * second, "errorOccurred", ["recoverable": true, "error": ["message": "Rate limited"]]),
+            (55 * second, "postToolUse", ["toolName": "bash", "agentId": "sub-1"]),
+            (minute, "preCompact", ["trigger": "auto"]),
+        ])
+        #expect(run.states == [
+            "working", "working", "blocked:permission", "blocked:permission", "blocked:permission", "blocked:permission",
+            "working", "turn", "turn", "turn", "turn",
+        ])
+        let session = try #require(run.book.sessions[SessionKey(.copilot, "s1")])
+        #expect(session.steps.map(\.sub) == ["sub-1", "sub-1", ""], "the subagent's steps are marked as its own")
+        #expect(session.steps[1].failed)
+        #expect(session.timeline.contains { $0.sub == "explore" && $0.effect == .status }, "a subagent began, on the timeline")
+    }
+
+    /// Cursor: the reply's words are the turn's last words — its `stop`
+    /// carries none; an error ends the turn as failed, an abort stops it.
+    @Test func cursorRepliesAreTheLastWords() throws {
+        let run = playAt(.cursor, [
+            (0, "sessionStart", [:]),
+            (second, "afterShellExecution", ["command": "npm test"]),
+            (2 * second, "afterAgentResponse", ["text": "All 42 tests pass."]),
+            (3 * second, "stop", ["status": "completed"]),
+            (minute, "afterFileEdit", ["file_path": "/Users/me/app/src/a.ts", "workspace_roots": ["/Users/me/app"]]),
+            (minute + second, "stop", ["status": "aborted"]),
+            (2 * minute, "afterShellExecution", ["command": "make"]),
+            (2 * minute + second, "stop", ["status": "error"]),
+        ])
+        #expect(run.states == ["idle", "working", "working", "turn", "working", "idle", "working", "turn"])
+        let session = try #require(run.book.sessions[SessionKey(.cursor, "s1")])
+        #expect(session.message == "All 42 tests pass.")
+        #expect(session.steps.map(\.tool) == ["Shell", "Edit", "Shell"])
+        #expect(session.steps[1].target == "src/a.ts")
+        #expect(AgentID.cursor.reportsToolActivity, "its silence can be a stall now")
+        #expect(AgentID.cursor.waitingSource == .none, "still never red")
     }
 
     /// Claude: a denied permission fires no tool event and Stop follows
@@ -723,8 +824,8 @@ struct SessionBookTests {
     }
 
     /// OpenCode's error is the session's last error until the next turn
-    /// starts — here its next `session.status` busy, since its plugin sends
-    /// no prompt. It never outlives the turn it belongs to.
+    /// starts — here its next prompt; a `session.status` busy says work
+    /// goes on and starts no turn. It never outlives the turn it belongs to.
     @Test func aNewTurnClearsTheLastError() {
         var book = SessionBook()
         let steps: [(Int64, String, [String: Any])] = [
@@ -741,6 +842,10 @@ struct SessionBookTests {
         #expect(HookFeed.word(book.sessions[SessionKey(.opencode, "s1")]?.state) == "turn")
         let next = t0 + 5 * minute
         for line in HookFeed.write(.opencode, "session.status", ["status": ["type": "busy"]], at: next).lines { book.apply(line, nowMs: next) }
+        #expect(HookFeed.word(book.sessions[SessionKey(.opencode, "s1")]?.state) == "turn", "busy starts no turn")
+        #expect(book.sessions[SessionKey(.opencode, "s1")]?.lastError == "Model unavailable")
+        let prompt = next + second
+        for line in HookFeed.write(.opencode, "message.part.updated", ["phase": "prompt", "prompt": "Try again"], at: prompt).lines { book.apply(line, nowMs: prompt) }
         #expect(HookFeed.word(book.sessions[SessionKey(.opencode, "s1")]?.state) == "working")
         let cleared = book.sessions[SessionKey(.opencode, "s1")]?.lastError
         #expect(cleared == "", "the error belonged to the turn before")
@@ -1426,22 +1531,24 @@ struct TrayStateTests {
         #expect(try #require(rows(b, at: t0 + 40 * minute).first).isStalled)
     }
 
-    /// Only an agent whose hook reports every tool call can be
-    /// stalled. Cursor and OpenCode speak at a prompt and at the end of a
-    /// reply; a long turn is silent, and silence from them is not evidence.
-    @Test func aLongTurnIsNotAStallForAnAgentWithoutToolEvents() throws {
-        #expect(AgentID.claude.reportsToolActivity)
-        #expect(AgentID.codex.reportsToolActivity)
-        #expect(AgentID.copilot.reportsToolActivity)
-        #expect(AgentID.pi.reportsToolActivity)
-        #expect(!AgentID.cursor.reportsToolActivity)
-        #expect(!AgentID.opencode.reportsToolActivity)
+    /// Every agent's hook now reports its tool calls — OpenCode's plugin
+    /// its tool parts, Cursor's its `after*` events — so a long silence
+    /// from any of them can be a stall; a tool said to have started
+    /// (OpenCode's, Pi's) is what runs now, and its silence is not.
+    @Test func everyAgentReportsItsWorkAndARunningToolIsNotAStall() throws {
+        for agent in AgentID.allCases {
+            #expect(agent.reportsToolActivity, "\(agent.rawValue)")
+        }
         for agent in [AgentID.cursor, .opencode] {
             var b = book([AttentionRecord(agent: agent, kind: .working, ms: t0, session: "x1", pid: 81)])
-            b.apply(AttentionRecord(agent: agent, kind: .tool, ms: t0 + minute, session: "x1"), nowMs: t0 + minute)
+            b.apply(AttentionRecord(agent: agent, kind: .tool, ms: t0 + minute, session: "x1", tool: "bash"), nowMs: t0 + minute)
             let row = try #require(rows(b, at: t0 + 40 * minute).first)
-            #expect(row.status == .running(stalled: false), "\(agent.rawValue)")
+            #expect(row.status == .running(stalled: true), "\(agent.rawValue)")
         }
+        var running = book([AttentionRecord(agent: .opencode, kind: .working, ms: t0, session: "x2", pid: 82)])
+        running.apply(AttentionRecord(agent: .opencode, kind: .status, ms: t0 + minute, message: "swift build", session: "x2", tool: "bash"), nowMs: t0 + minute)
+        let row = try #require(rows(running, at: t0 + 40 * minute).first)
+        #expect(row.status == .running(stalled: false), "a 25-minute build says nothing until it ends")
     }
 
     @Test func aBlockedRowCarriesItsBlock() throws {

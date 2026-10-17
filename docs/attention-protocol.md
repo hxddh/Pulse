@@ -113,7 +113,7 @@ record.
 | `tool` | The tool a `tool` line ran, the tool a `status` line says has started (Pi's `tool_execution_start`), or the tool a block is about (`Bash`, `AskUserQuestion`); empty when the event names none. A tool name only — no column but `kind` says what a line means |
 | `err` | `1` when the tool a `tool` line reports failed (Claude's `PostToolUseFailure`, Copilot's `postToolUseFailure`, Pi's `isError`); empty otherwise. Anything but `1` is not a failure |
 | `took` | How long the tool a `tool` line reports ran, in integer milliseconds, when the vendor said (Pi's `durationMs`); empty when unknown. Anything but a positive integer is unknown |
-| `message` | What is asked, the turn's last words, a `failed` turn's error, the prompt's text on a `working` line, a tool or `status` line's target, the vendor's name for the session on a `title` line (or a `start`, when the session already has one), or why a line was `ignored`; tabs and every kind of line break (`\n`, `\r`, VT, FF, NEL, U+2028, U+2029) made spaces; ≤200 chars; credentials redacted from the whole value before it is shortened. Last, so free text never shifts a column |
+| `message` | What is asked, the turn's last words, a `failed` turn's error, the prompt's text on a `working` line, a tool or `status` line's target, the reply's words on a `tool` line that names no tool (Cursor's `afterAgentResponse`: the turn's last words so far), the vendor's name for the session on a `title` line (or a `start`, when the session already has one), or why a line was `ignored`; tabs and every kind of line break (`\n`, `\r`, VT, FF, NEL, U+2028, U+2029) made spaces; ≤200 chars; credentials redacted from the whole value before it is shortened. Last, so free text never shifts a column |
 
 Readers skip blank lines and `#` comments.
 
@@ -129,19 +129,21 @@ Readers skip blank lines and `#` comments.
 | | `idle` | It has sat at its prompt a while (Claude's `idle_prompt`, ~60 s after a turn): your turn only if the session was still working or blocked (an Esc on a prompt fires no Stop) or is new to Pulse — never revives a turn already seen |
 | Resolved | `done` | The vendor said its prompt closed (OpenCode `permission.replied`, Pi `ui_prompt_end`, Claude `elicitation_complete`): nothing is owed |
 | | `dismiss` | Pulse's own: the person set the wait aside (`pulse.dismiss`) or looked at a finished turn (`pulse.seen`). Written by the app alone |
-| Lifecycle | `start` | The session started or resumed (message = the vendor's name for it, when it has one) |
+| Lifecycle | `start` | The session started or resumed (message = the vendor's name for it, when it has one — or the prompt a one-shot run was started with, Copilot's `initialPrompt`) |
 | | `working` | The user submitted a prompt (message = its text: the title's source) |
-| | `stopped` | The person stopped the run at the agent's own prompt (Pi's aborted `agent_settled`, Codex's `Interrupt`, Claude's `PostToolUseFailure` with `is_interrupt`): the turn is over and nothing is owed — no last words, never "your turn" |
-| | `title` | The vendor named the session (Pi's `session_info_changed`): message = the name, which is the row's title over the first prompt; empty clears it. No state, and it makes no session |
+| | `stopped` | The person stopped the run at the agent's own prompt (Pi's aborted `agent_settled`, Codex's `Interrupt`, Claude's `PostToolUseFailure` with `is_interrupt`, OpenCode's `MessageAbortedError` / `session.execution.interrupted` by the user, Cursor's aborted `stop`): the turn is over and nothing is owed — no last words, never "your turn" |
+| | `title` | The vendor named the session (Pi's `session_info_changed`, OpenCode's `session.updated` / `session.renamed`): message = the name, which is the row's title over the first prompt; empty clears it. No state, and it makes no session |
 | | `end` | The session ended |
-| Activity | `tool` | A tool ran (or a reply streamed): the session is working, and — when it names its tool — its last step and the answer to a block raised for that tool |
-| | `status` | Work goes on and no tool finished (a status, a retry, a recoverable error, or a tool that started — `tool` names it, `message` its target: what runs now): never a step, never an answer |
+| Activity | `tool` | A tool ran (or a reply streamed): the session is working, and — when it names its tool — its last step and the answer to a block raised for that tool; when it names none, its message is the reply's words |
+| | `status` | Work goes on and no tool finished (a status, a retry, a recoverable error, a compaction, or a tool that started — `tool` names it, `message` its target: what runs now): never a step, never an answer; one that names no tool never starts a turn |
 | Heard | `ignored` | The receiver heard an event it did not turn into state: an event Pulse does not install, a payload that is not a JSON object, a blocked event from an agent that cannot report one, activity or a prompt with no session, an event that says nothing Pulse shows, a prompt that does not block (Pi's `custom` view), a request no prompt can show (Claude's `dontAsk`, a `claude -p` run without a permission host — read from the agent process's argv), a notice that may be about another session (Claude's `agent_needs_input`). `message` says which (`PulseHookReceiver.Ignored`) — never the payload's words. The reducer changes no state for it; it goes on its session's timeline and is Settings' "last ignored" |
 
 `working`, `done`, `dismiss`, `stopped` and `end` clear the session's
 block; `start` does unless the session is working — each only when the
 main agent wrote it (a subagent's line clears only its own block). A `tool` or `status` line keeps a
-working session from reading stalled; a `tool` line answers a block raised
+working session from reading stalled — a `status` line that names no tool
+only that: in a session that is not working or blocked it moves nothing;
+a `tool` line answers a block raised
 before it in the same session — unless both name a tool and the names
 differ (a parallel tool is not the answer). A `status` line never answers.
 
@@ -181,7 +183,12 @@ as spelled in the table — no alias, no vendor word, no guess from free text.
   session-less one when it names none; a dismissal always names the folder).
 - A `tool` line that names its tool is a step: the session keeps its last
   five (tool, target, time, `err`, `took`, `sub`); a `status` line is not a
-  step. A `status` line that names a tool says that tool runs now: while it
+  step. A main-agent `tool` line that names no tool and says something is a
+  reply: its words are the session's last words until a turn line that
+  carries its own. A `status` line that names no tool (a retry, a recoverable
+  error, a compaction) keeps a working or blocked session going and starts
+  nothing: in an idle, finished or ended session (one already known) it is
+  heard and moves nothing. A `status` line that names a tool says that tool runs now: while it
   runs a silence is not a stall, and the `tool` line of the same tool from
   the same speaker (or the turn's end) finishes it.
 - A `stopped` line puts the session at its prompt with nothing owed —
@@ -194,8 +201,8 @@ as spelled in the table — no alias, no vendor word, no guess from free text.
   line starts a new turn (its clock), its text is the latest prompt, and the
   first that says something (not "continue") is the title. A `turn` line's
   message is the last words; a `failed` line's is the turn's error, until
-  the next turn starts: a prompt, or activity after the turn ended
-  (OpenCode's plugin sends no prompt).
+  the next turn starts: a prompt, or a tool after the turn ended (Cursor
+  sends no prompt).
 - A blocked entry that names no session never attaches to a session row; it
   is its own row in its folder.
 - A blocked entry goes out when a `tool` line (or a prompt) of that session,

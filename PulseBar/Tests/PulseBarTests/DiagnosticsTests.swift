@@ -443,10 +443,11 @@ struct ConnectionTests {
         #expect(caveat(.codex, running: [changed + 5_000]) == .untrusted)
         #expect(caveat(.codex, running: [0]) == .untrusted, "a start time not read counts")
         #expect(caveat(.codex, heard: changed + 1_000, running: [changed + 5_000]) == nil, "heard since the change")
-        #expect(caveat(.codex, running: [changed - 5_000]) == nil, "only a Codex that read the changed file")
-        #expect(caveat(.codex, running: []) == nil, "no Codex ran")
+        #expect(caveat(.codex, running: [changed - 5_000]) == .neverHeard, "only a Codex that read the changed file is untrusted")
+        #expect(caveat(.codex, running: []) == .neverHeard, "no Codex ran: nothing heard, nothing to trust")
+        #expect(caveat(.codex, heard: changed - 60_000, running: []) == nil, "heard before; its own file is the person's too")
         #expect(caveat(.codex, .partial(found: 5, of: 7), running: [changed + 5_000]) == nil, "Install all says that")
-        #expect(caveat(.claude, running: [changed + 5_000]) == nil, "Claude's hooks need no trust")
+        #expect(caveat(.claude, running: [changed + 5_000]) == .neverHeard, "Claude's hooks need no trust")
         #expect(AgentID.codex.spec.hooks.trustBound)
         #expect(!AgentID.claude.spec.hooks.trustBound)
         let silenced = Connection.caveat(
@@ -454,6 +455,39 @@ struct ConnectionTests {
         )
         #expect(silenced == .turnedOff)
         #expect(Connection.caveat(agent: .claude, install: .notInstalled, config: Connection.Config(offBy: .turnedOff), heardMs: nil, runningSince: []) == nil)
+    }
+
+    /// A whole install nothing was heard through says so — for any agent:
+    /// no line from it at all, or, in a file Pulse owns whole (its last
+    /// change is Pulse's install), none since it was written. A file the
+    /// person edits too (Claude's settings) changes for reasons of its own,
+    /// so a line heard before its change still counts. Said on the state
+    /// line, not as a warning, and in the report.
+    @Test func anInstallNothingWasHeardThroughIsSaid() {
+        let changed: Int64 = 1_800_000_000_000
+        let config = Connection.Config(changedMs: changed)
+        func caveat(_ agent: AgentID, heard: Int64?) -> Connection.Caveat? {
+            Connection.caveat(agent: agent, install: .complete, config: config, heardMs: heard, runningSince: [])
+        }
+        for agent in AgentID.allCases {
+            #expect(caveat(agent, heard: nil) == .neverHeard, "\(agent.rawValue)")
+            #expect(caveat(agent, heard: changed + 1) == nil, "\(agent.rawValue)")
+        }
+        #expect(caveat(.copilot, heard: changed - 1) == .neverHeard, "Pulse's own file: nothing since the install")
+        #expect(caveat(.opencode, heard: changed - 1) == .neverHeard)
+        #expect(caveat(.claude, heard: changed - 1) == nil, "the person's settings change for reasons of their own")
+        #expect(Connection.caveat(agent: .copilot, install: .partial(found: 8, of: 10), config: config, heardMs: nil, runningSince: []) == nil)
+        let now = changed + 60_000
+        let copilot = Connection.make(agent: .copilot, probed: .complete, failure: nil, heard: nil, ignored: nil, config: config)
+        #expect(copilot.caveat == .neverHeard)
+        let line = SettingsModel.HookAgent(copilot, nowMs: now, lang: .en)
+        #expect(line.state == "Installed — nothing heard yet")
+        #expect(line.tone == .ok, "not a fault: it may not have run yet")
+        #expect(line.detail == L10n.t(.settingsHookReportsWaits, .en), "said once")
+        #expect(SettingsModel.HookAgent(copilot, nowMs: now, lang: .zh).state == "已安装——还没有听到事件")
+        let report = copilot.reportLine(present: true, nowMs: now)
+        #expect(report.contains("nothing heard through it since it was installed"))
+        #expect(!report.contains("nothing heard yet"), "said once")
     }
 
     /// The words: an installed hook that may not run says why on its state

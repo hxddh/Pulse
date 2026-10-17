@@ -168,7 +168,7 @@ package struct TrayRowModel: Equatable {
     /// the agent did not say, what kind of wait it is), for an orange row
     /// (the why, which names the last step) and for a running row whose hook
     /// named a step (the step, quietly). Everything else is one line — a
-    /// Cursor or OpenCode row among them: their hooks name no tool.
+    /// running row whose hook has named no tool yet among them.
     package static func secondLine(
         _ row: AgentRow,
         facts: SessionFacts,

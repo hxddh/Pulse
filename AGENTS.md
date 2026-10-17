@@ -113,12 +113,20 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
   event not installed is not read. Async neutralizes decision output: the
   vendor reads no decision from an `async` entry, so an event whose only
   control is a decision (Claude's `PermissionDenied` `retry`,
-  `SubagentStop`) is observe-only installed async. Every install is
+  `SubagentStop`) is observe-only installed async. One documented exception
+  (owner decision): Copilot's `agentStop`/`postToolUse` are synchronous and
+  could return a decision; Pulse's hook appends one line and prints nothing,
+  so it never decides. A plugin or extension Pulse owns reads the vendor's
+  event stream only (OpenCode's bus, Pi's events) — never a hook that can
+  change a tool, a message or a permission — and its handlers never throw,
+  never return a decision and never block. Every install is
   reversible byte-for-byte (`hook-installs.json`). Codex is `hooks.json`
   only — `config.toml` is never touched, not even read. No environment
   variable is followed for where a vendor reads its config (a GUI app cannot
-  see the shell's): a folder a variable can move (Pi's `PI_CODING_AGENT_DIR`)
-  is said in Settings when the default is missing, never guessed.
+  see the shell's): a folder a variable can move (Pi's `PI_CODING_AGENT_DIR`,
+  OpenCode's `OPENCODE_CONFIG_DIR` / `XDG_CONFIG_HOME`, Copilot's
+  `COPILOT_HOME`) is said in Settings when the default is missing, never
+  guessed.
 - **QA code never ships.** Fixtures, captures and the preview window live in
   the `PulseQA` executable; the app is `PulseBar` alone.
 

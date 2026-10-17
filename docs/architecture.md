@@ -24,7 +24,8 @@ frontmost-app question (`PromptVisibility.promptIsFrontmost`, which the
 An agent is one file in `PulseKit/Agents/`: an `AgentSpec` (identity,
 process rule, waiting source, `HookContract` — path, format, each event
 with its action — and a `read` for the events whose meaning is in the
-payload). `AgentSpec.reading(_:payload:)` is the whole dispatch: an event
+payload, and the payload keys that name its session when they are not the
+common order — Cursor's `conversation_id` first). `AgentSpec.reading(_:payload:)` is the whole dispatch: an event
 not in the contract writes nothing, otherwise `read` decides or the event's
 own action stands. The installer has one writer per `HookFormat`
 (`nested`, `versioned`, `ownedJSON`, `module`), parameterized by the

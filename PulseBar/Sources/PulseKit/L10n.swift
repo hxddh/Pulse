@@ -154,6 +154,7 @@ package enum L10n {
         case settingsHookTurnedOff
         case settingsHookManagedOnly
         case settingsHookUntrusted
+        case settingsHookNeverHeard
         case waitingBannerFailed
         case lampRuleBlocked
         case lampRuleStalled
@@ -336,6 +337,7 @@ extension L10n.Key {
         case .settingsHookTurnedOff: return ("Installed — but hooks are turned off in %@'s settings (disableAllHooks)", "已安装——但 %@ 的设置关掉了所有 hooks（disableAllHooks）")
         case .settingsHookManagedOnly: return ("Installed — but a managed policy keeps %@ from running it", "已安装——但管理策略不让 %@ 运行它")
         case .settingsHookUntrusted: return ("Installed — %@ hasn't run it since it changed: trust it in %@ (/hooks)", "已安装——改动后 %@ 还没运行过它：请在 %@ 里信任它（/hooks）")
+        case .settingsHookNeverHeard: return ("Installed — nothing heard yet", "已安装——还没有听到事件")
         case .settingsHookConfigDir: return ("Pulse installs to ~/%@, which isn't there yet — a %@ set to another folder (%@) won't load it", "Pulse 装在 ~/%@，这个文件夹还不存在——若 %@ 用了别的文件夹（%@），就不会加载它")
         case .waitingBannerFailed: return ("macOS did not show the last “needs you” banner — check Notifications", "macOS 没有显示上一条「需要你」通知——请检查通知设置")
         case .lampRuleBlocked: return ("Red: an agent is waiting on you.", "红：有 Agent 在等你。")

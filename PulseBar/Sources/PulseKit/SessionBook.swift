@@ -360,9 +360,24 @@ package struct SessionBook: Equatable {
             Self.prompt(record.message, at: ms, into: &session)
             Self.answer(&session, at: ms, event: event)
         case .tool, .status:
+            // A `status` that names no tool — a retry, a recoverable error, a
+            // compaction — says work goes on: it keeps a live turn from
+            // reading stalled, and never starts one. After the turn ended
+            // (or before any was seen) it is heard and moves nothing.
+            if kind == .status, before != nil, record.tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               !Self.isLive(session.state) {
+                break
+            }
             session.activityMs = max(session.activityMs, ms)
             session.toolMs = max(session.toolMs, ms)
             Self.progress(record, at: ms, into: &session)
+            // A reply that names no tool (Cursor's `afterAgentResponse`):
+            // its words are the turn's last words so far — a turn line that
+            // carries none keeps them.
+            if kind == .tool, record.tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let words = TitleHeuristics.firstLine(record.message)
+                if !words.isEmpty { session.message = words }
+            }
             // Work goes on — unless it is older than the state it would
             // end, or a different tool than the one a block is about.
             if ms > session.stateSinceMs || before == nil {
@@ -470,6 +485,14 @@ package struct SessionBook: Equatable {
             if let owned, ms >= owned.sinceMs { answer(&session, at: ms, event: event) }
         case .start, .title, .dismiss, .ignored:
             break
+        }
+    }
+
+    /// A turn is going on: working, or blocked on the person.
+    private static func isLive(_ state: State) -> Bool {
+        switch state {
+        case .working, .blocked: return true
+        case .idle, .yourTurn, .ended: return false
         }
     }
 
