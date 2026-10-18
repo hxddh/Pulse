@@ -181,3 +181,27 @@ notarization that stapler validates makes it `stable`; an unnotarized build
 is never stable. Pulse makes no network connection: Settings' "Releases…"
 opens the releases page in the browser. It never downloads or replaces
 itself.
+
+## Proof — what runs the real path
+
+The unit tests pin each component; these layers run the parts together, the
+way an agent and a person reach them. None of them ships: the flags live in
+`PulseQA` (`ProofDriver`, `TrayAccessibilityCheck`; `package_check.py`
+fails an app binary that carries one).
+
+| Layer | Where | What it proves |
+| --- | --- | --- |
+| Recorded payloads | `PulseBar/Tests/Fixtures/hooks/<agent>/<event>[@variant].json`, `expected.json` | One payload per installed event at least (`catalog_check` fails an event without one), reconstructed from the contract's pinned source; fields no primary source confirms are `unverified` in `vendor-formats.json` |
+| In process | `RecordedPayloadTests` (`VendorFormatTests.swift`) | Every fixture through `PulseHookReceiver.run`, the way its hook hands it over (stdin, or the modules' last argument), becomes the line `expected.json` names — a state or the `ignored` line that says why, never an unreadable payload |
+| Modules under Node | `scripts/js_adapters_test.mjs` | The Pi extension and the OpenCode plugin (1.x and 2.x) run against a stub of their vendor's API with a stub launcher; recorded sequences (a turn with tools, an ask and its answer, a question, parallel asks, a subagent, shutdown) produce exactly these ordered `pulse-hook` calls. Linux renders the modules with `scripts/render_adapters.py`; macOS CI renders them with the compiled code (`PulseQA --write-adapters`) and fails when the two differ. A case marked `knownBug` states a defect's correct behaviour and reports XFAIL until it is fixed |
+| End to end | `scripts/e2e.sh`, after `package.sh` | In a throwaway home the real installer (`PulseQA --install-hooks`) writes every hook and points the launcher at the packaged app; fixtures go through the installed `pulse-hook` into `PulseBar --hook`; `PulseQA --dump-snapshot` replays that log as `ScanEngine` does (one projection per line, a `WaitLedger` beside it) and the script checks red + one banner, the answer (running, banner withdrawn), the end (no live row) — for Claude on stdin and Pi in argv — then every fixture's line |
+| The tray | `qa_captures.sh tray-a11y` (`--assert-tray`) | The real popover opens on a fixture, its window becomes key, and its accessibility tree has each row as a button with its "›" Details as a separate button |
+| The owner | `scripts/smoke.sh` | On a real Mac: quarantine, signature, the installed hooks (read-only), then a real Claude permission and a real Pi prompt, their answers and a click, each confirmed against the lines `events.tsv` gains; prints a report in Chinese |
+
+**Home.** Foundation's home directory on macOS honours `CFFIXED_USER_HOME`,
+not `HOME`. Pulse's own folder follows `PULSE_HOME` (`EventLog.directory`,
+read by the hook and the snapshot); the installer's home is
+`HooksInstaller.homeOverride`, which `--install-hooks=<home>` sets, as the
+tests do. `e2e.sh` sets all three (and `HOME`) to the throwaway home, so
+nothing lands in the real one; no app code reads an override it did not
+already read.

@@ -66,6 +66,15 @@
           "https://cursor.com/docs/hooks"
         ],
         "checked": "2026-10-17",
+        "unverified": [
+          "conversation_id on every event (the session key; forum reports, not the docs)",
+          "stop.status values completed / error / aborted",
+          "afterAgentResponse.text",
+          "afterShellExecution.duration (ms)",
+          "afterMCPExecution server name (server_name / server)",
+          "workspace_roots (the cwd)",
+          "sessionStart / sessionEnd session_id"
+        ],
         "note": "cursor.com was unreachable from the build environment (2026-09-29, 2026-10-17); event names and payload fields (conversation_id, workspace_roots, status, command, file_path, tool_name, text) were cross-checked against third-party typed bindings (pkg.go.dev/github.com/Checkmarx/ast-cx-hooks/cursor, github.com/speakeasy-api/gram server/design/hooks) and Cursor forum reports. Every before* event and beforeSubmitPrompt can deny or stop and is never installed. The session is conversation_id, read before session_id (forum reports: sessionStart carries both, the tool events only conversation_id). afterShellExecution (command; duration in ms when present), afterFileEdit (file_path, said relative to its workspace root) and afterMCPExecution (tool_name, and its server when the payload names one) are the steps — they also fire in the cursor-agent CLI, where afterAgentResponse does not; output, edits, tool_input and result_json are never read. afterAgentResponse's text is the turn's last words so far. stop status completed is your turn, error a failed turn (no error text is sent), aborted a stopped turn. model, cursor_version and user_email are never read. Re-read the docs on a machine that can reach them: the duration field and an MCP server field are not confirmed.",
         "events": [
           "sessionStart",

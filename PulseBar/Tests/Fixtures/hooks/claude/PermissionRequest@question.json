@@ -1,0 +1,25 @@
+{
+  "session_id": "fx-claude-1",
+  "transcript_path": "/Users/me/.claude/projects/-Users-me-code-app/fx-claude-1.jsonl",
+  "cwd": "/Users/me/code/app",
+  "hook_event_name": "PermissionRequest",
+  "permission_mode": "default",
+  "tool_name": "AskUserQuestion",
+  "tool_input": {
+    "questions": [
+      {
+        "question": "Which database should the cache use?",
+        "header": "Cache",
+        "options": [
+          {
+            "label": "Redis"
+          },
+          {
+            "label": "SQLite"
+          }
+        ],
+        "multiSelect": false
+      }
+    ]
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "sessionID": "ses_fx1",
+  "directory": "/Users/me/code/app",
+  "phase": "running",
+  "tool_name": "bash",
+  "target": "npm test"
+}

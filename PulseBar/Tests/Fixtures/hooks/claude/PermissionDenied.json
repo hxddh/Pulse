@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-claude-1",
+  "transcript_path": "/Users/me/.claude/projects/-Users-me-code-app/fx-claude-1.jsonl",
+  "cwd": "/Users/me/code/app",
+  "hook_event_name": "PermissionDenied",
+  "permission_mode": "auto",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git push --force"
+  },
+  "tool_use_id": "toolu_04",
+  "reason": "Force push is not allowed"
+}

@@ -1,0 +1,11 @@
+{
+  "session_id": "fx-codex-1",
+  "transcript_path": null,
+  "cwd": "/Users/me/code/app",
+  "model": "gpt-5-codex",
+  "hook_event_name": "Stop",
+  "turn_id": "turn-1",
+  "permission_mode": "default",
+  "stop_hook_active": false,
+  "last_assistant_message": "Added a retry with backoff."
+}

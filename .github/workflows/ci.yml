@@ -26,6 +26,13 @@ jobs:
       # call the same script, so the lists can no longer drift apart.
       - name: Source gates
         run: bash scripts/gates.sh
+      # The Pi extension and the OpenCode plugin under Node (the runner's
+      # own), against a stub of each vendor's API and a stub launcher:
+      # recorded event sequences in, the exact ordered pulse-hook calls out.
+      # Rendered from the Swift templates by scripts/render_adapters.py; the
+      # macOS job runs the same test on the compiled code's render.
+      - name: Hook modules under Node
+        run: node scripts/js_adapters_test.mjs
 
   build:
     name: Build & test (macOS)
@@ -50,6 +57,24 @@ jobs:
         run: swift test
         working-directory: PulseBar
 
+      # The compiled code renders the two modules (`PulseQA
+      # --write-adapters`): they must equal the Linux job's render, and
+      # pass the same Node test.
+      - name: Hook modules under Node (compiled render)
+        run: |
+          set -euo pipefail
+          QA="$(swift build --package-path PulseBar --show-bin-path)/PulseQA"
+          OUT="$RUNNER_TEMP/adapters"
+          "$QA" --write-adapters="$OUT/swift"
+          python3 scripts/render_adapters.py "$OUT/python"
+          diff -u "$OUT/python/pi.js" "$OUT/swift/pi.js"
+          diff -u "$OUT/python/opencode.js" "$OUT/swift/opencode.js"
+          if command -v node >/dev/null 2>&1; then
+            node scripts/js_adapters_test.mjs "$OUT/swift"
+          else
+            echo "::warning::no node on this runner; the Linux job ran the module test"
+          fi
+
       # The same hash-pinned dmgbuild release.yml uses, so every push builds
       # the laid-out DMG. Cosmetic: without it package.sh builds the plain one.
       - name: DMG layout tool (packaging only, never shipped)
@@ -70,6 +95,14 @@ jobs:
       - name: Package and verify the app bundle
         run: ./PulseBar/Scripts/package.sh
 
+      # The real path, which nothing else runs: the real installer writes
+      # every hook into a throwaway home, recorded payloads go through the
+      # installed launcher into the packaged app, and the replayed tray is
+      # checked — red with one banner, answered, ended (scripts/e2e.sh).
+      - name: End to end (installed hooks → packaged app → tray)
+        timeout-minutes: 10
+        run: ./scripts/e2e.sh
+
       # The QA driver, not the app: fixtures and captures live in `PulseQA`
       # and never ship (package_check.py fails an app binary that has them).
       # Every surface fixture in zh/en × light/dark, and the tray panel and
@@ -79,6 +112,13 @@ jobs:
       - name: QA captures
         id: captures
         run: ./scripts/qa_captures.sh
+
+      # The real tray popover's accessibility tree: every row a button, its
+      # "›" a separate one, the window key. New; it reports without failing
+      # the job until it has been green on the runner (then drop the flag).
+      - name: Tray accessibility
+        continue-on-error: true
+        run: ./scripts/qa_captures.sh tray-a11y
 
       - name: Upload QA captures
         uses: actions/upload-artifact@v7

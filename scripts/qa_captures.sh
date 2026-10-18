@@ -9,6 +9,10 @@
 #   ./scripts/qa_captures.sh status     # the tray and the menu-bar lamp
 #                                       # for each status-* fixture, zh·light
 #                                       # and en·dark
+#   ./scripts/qa_captures.sh tray-a11y  # open the real tray on a fixture and
+#                                       # check its accessibility tree: each
+#                                       # row a button, its "›" a separate
+#                                       # one, the window key (not in `all`)
 #
 # Writes under zig-out/qa-captures/{surfaces,status}/ — never into the repo.
 # Surface fixture names come from `SurfaceFixtures.names`; this script reads
@@ -22,8 +26,8 @@ set -euo pipefail
 
 MODE="${1:-all}"
 case "$MODE" in
-  all|surfaces|status) ;;
-  *) echo "usage: $0 [all|surfaces|status]" >&2; exit 2 ;;
+  all|surfaces|status|tray-a11y) ;;
+  *) echo "usage: $0 [all|surfaces|status|tray-a11y]" >&2; exit 2 ;;
 esac
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -183,6 +187,35 @@ status_captures() {
   done
   return $status
 }
+
+# --- tray accessibility -------------------------------------------------------
+
+tray_a11y() {
+  local timeout="${PULSE_QA_TIMEOUT_SECONDS:-20}" out="$OUT/tray-a11y.txt" status=0
+  mkdir -p "$OUT"
+  quit_pulse
+  "$APP" --tray-fixture=status-waiting --appearance=light -AppleLanguages "(en)" --assert-tray >"$out" 2>&1 &
+  local pid=$!
+  local deadline=$((SECONDS + timeout))
+  while kill -0 "$pid" 2>/dev/null && (( SECONDS < deadline )); do
+    sleep 0.25
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "error: --assert-tray did not finish in ${timeout}s" >&2
+    kill "$pid" 2>/dev/null || true
+    status=1
+  elif ! wait "$pid"; then
+    status=1
+  fi
+  cat "$out"
+  quit_pulse
+  return $status
+}
+
+if [[ "$MODE" == "tray-a11y" ]]; then
+  tray_a11y
+  exit $?
+fi
 
 result=0
 if [[ "$MODE" == "all" || "$MODE" == "surfaces" ]]; then

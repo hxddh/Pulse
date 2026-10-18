@@ -22,7 +22,14 @@ The checks are the ones that guard a real fact; prose checks went.
    six supported agents; each has a `HookContract` whose events are never
    a gating event, and its manifest entry names the source it was read from
    (repo + full commit, or docs URLs), the date, the same event list and a
-   test file that mentions the agent.
+   test file that mentions the agent; fields no primary source confirms are
+   listed as `unverified` (a non-empty list of strings, when present).
+5. Fixtures — every installed event has a recorded payload,
+   PulseBar/Tests/Fixtures/hooks/<agent>/<event>.json (variants
+   `<event>@<variant>.json`), every fixture names an installed event and is
+   a JSON object, and `expected.json` says what each one becomes — exactly
+   the fixture files. VendorFormatTests feeds them through the receiver;
+   scripts/e2e.sh through the packaged app.
 
 Run: python3 scripts/catalog_check.py
 """
@@ -40,6 +47,7 @@ AGENTS = SOURCES / "PulseKit" / "Agents"
 CATALOG = AGENTS / "Agents.swift"
 MANIFEST = ROOT / "docs" / "vendor-formats.json"
 TESTS = ROOT / "PulseBar" / "Tests" / "PulseBarTests"
+FIXTURES = ROOT / "PulseBar" / "Tests" / "Fixtures" / "hooks"
 # The owner's roster. Adding an agent is a product decision.
 ROSTER = ["claude", "codex", "cursor", "pi", "copilot", "opencode"]
 
@@ -105,6 +113,13 @@ def agents(text: str) -> list[Agent]:
         if path is None:
             raise SystemExit(f"catalog_check: Agents.all lists .{case}, which no adapter file declares")
         chunk = path.read_text(encoding="utf-8")
+        # The installed events, read from code only: a comment that names a
+        # HookEvent is not one.
+        code = re.sub(r"/\*.*?\*/", "", chunk, flags=re.S)
+        code = re.sub(r"//[^\n]*", "", code)
+        hook_events = re.findall(r'HookEvent\(\s*"([^"]+)"', code)
+        if len(hook_events) != len(set(hook_events)):
+            raise SystemExit(f"catalog_check: {path.name}: an event is installed twice")
 
         def field(name: str) -> str:
             m = re.search(rf"\n        {name}: ([^\n]*)", chunk)
@@ -119,7 +134,7 @@ def agents(text: str) -> list[Agent]:
             display=field("displayName").strip('"'),
             waiting=field("waiting").lstrip("."),
             hook_format=fmt.group(1) if fmt else "",
-            hook_events=re.findall(r'HookEvent\("([^"]+)"', chunk),
+            hook_events=hook_events,
             file=path.name,
         ))
     missing = sorted(set(files) - set(order))
@@ -309,6 +324,11 @@ def check_hooks(text: str, roster: list[Agent], problems: list[str]) -> None:
             problems.append(f"hooks — {agent.raw}: checked must be the YYYY-MM-DD the source was read")
         if sorted(hooks.get("events", [])) != sorted(agent.hook_events):
             problems.append(f"hooks — {agent.raw}: manifest events {hooks.get('events')} ≠ catalog {agent.hook_events}")
+        unverified = hooks.get("unverified")
+        if unverified is not None and (not isinstance(unverified, list) or not unverified
+                                       or not all(isinstance(f, str) and f.strip() for f in unverified)):
+            problems.append(f"hooks — {agent.raw}: unverified is a non-empty list of the fields no primary "
+                            "source confirms")
         tests = hooks.get("tests", [])
         if not tests:
             problems.append(f"hooks — {agent.raw}: name at least one test that exercises this contract")
@@ -321,6 +341,45 @@ def check_hooks(text: str, roster: list[Agent], problems: list[str]) -> None:
                 problems.append(f"hooks — {agent.raw}: {test} never mentions {agent.display}")
 
 
+# 5 · fixtures ------------------------------------------------------------------
+
+def check_fixtures(roster: list[Agent], problems: list[str]) -> None:
+    try:
+        expected = json.loads((FIXTURES / "expected.json").read_text(encoding="utf-8")).get("expected", {})
+    except (OSError, json.JSONDecodeError) as error:
+        problems.append(f"fixtures — {FIXTURES.relative_to(ROOT)}/expected.json unreadable: {error}")
+        expected = {}
+    seen: set[str] = set()
+    for agent in roster:
+        folder = FIXTURES / agent.raw
+        files = sorted(folder.glob("*.json")) if folder.is_dir() else []
+        names = {f.stem for f in files}
+        for event in agent.hook_events:
+            if event not in names:
+                problems.append(f"fixtures — {agent.raw}: installed event {event} has no recorded payload "
+                                f"({folder.relative_to(ROOT)}/{event}.json)")
+        for f in files:
+            event = f.stem.split("@", 1)[0]
+            key = f"{agent.raw}/{f.stem}"
+            seen.add(key)
+            if event not in agent.hook_events:
+                problems.append(f"fixtures — {key}: {event} is not an installed {agent.raw} event")
+            try:
+                if not isinstance(json.loads(f.read_text(encoding="utf-8")), dict):
+                    problems.append(f"fixtures — {key}: a payload is a JSON object")
+            except json.JSONDecodeError as error:
+                problems.append(f"fixtures — {key}: not JSON ({error})")
+            if key not in expected:
+                problems.append(f"fixtures — {key}: expected.json does not say what it becomes")
+    for key in sorted(set(expected) - seen):
+        problems.append(f"fixtures — expected.json names {key}, which has no fixture file")
+    kinds = {"permission", "question", "waiting", "turn", "failed", "idle", "done", "start", "working",
+             "stopped", "title", "end", "tool", "status"}
+    for key, value in expected.items():
+        if not (value in kinds or (isinstance(value, str) and value.startswith("ignored:") and value[8:].strip())):
+            problems.append(f"fixtures — {key}: expected {value!r} is not a line kind or ignored:<why>")
+
+
 def main() -> int:
     text = CATALOG.read_text(encoding="utf-8")
     roster = agents(text)
@@ -329,12 +388,13 @@ def main() -> int:
     check_processes(text, problems)
     check_privacy(problems)
     check_hooks(text, roster, problems)
+    check_fixtures(roster, problems)
     if problems:
         for problem in problems:
             print(f"::error::{problem}")
         return 1
     print(f"catalog OK — {len(roster)} agents, one adapter file and one hook contract each; "
-          "every hook contract has a source")
+          "every hook contract has a source and a recorded payload per event")
     return 0
 
 

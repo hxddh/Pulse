@@ -1,0 +1,9 @@
+{
+  "sessionId": "fx-copilot-1",
+  "timestamp": 1790000000000,
+  "cwd": "/Users/me/code/app",
+  "hook_event_name": "Notification",
+  "message": "Copilot wants to run: rm -rf dist",
+  "title": "Permission needed",
+  "notification_type": "permission_prompt"
+}
