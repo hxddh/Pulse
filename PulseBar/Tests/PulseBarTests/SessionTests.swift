@@ -1571,7 +1571,8 @@ struct SessionBookTests {
         ])
         #expect(!AgentID.opencode.stepsAnswerBlocks)
         let others = AgentID.allCases.filter { $0 != .opencode }
-        #expect(others.allSatisfy(\.stepsAnswerBlocks), "every other agent's step answers its own tool's ask")
+        let othersAnswer = others.allSatisfy { $0.stepsAnswerBlocks }
+        #expect(othersAnswer, "every other agent's step answers its own tool's ask")
     }
 
     /// Pi spawns one child per event; at shutdown children spawned
