@@ -1630,6 +1630,46 @@ struct TrayStateTests {
         return book
     }
 
+    /// From line to banner: a permission whose prompt was already in front
+    /// lights the lamp with no banner; one whose presence is unknown is
+    /// bannered as usual.
+    @Test func aBlockAlreadyInFrontLightsTheLampWithoutABanner() throws {
+        func bannered(front: Bool?) throws -> (inFront: Bool, red: Bool, banner: Bool) {
+            let b = book([AttentionRecord(agent: .claude, kind: .permission, ms: t0, message: "Bash: ls", session: "s1", front: front)])
+            let world = TrayState.project(book: b, processes: [], context: TrayState.Context(nowMs: t0 + 2_000, lang: .en))
+            let row = try #require(world.rows.first)
+            let plan = WaitingDelivery(
+                acknowledged: [], inFlight: [], canDeliverNow: true, msSinceLastNotification: 60_000, minimumIntervalMs: 0
+            ).plan(world.rows)
+            var banner = false
+            if case .post(let first, let later) = plan { banner = ([first] + later).contains { $0.key == row.key } }
+            return (row.wait?.inFront ?? false, world.snapshot.lamp == .waiting, banner)
+        }
+        let front = try bannered(front: true)
+        #expect(front.inFront && front.red && !front.banner)
+        let unknown = try bannered(front: nil)
+        #expect(!unknown.inFront && unknown.red && unknown.banner)
+    }
+
+    /// A finished turn is grey even while its CLI stays open — the green
+    /// ring is for a session that is working; and an `idle` from a session
+    /// met only now is a turn.
+    @Test func aFinishedTurnWithALiveProcessIsAGreyLamp() throws {
+        let b = book([
+            AttentionRecord(agent: .claude, kind: .turn, ms: t0, session: "s1", cwd: "/p", pid: 42),
+            AttentionRecord(agent: .claude, kind: .idle, ms: t0, session: "s2", cwd: "/p"),
+        ])
+        let world = TrayState.project(book: b, processes: [], context: TrayState.Context(nowMs: t0 + 2_000, lang: .en))
+        let turn = try #require(world.rows.first { $0.key == SessionKey(.claude, "s1") })
+        #expect(turn.isYourTurn)
+        #expect(turn.liveProcess)
+        let idle = world.rows.first { $0.key == SessionKey(.claude, "s2") }
+        #expect(idle?.isYourTurn == true)
+        #expect(world.snapshot.lamp == .idle)
+        #expect(world.snapshot.title == "")
+        #expect(world.snapshot.tooltip == L10n.t(.lampRuleTurn, .en))
+    }
+
     @Test func aProcessNoSessionClaimedIsAProcessOnlyRow() throws {
         let hit = AgentProcesses.Hit(agent: .claude, pid: 10, cwd: "/Users/me/app", tty: "ttys004", startedMs: t0 - minute)
         let row = try #require(rows(SessionBook(), processes: [hit]).first)

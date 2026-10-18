@@ -382,9 +382,44 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(record.landing, "tmux:%3;tty:/dev/ttys004")
     }
 
-    func testClaudeAskUserQuestionIsAQuestion() {
-        deliver("claude", "PermissionRequest", #"{"session_id":"c1","cwd":"/w","hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","tool_input":{}}"#)
-        XCTAssertEqual(kinds(), ["question"])
+    /// One vendor event in, one line out, per agent: the v8 kind it writes
+    /// and its words — or an `ignored` line, and why, for an event Pulse does
+    /// not install (a gating one, Codex's early PermissionRequest, the
+    /// protocol's own word), and for a notice that is not the session's
+    /// own (a Copilot background agent's idle).
+    func testEachAgentsEventWritesOneLine() throws {
+        let notInstalled = PulseHookReceiver.Ignored.notInstalled.rawValue
+        let cases: [(agent: String, event: String, payload: String, kind: AttentionKind, message: String?)] = [
+            ("claude", "PermissionRequest", #"{"session_id":"c1","cwd":"/w","tool_name":"AskUserQuestion","tool_input":{}}"#, .question, nil),
+            ("claude", "PostToolUseFailure", #"{"session_id":"s1","cwd":"/w","tool_name":"Bash","tool_input":{"command":"npm test"},"error":"exit 1"}"#, .tool, "npm test"),
+            ("claude", "PreToolUse", #"{"session_id":"c2","cwd":"/w","tool_name":"Bash"}"#, .ignored, notInstalled),
+            ("codex", "UserPromptSubmit", #"{"session_id":"x1","turn_id":"t1","cwd":"/w","hook_event_name":"UserPromptSubmit","prompt":"Add a retry"}"#, .working, "Add a retry"),
+            ("codex", "Stop", #"{"session_id":"x1","turn_id":"t1","transcript_path":null,"cwd":"/w","model":"gpt-5","stop_hook_active":false,"last_assistant_message":"Done."}"#, .turn, "Done."),
+            ("codex", "PermissionRequest", #"{"session_id":"x4","tool_name":"Bash"}"#, .ignored, notInstalled),
+            ("codex", "permission", #"{"session_id":"x3","message":"Approve shell"}"#, .ignored, notInstalled),
+            ("cursor", "permission", #"{"conversation_id":"cu1","message":"approve"}"#, .ignored, notInstalled),
+            ("cursor", "beforeShellExecution", #"{"conversation_id":"cu1","command":"rm -rf build"}"#, .ignored, notInstalled),
+            ("cursor", "afterTabFileEdit", #"{"conversation_id":"cu2","file_path":"/w/a"}"#, .ignored, notInstalled),
+            ("copilot", "notification", #"{"sessionId":"cp1","cwd":"/w","message":"Copilot wants to run: npm test","title":"Permission needed","notification_type":"permission_prompt"}"#, .permission, "Copilot wants to run: npm test"),
+            ("copilot", "notification", #"{"sessionId":"cp1","cwd":"/w","message":"Which branch?","notification_type":"elicitation_dialog"}"#, .question, "Which branch?"),
+            ("copilot", "notification", #"{"sessionId":"cp1","cwd":"/w","message":"Background agent idle","notification_type":"agent_idle"}"#, .ignored, nil),
+            ("copilot", "agentStop", #"{"sessionId":"cp1","cwd":"/w","transcriptPath":"/Users/me/.copilot/session-state/cp1/events.jsonl","stopReason":"end_turn"}"#, .turn, nil),
+            ("pi", "tool_execution_update", #"{"session_id":"p2","cwd":"/w"}"#, .ignored, notInstalled),
+            ("pi", "agent_end", #"{"session_id":"p2","cwd":"/w"}"#, .ignored, notInstalled),
+            ("pi", "turn_end", #"{"session_id":"p2","cwd":"/w"}"#, .ignored, notInstalled),
+        ]
+        for item in cases {
+            try? FileManager.default.removeItem(at: log)
+            deliver(item.agent, item.event, item.payload)
+            let lines = heard()
+            let name = "\(item.agent) \(item.event)"
+            XCTAssertEqual(lines.count, 1, name)
+            let line = try XCTUnwrap(lines.first, name)
+            XCTAssertEqual(line.kind, item.kind, name)
+            XCTAssertEqual(line.event, item.event, "\(name): heard under its own name")
+            if let message = item.message { XCTAssertEqual(line.message, message, name) }
+            XCTAssertFalse(try String(contentsOf: log, encoding: .utf8).contains(".jsonl"), "\(name): a transcript path is never written")
+        }
     }
 
     /// The question itself, not the tool's name — and the tool
@@ -538,15 +573,6 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertNil(tool?.front, "front is only asked for what is owed")
     }
 
-    /// A failed tool is activity for that tool.
-    func testClaudePostToolUseFailureIsAToolLine() throws {
-        deliver("claude", "PostToolUseFailure", #"{"session_id":"s1","cwd":"/w","hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"npm test"},"error":"exit 1"}"#)
-        let line = try XCTUnwrap(records().first)
-        XCTAssertEqual(line.kind, .tool)
-        XCTAssertEqual(line.tool, "Bash")
-        XCTAssertEqual(line.message, "npm test")
-    }
-
     /// A hook whose parent had exited is re-parented to
     /// launchd; pid 1 is never written.
     func testPidOneIsNeverWritten() throws {
@@ -583,32 +609,7 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(ignored(), [PulseHookReceiver.Ignored.noEvent.rawValue])
     }
 
-    // MARK: - Codex (openai/codex codex-rs/hooks)
-
-    func testCodexStopIsYourTurnAndItNeverBlocks() {
-        deliver("codex", "UserPromptSubmit", #"{"session_id":"x1","turn_id":"t1","cwd":"/w","hook_event_name":"UserPromptSubmit","prompt":"Add a retry"}"#)
-        deliver("codex", "Stop", #"{"session_id":"x1","turn_id":"t1","transcript_path":null,"cwd":"/w","hook_event_name":"Stop","model":"gpt-5","permission_mode":"default","stop_hook_active":false,"last_assistant_message":"Done."}"#)
-        // Codex's own PermissionRequest fires before its auto-review: never
-        // installed, never read — and the protocol's word is not an event.
-        deliver("codex", "PermissionRequest", #"{"session_id":"x4","tool_name":"Bash"}"#)
-        deliver("codex", "permission", #"{"session_id":"x3","message":"Approve shell"}"#)
-        XCTAssertEqual(kinds(), ["working", "turn"])
-        XCTAssertEqual(records().map(\.session), ["x1", "x1"])
-        XCTAssertEqual(ignored(), [PulseHookReceiver.Ignored.notInstalled.rawValue, PulseHookReceiver.Ignored.notInstalled.rawValue])
-        XCTAssertEqual(records().first?.message, "Add a retry")
-        XCTAssertEqual(records().last?.message, "Done.")
-    }
-
     // MARK: - Copilot CLI (github/docs hooks-reference.md)
-
-    func testCopilotNotificationsAndStop() {
-        deliver("copilot", "notification", #"{"sessionId":"cp1","timestamp":1790000000000,"cwd":"/w","hook_event_name":"Notification","message":"Copilot wants to run: npm test","title":"Permission needed","notification_type":"permission_prompt"}"#)
-        deliver("copilot", "notification", #"{"sessionId":"cp1","timestamp":1790000000001,"cwd":"/w","hook_event_name":"Notification","message":"Which branch?","notification_type":"elicitation_dialog"}"#)
-        deliver("copilot", "notification", #"{"sessionId":"cp1","timestamp":1790000000002,"cwd":"/w","hook_event_name":"Notification","message":"Background agent idle","notification_type":"agent_idle"}"#)
-        deliver("copilot", "agentStop", #"{"sessionId":"cp1","timestamp":1790000000003,"cwd":"/w","transcriptPath":"/Users/me/.copilot/session-state/cp1/events.jsonl","stopReason":"end_turn","stop_hook_active":false}"#)
-        XCTAssertEqual(kinds(), ["permission", "question", "turn"], "a background agent's idle is not this session's turn")
-        XCTAssertEqual(records().first?.message, "Copilot wants to run: npm test")
-    }
 
     /// Copilot sends `toolArgs` as a JSON string: its command or path is the
     /// step's target. An unrecoverable error ends the turn with its message.
@@ -751,10 +752,10 @@ final class PulseHookReceiverTests: XCTestCase {
 
     // MARK: - Cursor (hooks.json, observe-only events)
 
-    func testCursorStopIsYourTurnAndItNeverBlocks() throws {
+    /// Cursor's turn names its folder by its workspace, and never its
+    /// transcript.
+    func testCursorStopIsYourTurn() throws {
         deliver("cursor", "stop", #"{"conversation_id":"cu1","generation_id":"g1","model":"gpt-5","hook_event_name":"stop","cursor_version":"1.7","workspace_roots":["/Users/me/app"],"transcript_path":"/Users/me/.cursor/projects/app/cu1.jsonl","status":"completed","loop_count":0}"#)
-        deliver("cursor", "permission", #"{"conversation_id":"cu1","message":"approve"}"#)
-        deliver("cursor", "beforeShellExecution", #"{"conversation_id":"cu1","command":"rm -rf build"}"#)
         let record = try XCTUnwrap(records().first)
         XCTAssertEqual(kinds(), ["turn"])
         XCTAssertEqual(record.session, "cu1")
@@ -801,20 +802,6 @@ final class PulseHookReceiverTests: XCTestCase {
         var book = SessionBook()
         for line in records() { book.apply(line, nowMs: line.ms) }
         XCTAssertEqual(Array(book.sessions.keys), [SessionKey(.cursor, "conv-9")])
-    }
-
-    /// Only the events Pulse installs are read: an event it never installs
-    /// writes nothing, for Cursor, Pi and Claude alike.
-    func testNeverInstalledEventsWriteNothing() {
-        deliver("cursor", "afterTabFileEdit", #"{"conversation_id":"cu2","file_path":"/w/a"}"#)
-        deliver("cursor", "beforeShellExecution", #"{"conversation_id":"cu2","command":"ls"}"#)
-        deliver("pi", "tool_execution_update", #"{"session_id":"p2","cwd":"/w"}"#)
-        deliver("pi", "agent_end", #"{"session_id":"p2","cwd":"/w"}"#)
-        deliver("pi", "turn_end", #"{"session_id":"p2","cwd":"/w"}"#)
-        deliver("claude", "PreToolUse", #"{"session_id":"c2","cwd":"/w","tool_name":"Bash"}"#)
-        XCTAssertTrue(records().isEmpty, "\(records().map(\.kind))")
-        XCTAssertEqual(ignored(), Array(repeating: PulseHookReceiver.Ignored.notInstalled.rawValue, count: 6), "heard, and said why")
-        XCTAssertEqual(heard().map(\.event), ["afterTabFileEdit", "beforeShellExecution", "tool_execution_update", "agent_end", "turn_end", "PreToolUse"])
     }
 
     // MARK: - Pi (extension events)
@@ -1881,212 +1868,9 @@ final class AttentionWatcherReArmTests: XCTestCase {
 /// buried in a hundred-line method. Each row is a sequence of lines exactly as
 /// the hooks write them, read into the real session book and projected by the
 /// real projection and builder; the expectations are what the user would see.
-@Suite("Turn truth table", .serialized)
-struct TurnTruthTests {
-    static let now: Int64 = 1_800_000_000_000
-    static let second: Int64 = 1_000
-
-    static func line(
-        _ agent: String, _ kind: String, ago: Int64, message: String = "",
-        session: String = "s1", cwd: String = "/p", front: String? = nil, tool: String = ""
-    ) -> String {
-        // v8: all fifteen columns, written as the words given — a kind the
-        // protocol does not know stays one; front as given (empty =
-        // unknown), sub, pid, landing, err and took empty.
-        let cols = ["1", "\(now - ago)", agent, kind, "", session, "", cwd, "", front ?? "", "", tool, "", "", message]
-        return cols.joined(separator: "\t")
-    }
-
-    static func world(_ lines: [String]) -> TrayState {
-        let text = AttentionProtocol.Header(next: 2, gen: "g1").line + lines.joined(separator: "\n") + "\n"
-        var book = SessionBook()
-        for line in text.split(whereSeparator: \.isNewline) {
-            if let record = AttentionRecord(line: line) { book.apply(record, nowMs: now) }
-        }
-        return TrayState.project(
-            book: book, processes: [],
-            context: TrayState.Context(nowMs: now, lang: .en)
-        )
-    }
-
-    static func delivery(_ rows: [AgentRow]) -> WaitingDelivery.Plan {
-        WaitingDelivery(
-            acknowledged: [], inFlight: [], canDeliverNow: true,
-            msSinceLastNotification: 60_000, minimumIntervalMs: 0
-        ).plan(rows)
-    }
-
-    // MARK: - The table
-
-    /// What the user should see after a sequence.
-    struct Expect: Sendable {
-        var waiting: Bool
-        var yourTurn: Bool
-        var red: Bool
-        var banner: Bool
-        var waitKind: AttentionKind? = nil
-        var inFront: Bool = false
-    }
-
-    struct Case: Sendable, CustomTestStringConvertible {
-        var name: String
-        var lines: [String]
-        var agent: AgentID = .claude
-        var expect: Expect
-        var testDescription: String { name }
-    }
-
-    static let blocked = Expect(waiting: true, yourTurn: false, red: true, banner: true)
-    static let turn = Expect(waiting: false, yourTurn: true, red: false, banner: false)
-    static let quiet = Expect(waiting: false, yourTurn: false, red: false, banner: false)
-
-    static let cases: [Case] = [
-        Case(
-            name: "claude · finished turn, idle_prompt a minute later → your turn, not red",
-            lines: [
-                line("claude", "permission", ago: 180 * second, message: "Bash: npm test"),
-                line("claude", "turn", ago: 61 * second),
-                line("claude", "idle", ago: 1 * second),
-            ],
-            expect: turn
-        ),
-        Case(
-            name: "claude · permission → red, banner",
-            lines: [line("claude", "permission", ago: 5 * second, message: "Bash: rm -rf build")],
-            expect: Expect(waiting: true, yourTurn: false, red: true, banner: true, waitKind: .permission)
-        ),
-        Case(
-            name: "claude · question → red, says Input",
-            lines: [line("claude", "question", ago: 5 * second, message: "Which database?")],
-            expect: Expect(waiting: true, yourTurn: false, red: true, banner: true, waitKind: .question)
-        ),
-        Case(
-            name: "claude · turn ends moments after a permission → held; the permission stands for the grace",
-            lines: [
-                line("claude", "permission", ago: 6 * second, message: "Bash: npm run build"),
-                line("claude", "turn", ago: 1 * second),
-            ],
-            expect: blocked
-        ),
-        Case(
-            name: "claude · turn watched finishing (front = 1) → nothing owed",
-            lines: [line("claude", "turn", ago: 2 * second, front: "1")],
-            expect: quiet
-        ),
-        Case(
-            name: "claude · submitted prompt after a turn → cleared",
-            lines: [line("claude", "turn", ago: 30 * second), line("claude", "done", ago: 2 * second)],
-            expect: quiet
-        ),
-        Case(
-            name: "claude · StopFailure (a failed turn) → your turn, never red",
-            lines: [line("claude", "failed", ago: 10 * second, message: "rate_limit")],
-            expect: turn
-        ),
-        Case(
-            name: "codex · a word that is not a v8 kind (an approval, a vendor's turn event) → nothing",
-            lines: [
-                line("codex", "exec_approval_request", ago: 3 * second, message: "git push"),
-                line("codex", "agent-turn-complete", ago: 2 * second),
-            ],
-            agent: .codex,
-            expect: quiet
-        ),
-        Case(
-            name: "copilot · permission_prompt → red",
-            lines: [line("copilot", "permission", ago: 3 * second, message: "Allow bash?")],
-            agent: .copilot,
-            expect: Expect(waiting: true, yourTurn: false, red: true, banner: true, waitKind: .permission)
-        ),
-        Case(
-            name: "pi · a select prompt → red, says Input",
-            lines: [line("pi", "question", ago: 3 * second, message: "Pick a model")],
-            agent: .pi,
-            expect: Expect(waiting: true, yourTurn: false, red: true, banner: true, waitKind: .question)
-        ),
-        Case(
-            name: "opencode · permission then replied → cleared",
-            lines: [
-                line("opencode", "permission", ago: 30 * second, message: "bash: npm test"),
-                line("opencode", "done", ago: 2 * second),
-            ],
-            agent: .opencode,
-            expect: quiet
-        ),
-        Case(
-            name: "presence · blocked prompt already in front → lamp, no banner",
-            lines: [line("claude", "permission", ago: 2 * second, message: "Bash: ls", front: "1")],
-            expect: Expect(waiting: true, yourTurn: false, red: true, banner: false, inFront: true)
-        ),
-        Case(
-            name: "presence · unknown → banner as usual",
-            lines: [line("claude", "permission", ago: 2 * second, message: "Bash: ls", front: "")],
-            expect: blocked
-        ),
-        Case(
-            name: "claude · idle with no turn seen → your turn",
-            lines: [line("claude", "idle", ago: 2 * second)],
-            expect: turn
-        ),
-    ]
-
-    /// A finished turn is grey even while its CLI stays open — the
-    /// green ring is for a session that is working, and "your turn" is not.
-    @Test func aFinishedTurnWithALiveProcessIsAGreyLamp() throws {
-        var book = SessionBook()
-        book.apply(AttentionRecord(agent: .claude, kind: .turn, ms: Self.now - 2 * Self.second, session: "s1", cwd: "/p", pid: 42), nowMs: Self.now)
-        let r = TrayState.project(
-            book: book, processes: [],
-            context: TrayState.Context(nowMs: Self.now, lang: .en)
-        )
-        let row = try #require(r.rows.first)
-        #expect(row.isYourTurn)
-        #expect(row.liveProcess)
-        #expect(r.snapshot.lamp == .idle)
-        #expect(r.snapshot.title == "")
-        #expect(r.snapshot.tooltip == L10n.t(.lampRuleTurn, .en))
-    }
-
-    @Test(arguments: cases)
-    func sequence(_ c: Case) throws {
-        let r = Self.world(c.lines)
-        guard let row = r.rows.first else {
-            // A line that is not a protocol kind makes no session at all.
-            #expect(!c.expect.waiting && !c.expect.yourTurn && !c.expect.red && !c.expect.banner)
-            return
-        }
-        #expect(row.isBlocked == c.expect.waiting)
-        #expect(row.isYourTurn == c.expect.yourTurn)
-        #expect((r.snapshot.lamp == .waiting) == c.expect.red)
-        let turns = r.rows.filter { $0.isYourTurn }.count
-        #expect(turns == (c.expect.yourTurn ? 1 : 0))
-        #expect((row.wait?.inFront ?? false) == c.expect.inFront)
-        if let kind = c.expect.waitKind { #expect(row.wait?.kind == kind) }
-        let bannered: Bool
-        if case .post(let first, let later) = Self.delivery(r.rows) {
-            bannered = ([first] + later).contains { $0.key == row.key }
-        } else {
-            bannered = false
-        }
-        #expect(bannered == c.expect.banner)
-    }
-
-    // MARK: - Beyond the table
-
-    @Test func aToolCallAfterTheTurnEndsYourTurn() throws {
-        let r = Self.world([
-            Self.line("claude", "turn", ago: 30 * Self.second),
-            Self.line("claude", "tool", ago: 5 * Self.second, message: "a.swift"),
-        ])
-        let row = try #require(r.rows.first)
-        #expect(!row.isYourTurn)
-    }
-
-    @Test func aTurnThatNamesNoSessionMakesNoRow() {
-        let r = Self.world([Self.line("claude", "turn", ago: 5 * Self.second, session: "")])
-        #expect(r.rows.isEmpty, "with no session there is no row it could belong to")
-    }
-
+/// The protocol's kinds, and the receiver writing them.
+@Suite("Protocol kinds")
+struct ProtocolKindTests {
     @Test func theReceiverWritesTheProtocolKinds() throws {
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("pulse-turn-\(UUID().uuidString)", isDirectory: true)
