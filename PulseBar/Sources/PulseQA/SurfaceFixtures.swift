@@ -31,10 +31,10 @@ enum SurfaceFixtures {
     }
 
     static let names = [
-        "row-blocked", "row-blocked-front", "row-running", "row-running-selected",
+        "row-blocked", "row-running", "row-running-selected",
         "row-stalled", "row-your-turn", "row-process-only",
         "row-running-step", "row-stalled-step",
-        "row-live-tool", "row-failed-step", "row-failed-turn", "row-stopped", "row-process-unconnected",
+        "row-live-tool", "row-failed-step", "row-failed-turn", "row-stopped",
         "header", "notice-setup", "notice-setup-done", "notice-setup-failed", "row-app-only",
         "detail-blocked", "detail-your-turn", "detail-timeline", "detail-stalled", "detail-app-only",
         "detail-subagent", "detail-failed-turn",
@@ -44,7 +44,6 @@ enum SurfaceFixtures {
     static func all(lang: ResolvedLanguage) -> [Fixture] {
         [
             Fixture(name: "row-blocked", width: 448, value: .row(rowModel(rowPermission(), lang: lang))),
-            Fixture(name: "row-blocked-front", width: 448, value: .row(rowModel(rowQuestionFront(), lang: lang))),
             Fixture(name: "row-running", width: 448, value: .row(rowModel(rowRunning(), lang: lang))),
             // The common row, selected (the pointer entered it): the one
             // highlight, and its "›" column — always there, clearer now —
@@ -68,8 +67,6 @@ enum SurfaceFixtures {
             Fixture(name: "row-failed-turn", width: 448, value: .row(rowModel(rowFailedTurn(), lang: lang))),
             // The person stopped the run at the agent's prompt.
             Fixture(name: "row-stopped", width: 448, value: .row(rowModel(rowStopped(), lang: lang))),
-            // A process of an agent Pulse is not connected to.
-            Fixture(name: "row-process-unconnected", width: 448, value: .row(rowModel(rowProcessOnly(), lang: lang, connected: false))),
             Fixture(name: "header", width: 448, value: .header(header(lang: lang))),
             Fixture(name: "notice-setup", width: 432, value: .notice(noticeSetup(lang: lang))),
             Fixture(name: "notice-setup-done", width: 432, value: .notice(noticeSetupDone(lang: lang))),
