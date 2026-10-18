@@ -100,7 +100,7 @@ struct VendorDriftTests {
         #expect(flavor.async)
         #expect(flavor.timeoutCaps["Interrupt"] == 3)
         #expect(flavor.synchronous["Interrupt"] == nil, "Interrupt honours async")
-        #expect(flavor.trustBound)
+        #expect(flavor.installNote?.contains("/hooks") == true, "trust is the install report's note")
         #expect(PulseHookReceiver.interpret(agent: .codex, event: "Interrupt", payload: [:])?.action == .stopped)
     }
 

@@ -99,7 +99,7 @@ enum SurfaceFixtures {
             // every state: installed, needs update (events, launcher),
             // failed, not installed — and the agent not on this Mac.
             Fixture(name: "settings", width: 500, value: .settings(settings(lang: lang))),
-            // Whole installs that may not run: turned off, untrusted,
+            // Whole installs that may not run: turned off,
             // nothing heard yet, a config folder that is missing — under
             // each agent's capability line.
             Fixture(name: "settings-caveats", width: 500, value: .settings(settingsCaveats(lang: lang))),
@@ -476,14 +476,13 @@ enum SurfaceFixtures {
     }
 
     /// Whole installs that may not run, each with its capability line:
-    /// Claude's hooks turned off in its settings, Codex changed since it
-    /// last ran them (untrusted), Copilot nothing heard yet, Pi's config
-    /// folder missing; Cursor whole and heard.
+    /// Claude's hooks turned off in its settings, Copilot nothing heard
+    /// yet, Pi's config folder missing; Codex and Cursor whole and heard.
     static func settingsCaveats(lang: ResolvedLanguage) -> SettingsModel {
         let present: Set<AgentID> = [.claude, .codex, .cursor, .copilot, .pi]
         let caveats = [
             Connection(agent: .claude, install: .complete, lastHeard: Connection.Heard(event: event(.claude, .turn), ms: nowMs - 26 * 60 * minute), caveat: .turnedOff),
-            Connection(agent: .codex, install: .complete, caveat: .untrusted),
+            Connection(agent: .codex, install: .complete, lastHeard: Connection.Heard(event: event(.codex, .turn), ms: nowMs - 12 * minute)),
             Connection(
                 agent: .cursor, install: .complete,
                 lastHeard: Connection.Heard(event: event(.cursor, .turn), ms: nowMs - 5 * minute),

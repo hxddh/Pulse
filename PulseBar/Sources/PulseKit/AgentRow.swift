@@ -191,8 +191,9 @@ package struct AgentRow: Identifiable, Hashable {
         /// question.
         case needsYou(Block)
         /// It took a prompt or reported work, and nothing since says
-        /// otherwise; `stalled` when an agent that reports every tool call
-        /// has said nothing for `AgentRow.stalledSeconds`.
+        /// otherwise; `stalled` when an agent that reports each tool's
+        /// start and end (`AgentID.silenceCanStall`) has said nothing, with
+        /// no tool running, for `AgentRow.stalledSeconds`.
         case running(stalled: Bool)
         /// It finished its turn and nobody has looked since. Never red.
         case yourTurn(sinceMs: Int64)
@@ -303,7 +304,8 @@ package struct AgentRow: Identifiable, Hashable {
     // MARK: - Stall
 
     /// The stall rule: twenty minutes with no event from a working session
-    /// whose agent reports its work (one that has sent an activity event).
+    /// whose agent reports each tool's start and end (one that has sent an
+    /// activity event, with no tool running).
     /// Not a setting; `TrayState.Context` carries it so a test can move it.
     package static let stalledSeconds: Double = 20 * 60
 

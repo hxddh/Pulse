@@ -59,12 +59,14 @@ granted. The first line is the header:
   whole; whatever the budget, each session keeps what a replay rebuilds its
   own facts from — its first line that is not a block (its first clock), the
   prompt its title came from (the first main-agent `working` line that says
-  something), its latest main-agent prompt (the turn's clock) and the line
-  its vendor name came from (the latest `title`, or a `start` that carries
-  a name); and an **open block** (a `permission` / `question` / `waiting`
-  no later line in its session answers — a `status` line answers nothing,
-  and a subagent's line answers only that subagent's block) is kept with
-  every line after it. An answered block is never kept without its answer. Over half a MiB
+  something), its latest main-agent prompt (the turn's clock), its latest
+  main-agent prompt that says something (the latest prompt's text) and the
+  line its vendor name came from (the latest `title`, or a `start` that
+  carries a name); and an **open block** (a `permission` / `question` /
+  `waiting` no later line in its session answers, by the reader's rules: a
+  `status` line answers nothing, a subagent's line only that subagent's
+  block, a main-agent step only the main agent's, a line stamped before the
+  block nothing) is kept with every line after it. An answered block is never kept without its answer. Over half a MiB
   the per-session count and the window halve until it fits. The line being
   appended is always kept: an append reports success only when its line is
   in the file. `ignored` lines are bounded like any other.
@@ -144,8 +146,11 @@ main agent wrote it (a subagent's line clears only its own block). A `tool` or `
 working session from reading stalled — a `status` line that names no tool
 only that: in a session that is not working or blocked it moves nothing;
 a `tool` line answers a block raised
-before it in the same session — unless both name a tool and the names
-differ (a parallel tool is not the answer). A `status` line never answers.
+before it in the same session by the same speaker (a main-agent step never
+answers a subagent's block) — unless both name a tool and the names
+differ (a parallel tool is not the answer). A `status` line never answers;
+for an agent whose own module sends every ask's reply
+(`AgentSpec.stepsAnswerBlocks` false: OpenCode) no step answers.
 
 The receiver writes one line for every event of one of the six agents it
 hears (exit 0 every time; an agent that is not one of the six, or another
@@ -176,7 +181,11 @@ as spelled in the table — no alias, no vendor word, no guess from free text.
   turn clock); its `start`, `title`, `stopped` and `end` move nothing. A
   block it raises is the session's block (the work cannot go on), and only
   that subagent's own `tool` (same tool, as below), `done` or end of turn
-  answers it. Inside a live turn its activity is work (it keeps the session
+  answers it — or the main agent's prompt, `done`, `stopped` or `end`;
+  never a main-agent `tool`. A main-agent raise of the same kind within
+  **20 s** (Claude's main UI `Notification` after the subagent's
+  `PermissionRequest`, which names no subagent) is that block said again:
+  it stays the subagent's. Inside a live turn its activity is work (it keeps the session
   from reading stalled) and its steps go on the timeline marked as its own.
 - `done`, `dismiss`, `working`, `end` clear that session (`session` empty →
   only the agent's session-less entry in the folder it names, or every
@@ -188,9 +197,13 @@ as spelled in the table — no alias, no vendor word, no guess from free text.
   carries its own. A `status` line that names no tool (a retry, a recoverable
   error, a compaction) keeps a working or blocked session going and starts
   nothing: in an idle, finished or ended session (one already known) it is
-  heard and moves nothing. A `status` line that names a tool says that tool runs now: while it
-  runs a silence is not a stall, and the `tool` line of the same tool from
-  the same speaker (or the turn's end) finishes it.
+  heard and moves nothing. A `status` line that names a tool says that tool runs now, beside
+  any other already running (at most eight): while one runs a silence is
+  not a stall, and each is finished by the `tool` line of the same tool
+  (the same target first) from the same speaker, or by the turn's end. A
+  silence is a stall only for an agent whose contract reports a tool's
+  start as well as its end (`HookContract.silenceCanStall`); any other
+  agent's row states facts only.
 - A `stopped` line puts the session at its prompt with nothing owed —
   from working, from a block (no grace: the person was at the prompt) or
   from your turn; one stamped before the block or turn it would end is
@@ -224,6 +237,13 @@ as spelled in the table — no alias, no vendor word, no guess from free text.
   turn with `front` = `1` only clears — the user watched it finish.
 - A `done` or `dismiss` stamped before the current block or turn began is
   about an earlier one and changes nothing.
+- A block raised while no turn was live (at the prompt, or your turn — a
+  background subagent's ask after the turn ended) remembers that state:
+  answered by its subagent's own line, a `done` or a `dismiss`, the session
+  goes back to it, on its own clock — never into a turn nobody started.
+- After an `end`, a `turn`, `failed`, `working` or tool-start `status`
+  line stamped no later than the end (lines numbered out of order) revives
+  nothing.
 - A block a `dismiss` cleared is not raised again by its echo: a raise of
   the same kind within **20 s** of the cleared block's raise, with no prompt
   or tool line since the `dismiss`, whose words say nothing new (the same

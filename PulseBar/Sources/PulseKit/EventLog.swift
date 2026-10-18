@@ -339,29 +339,38 @@ package enum EventLog {
             var open: Int?
             var openTool = ""
             var openSub = ""
+            var openMs: Int64 = 0
             for position in positions {
                 let record = records[position]
-                let sub = record.sub.trimmingCharacters(in: .whitespacesAndNewlines)
-                // A subagent's line answers only its own block (as
-                // `SessionBook` does): its tool, its `done`, its end; a
-                // main-agent line answers the main agent's and a subagent's
-                // alike.
+                let sub = String(record.sub.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+                // As `SessionBook` does: a subagent's line answers only its
+                // own block (its step, its `done`, its end); a main-agent
+                // step answers only the main agent's block, while a prompt,
+                // a `done`, a stop or an end answers either. A line stamped
+                // before the block is about an earlier one; an agent whose
+                // module sends every reply is answered by no step
+                // (`AgentSpec.stepsAnswerBlocks`).
                 let own = !sub.isEmpty && sub == openSub
+                let after = record.ms >= openMs
                 switch record.kind {
                 case .permission, .question, .waiting:
                     if open == nil {
                         open = position
                         openTool = record.tool.isEmpty ? AttentionProtocol.blockedTool(record.message) : record.tool
                         openSub = sub
+                        openMs = record.ms
                     }
                 case .working, .start:
                     if sub.isEmpty { open = nil }
-                case .done, .end, .stopped:
-                    if sub.isEmpty || own { open = nil }
+                case .done, .stopped:
+                    if sub.isEmpty || own, after { open = nil }
+                case .end:
+                    if sub.isEmpty || (own && after) { open = nil }
                 case .dismiss:
-                    open = nil
+                    if sub.isEmpty, after { open = nil }
                 case .tool:
-                    if sub.isEmpty || own, openTool.isEmpty || record.tool.isEmpty
+                    if sub == openSub, record.ms > openMs, record.agent.stepsAnswerBlocks,
+                       openTool.isEmpty || record.tool.isEmpty
                         || record.tool.caseInsensitiveCompare(openTool) == .orderedSame {
                         open = nil
                     }
@@ -369,7 +378,7 @@ package enum EventLog {
                     // A turn inside a block's grace is held, not an answer:
                     // keep the block (keeping too much is only bytes). A
                     // subagent's end of turn ends its own ask.
-                    if own { open = nil }
+                    if own, after { open = nil }
                 case .status, .title, .ignored:
                     // Work going on is never an answer.
                     break
@@ -382,8 +391,9 @@ package enum EventLog {
         // budget: its first line that is not a block (its first clock), the
         // prompt its title came from — the first main-agent `working` line
         // whose text says something (`SessionBook`'s rule) — its latest
-        // prompt (the current turn's clock) and the line its vendor name
-        // came from (the latest `title`, or `start` that carries a name).
+        // prompt (the current turn's clock), its latest prompt with words
+        // (the latest prompt's text) and the line its vendor name came from
+        // (the latest `title`, or `start` that carries a name).
         // None of them raises anything: a block is kept only by the rules
         // above, with what answers it.
         func person(_ record: AttentionRecord) -> Bool {
@@ -404,6 +414,14 @@ package enum EventLog {
             }
             if let latest = positions.last(where: { records[$0].kind == .working && person(records[$0]) }) {
                 kept.insert(latest)
+            }
+            // The latest prompt that says something — the latest prompt's
+            // text, when the latest prompt line carries none (a run's start).
+            if let said = positions.last(where: { position in
+                records[position].kind == .working && person(records[position])
+                    && !TitleHeuristics.promptTitle(records[position].message).isEmpty
+            }) {
+                kept.insert(said)
             }
             if let named = positions.last(where: { position in
                 let record = records[position]
@@ -445,6 +463,15 @@ package enum EventLog {
             keep = select(perSession: perSession, windowMs: windowMs)
         }
         return keep.sorted().map { records[$0] }
+    }
+
+    /// Whether `records` — one whole read of a log — are every line the log
+    /// was ever given: numbered 1, 2, 3… with none missing. A compaction
+    /// drops lines, and a read cut to an oversized file's tail starts past
+    /// the first; a log with no line has dropped none. Pure.
+    package static func keepsEveryLine(_ records: [AttentionRecord]) -> Bool {
+        for (index, record) in records.enumerated() where record.seq != Int64(index) + 1 { return false }
+        return true
     }
 
     /// Whether a record can introduce a session in `SessionBook` without

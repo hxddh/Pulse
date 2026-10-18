@@ -116,8 +116,11 @@ package enum Pi {
     ///   order Pi emitted them — so the extension spawns a child only after
     ///   the one before it exited (or `GUARD_MS` passed): a prompt's end is
     ///   never written before its start. The queue is bounded (`QUEUE_MAX`;
-    ///   a block, its answer, the turn's end and the shutdown are dropped
-    ///   last) and flushed at once on `session_shutdown`.
+    ///   a block, its answer and the turn's end are dropped last). On
+    ///   `session_shutdown` whatever is still queued is dropped and the
+    ///   shutdown is sent at once: children spawned together take the lock
+    ///   in any order, and a step numbered after the session's end would
+    ///   revive it.
     /// - **Steps.** `tool_execution_start` is sent (what runs now) and its
     ///   one short argument kept by `toolCallId` for the end, which carries
     ///   none: the command for a shell, the path for a file tool, the
@@ -151,9 +154,8 @@ package enum Pi {
         // exited, or GUARD_MS passed.
         const GUARD_MS = 1500
         const QUEUE_MAX = 64
-        // Dropped from a full queue last: a block, its answer, the turn's end
-        // and the shutdown.
-        const KEEP = new Set(["ui_prompt_start", "ui_prompt_end", "agent_settled", "session_shutdown"])
+        // Dropped from a full queue last: a block, its answer, the turn's end.
+        const KEEP = new Set(["ui_prompt_start", "ui_prompt_end", "agent_settled"])
         const QUEUE = []
         let busy = false
 
@@ -206,14 +208,14 @@ package enum Pi {
           } catch {}
         }
 
-        // Pi is going away: whatever is still queued goes now, in order,
-        // without waiting on the children before it.
-        function flush() {
+        // Pi is going away: whatever is still queued is dropped — children
+        // spawned together take the log's lock in any order, and a line
+        // numbered after the session's end would revive it — and the
+        // shutdown goes now, without waiting on the child before it.
+        function shutdown(event, payload) {
           try {
-            while (QUEUE.length > 0) {
-              const next = QUEUE.shift()
-              spawnHook(next[0], next[1])
-            }
+            QUEUE.length = 0
+            spawnHook(event, payload)
           } catch {}
         }
 
@@ -356,8 +358,8 @@ package enum Pi {
                 }
                 // A reason is a shutdown's why; on a prompt it is not the ask.
                 if (name === "session_shutdown" && event && typeof event.reason === "string") payload.reason = event.reason
-                send(name, payload)
-                if (name === "session_shutdown") flush()
+                if (name === "session_shutdown") shutdown(name, payload)
+                else send(name, payload)
               } catch {}
             })
           }

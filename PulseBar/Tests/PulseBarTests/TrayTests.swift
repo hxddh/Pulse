@@ -1425,10 +1425,10 @@ struct RowWordsTests {
         #expect(!sentence.contains("\n"))
     }
 
-    /// The tooltip names who has waited longest — agent, project, how
-    /// long — then how many more wait and how many run; other rules keep
-    /// their sentence.
-    @Test func theTooltipNamesTheLongestWait() {
+    /// The tooltip is the lamp's rule (`lampSentence`), red included: it
+    /// names no session — the tray does. VoiceOver says the same for a
+    /// coloured lamp.
+    @Test func theTooltipIsTheLampsRule() {
         var old = blocked()
         old.status = .needsYou(Block(kind: .permission, ask: "Bash: ls", sinceMs: now - 8 * minute))
         var young = session(.copilot)
@@ -1437,26 +1437,15 @@ struct RowWordsTests {
         young.status = .needsYou(Block(kind: .question, sinceMs: now - 2 * minute))
         var running = session(.codex)
         running.key = "codex|c"
-        var running2 = session(.pi)
-        running2.key = "pi|d"
-        let rows = [young, old, running, running2]
-        let counts = TrayState.Counts(rows: rows)
-        let en = TrayState.tooltip(.blocked, rows: rows, counts: counts, nowMs: now, lang: .en)
-        #expect(en == "Red: Claude needs you — pulse · 8m. 1 more waiting. 2 running.")
-        let zh = TrayState.tooltip(.blocked, rows: rows, counts: counts, nowMs: now, lang: .zh)
-        #expect(zh == "红：Claude 在等你——pulse · " + L10n.duration(8 * 60, .zh) + "。另有 1 个在等你。2 个运行中。")
-        let alone = TrayState.tooltip(.blocked, rows: [old], counts: TrayState.Counts(rows: [old]), nowMs: now, lang: .en)
-        #expect(alone == "Red: Claude needs you — pulse · 8m.")
-        var fresh = old
-        fresh.cwd = ""
-        fresh.status = .needsYou(Block(kind: .permission, sinceMs: now - 10_000))
-        let bare = TrayState.tooltip(.blocked, rows: [fresh], counts: TrayState.Counts(rows: [fresh]), nowMs: now, lang: .en)
-        #expect(bare == "Red: Claude needs you.", "no place, no time under a minute")
-        let snapshot = TrayState.assemble(rows: rows, context: .init(nowMs: now, lang: .en)).snapshot
-        #expect(snapshot.tooltip == en)
-        #expect(snapshot.accessibilityLabel == en)
-        let green = TrayState.tooltip(.running, rows: [running], counts: TrayState.Counts(rows: [running]), nowMs: now, lang: .en)
-        #expect(green == L10n.t(.lampRuleRunning, .en))
+        let rows = [young, old, running]
+        for lang in [ResolvedLanguage.en, .zh] {
+            let snapshot = TrayState.assemble(rows: rows, context: .init(nowMs: now, lang: lang)).snapshot
+            #expect(snapshot.tooltip == TrayState.lampSentence(.blocked, lang: lang))
+            #expect(snapshot.accessibilityLabel == snapshot.tooltip)
+            #expect(!snapshot.tooltip.contains("Claude") && !snapshot.tooltip.contains("pulse"), "no agent, no project")
+        }
+        let green = TrayState.assemble(rows: [running], context: .init(nowMs: now, lang: .en)).snapshot
+        #expect(green.tooltip == L10n.t(.lampRuleRunning, .en))
     }
 
     /// VoiceOver says a grey lamp's state in a word — your turn, process

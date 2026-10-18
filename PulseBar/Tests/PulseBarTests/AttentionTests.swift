@@ -933,7 +933,10 @@ final class PulseHookReceiverTests: XCTestCase {
 
     /// The extension sends one event at a time, in the order Pi emitted
     /// them: the next child is spawned when the one before it exited (or
-    /// after a 1.5 s guard), the queue is bounded, and a shutdown flushes it.
+    /// after a 1.5 s guard), the queue is bounded, and a shutdown drops what
+    /// is still queued and goes at once — children spawned together take
+    /// the log's lock in any order, and a step numbered after the end would
+    /// revive the session.
     /// A subagent (`--mode json`) or a print run sends nothing; no
     /// transcript path is sent; its own pid rides along.
     func testThePiExtensionSendsInOrderAndOnlyWhenInteractive() {
@@ -944,7 +947,9 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertTrue(module.contains(#"child.on("error", finish)"#))
         XCTAssertTrue(module.contains("timer = setTimeout(finish, GUARD_MS)"))
         XCTAssertTrue(module.contains("let drop = QUEUE.findIndex((item) => !KEEP.has(item[0]))"))
-        XCTAssertTrue(module.contains(#"if (name === "session_shutdown") flush()"#))
+        XCTAssertTrue(module.contains(#"if (name === "session_shutdown") shutdown(name, payload)"#))
+        XCTAssertTrue(module.contains("QUEUE.length = 0"), "nothing queued is sent after the shutdown")
+        XCTAssertFalse(module.contains("flush()"), "the queue is never flushed beside the shutdown")
         XCTAssertTrue(module.contains(#"return !!ctx && (ctx.mode === "json" || ctx.mode === "print")"#))
         XCTAssertTrue(module.contains("if (quiet(ctx)) return"))
         XCTAssertTrue(module.contains("pid: process.pid"))
@@ -1490,7 +1495,8 @@ final class HooksInstallerTests: XCTestCase {
     /// child session (its `parentID`, from any session event) is not the
     /// person's: its lifecycle is dropped, its asks land on the root. Each
     /// root keeps its open asks by id and every answer says how many are
-    /// left.
+    /// left; the root's run ending (1.x idle or abort, 2.x the execution's
+    /// end) closes every ask it still holds.
     func testTheOpenCodePluginServesBothLinesAndFoldsSubagents() {
         let plugin = OpenCode.plugin(
             launcher: "/x/pulse-hook", events: AgentID.opencode.spec.hooks.events.map(\.name)
@@ -1508,7 +1514,9 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertTrue(plugin.contains("const payload = { sessionID: own ? rootOf(own) : \"\""), "an ask lands on its root session")
         XCTAssertTrue(plugin.contains("pending: closed(rootOf(own), p.requestID)"))
         XCTAssertTrue(plugin.contains("pending: closed(rootOf(own), d.requestID)"))
-        XCTAssertTrue(plugin.contains("if (name === \"MessageAbortedError\" && own) mark(ABORTED, own, 256)"))
+        XCTAssertTrue(plugin.contains("if (name === \"MessageAbortedError\" && own) {\n      mark(ABORTED, own, 256)\n      OPEN.delete(own)"))
+        XCTAssertTrue(plugin.contains("STATUS.delete(own)\n    // The run is over: no ask of it is still open.\n    OPEN.delete(own)"), "1.x: the root's idle")
+        XCTAssertTrue(plugin.contains(#"if (type === "session.execution.succeeded" || type === "session.execution.failed" || type === "session.execution.interrupted") {"#), "2.x: the run's end")
         XCTAssertTrue(plugin.contains("if (ABORTED.has(own)) {"), "the idle after an abort is not a turn")
         XCTAssertTrue(plugin.contains("if (map.size > max) map.delete(map.keys().next().value)"), "every map is bounded")
         XCTAssertTrue(plugin.contains("if (base && where && where !== base) continue"), "2.x: another folder's events are not this one's")
@@ -2378,6 +2386,78 @@ struct EventLogTests {
         let blocked = HookFeed.word(tight.sessions[SessionKey(.claude, "c")]?.state)
         #expect(blocked == "blocked:permission", "another subagent's tools do not answer it")
         #expect(HookFeed.word(replay(lines).sessions[SessionKey(.claude, "c")]?.state) == "blocked:permission")
+    }
+
+    /// A compaction keeps an open block exactly where the book does: a
+    /// main-agent `done`, stop or dismissal stamped before the block is
+    /// about an earlier one; a main-agent step never answers a subagent's
+    /// block; and an OpenCode step answers no ask (its replies do). A
+    /// replay of what it kept is as red as a replay of everything.
+    @Test func compactionAnswersABlockOnlyAsTheBookDoes() {
+        let now = t0
+        let base = now - 5 * Self.hour
+        var lines = [
+            record(.working, base, session: "early", message: "Ship it"),
+            record(.permission, base + 10_000, session: "early", message: "Bash: npm publish", tool: "Bash"),
+            record(.done, base + 9_000, session: "early"),
+            record(.stopped, base + 9_500, session: "early"),
+            record(.dismiss, base + 9_000, session: "early"),
+            record(.working, base, session: "sub", message: "Audit"),
+        ]
+        var raised = record(.permission, base + 10_000, session: "sub", message: "Bash: rm -rf build", tool: "Bash")
+        raised.sub = "a1"
+        lines.append(raised)
+        lines += [
+            record(.working, base, session: "oc", message: "Run both suites", agent: .opencode),
+            record(.permission, base + 10_000, session: "oc", message: "bash: npm test", tool: "bash", agent: .opencode),
+            record(.ignored, base + 11_000, session: "oc", message: "not used", agent: .opencode),
+        ]
+        for index in 0..<300 {
+            let ms = base + 20_000 + Int64(index)
+            lines.append(record(.tool, ms, session: "early", tool: "Read"))
+            lines.append(record(.tool, ms, session: "sub", tool: "Bash"))
+            lines.append(record(.tool, ms, session: "oc", tool: "bash", agent: .opencode))
+        }
+        lines = numbered(lines)
+        func replay(_ records: [AttentionRecord]) -> SessionBook {
+            var book = SessionBook()
+            for record in records { book.apply(record, nowMs: now) }
+            return book
+        }
+        let full = replay(lines)
+        let tight = replay(EventLog.compact(lines, nowMs: now, budget: 1_000))
+        for key in [SessionKey(.claude, "early"), SessionKey(.claude, "sub"), SessionKey(.opencode, "oc")] {
+            #expect(HookFeed.word(full.sessions[key]?.state) == "blocked:permission", "\(key)")
+            #expect(HookFeed.word(tight.sessions[key]?.state) == "blocked:permission", "\(key)")
+        }
+    }
+
+    /// After a compaction the latest prompt's words survive even when the
+    /// latest prompt line carries none (a run's start): the row says the
+    /// same latest prompt, on the same turn clock.
+    @Test func compactionKeepsTheLatestPromptThatSaysSomething() {
+        let now = t0
+        let base = now - 5 * Self.hour
+        var lines = [
+            record(.start, base, session: "t", agent: .pi),
+            record(.working, base + 1_000, session: "t", message: "Fix the login redirect", agent: .pi),
+        ]
+        for index in 0..<300 { lines.append(record(.tool, base + 10_000 + Int64(index), session: "t", tool: "read", agent: .pi)) }
+        lines.append(record(.working, base + 20_000, session: "t", message: "Now the logout", agent: .pi))
+        lines.append(record(.working, base + 21_000, session: "t", agent: .pi))
+        for index in 0..<300 { lines.append(record(.tool, base + 30_000 + Int64(index), session: "t", tool: "edit", agent: .pi)) }
+        lines = numbered(lines)
+        func replay(_ records: [AttentionRecord]) -> SessionBook.Session? {
+            var book = SessionBook()
+            for record in records { book.apply(record, nowMs: now) }
+            return book.sessions[SessionKey(.pi, "t")]
+        }
+        let before = replay(lines)
+        let after = replay(EventLog.compact(lines, nowMs: now, budget: 1_000))
+        #expect(before?.lastPrompt == "Now the logout")
+        #expect(after?.lastPrompt == before?.lastPrompt)
+        #expect(after?.turnStartMs == before?.turnStartMs)
+        #expect(after?.title == "Fix the login redirect")
     }
 
     /// The record being appended is always in the file after its own

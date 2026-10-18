@@ -158,7 +158,6 @@ package enum L10n {
         case settingsHookConfigDir
         case settingsHookTurnedOff
         case settingsHookManagedOnly
-        case settingsHookUntrusted
         case settingsHookNeverHeard
         case waitingBannerFailed
         case lampRuleBlocked
@@ -255,10 +254,6 @@ package enum L10n {
         case turnStepsN
         case turnStepsFailed
         case detailNoWaits
-        case lampTipBlocked
-        case lampTipBlockedBare
-        case lampTipMoreWaiting
-        case lampTipRunning
         case capWaits
         case capTurns
         case capSteps
@@ -356,7 +351,6 @@ extension L10n.Key {
         case .ignoredOther: return ("unknown reason", "原因不明")
         case .settingsHookTurnedOff: return ("Installed — but hooks are turned off in %@'s settings (disableAllHooks)", "已安装——但 %@ 的设置关掉了所有 hooks（disableAllHooks）")
         case .settingsHookManagedOnly: return ("Installed — but a managed policy keeps %@ from running it", "已安装——但管理策略不让 %@ 运行它")
-        case .settingsHookUntrusted: return ("Installed — %@ hasn't run it since it changed: trust it in %@ (/hooks)", "已安装——改动后 %@ 还没运行过它：请在 %@ 里信任它（/hooks）")
         case .settingsHookNeverHeard: return ("Installed — nothing heard yet", "已安装——还没有听到事件")
         case .settingsHookConfigDir: return ("Pulse installs to ~/%@, which isn't there yet — a %@ set to another folder (%@) won't load it", "Pulse 装在 ~/%@，这个文件夹还不存在——若 %@ 用了别的文件夹（%@），就不会加载它")
         case .waitingBannerFailed: return ("macOS did not show the last “needs you” banner — check Notifications", "macOS 没有显示上一条「需要你」通知——请检查通知设置")
@@ -454,10 +448,6 @@ extension L10n.Key {
         case .turnStepsN: return ("%d steps", "%d 步")
         case .turnStepsFailed: return ("%@ (%d failed)", "%@（%d 步失败）")
         case .detailNoWaits: return ("This agent doesn't report waits", "这个 Agent 不报告等待")
-        case .lampTipBlocked: return ("Red: %@ needs you — %@.", "红：%@ 在等你——%@。")
-        case .lampTipBlockedBare: return ("Red: %@ needs you.", "红：%@ 在等你。")
-        case .lampTipMoreWaiting: return ("%d more waiting.", "另有 %d 个在等你。")
-        case .lampTipRunning: return ("%d running.", "%d 个运行中。")
         case .capWaits: return ("waits", "等待")
         case .capTurns: return ("turns", "回合")
         case .capSteps: return ("steps", "步骤")

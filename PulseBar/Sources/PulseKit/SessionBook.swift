@@ -19,9 +19,9 @@ import Foundation
 ///
 /// - **steps**: the last `maxSteps` tool lines that named their tool (the
 ///   tool, its target, when, whether it failed, how long it ran, which
-///   subagent ran it), the tool a `status` line says is running now, and
-///   the clock of the prompt that started the current turn — the row's
-///   quiet "last step" and its turn's duration;
+///   subagent ran it), the tools `status` lines say are running now (each
+///   until its own step), and the clock of the prompt that started the
+///   current turn — the row's quiet "last step" and its turn's duration;
 /// - **title**: the vendor's own name for the session when it has one (a
 ///   `title` line, or a `start` that carries it), else the first prompt
 ///   that says something (not "continue"); and the latest prompt;
@@ -51,7 +51,11 @@ import Foundation
 ///   parallel tool finishing is not the person saying yes, and a `status`
 ///   line (a retry, a recoverable error) is no answer at all. Every line is
 ///   applied, so a parallel tool written after the answer no longer
-///   hides it.
+///   hides it. An agent whose module sends every reply
+///   (`AgentSpec.stepsAnswerBlocks` false) is answered by the reply alone.
+/// - **A block raised while no turn was live** (a background subagent's
+///   ask after the turn ended) is answered back to where the session was —
+///   your turn, or at its prompt — never into a turn nobody started.
 /// - **`done`** (the vendor's "resolved") and **`dismiss`** (Pulse's own)
 ///   clear the session they name; an empty session clears only the agent's
 ///   session-less session in the folder it names (every session-less one of
@@ -66,7 +70,14 @@ import Foundation
 ///   revives a turn that has ended (your turn and idle stay), and its prompt
 ///   is not the person's prompt (no title, no latest prompt, no turn clock);
 ///   its steps go on the timeline marked as its own. Only its own block is
-///   answered by its activity, its `done` or its end of turn.
+///   answered by its activity, its `done` or its end of turn — and its
+///   block is answered by no other speaker's step: only by its own lines,
+///   a prompt, a `done`, a stop or the session's end. The main UI's notice
+///   of its ask, right after it (Claude's `Notification`, which names no
+///   subagent), is the same ask said again: it stays the subagent's.
+/// - **An end is final for what came before it**: a turn, a prompt or a
+///   step stamped no later than the session's end (lines numbered out of
+///   order) revives nothing.
 /// - **`stopped`**: the person stopped the run at the agent's prompt — the
 ///   session is at its prompt with nothing owed, and no last words.
 /// - **Every line says where it came from**: the session keeps the vendor
@@ -98,6 +109,15 @@ package struct SessionBook: Equatable {
         package var front: Bool
         /// The vendor event of the held turn — the why's when it lands.
         package var event = ""
+    }
+
+    /// The state a block interrupted when no turn was live, with its clock,
+    /// its vendor event and whether the person had stopped the run.
+    package struct Interrupted: Equatable, Sendable {
+        package var state: State
+        package var sinceMs: Int64
+        package var event: String
+        package var stopped: Bool
     }
 
     /// The block a dismissal in Pulse (a `dismiss` line) cleared last, and
@@ -308,12 +328,22 @@ package struct SessionBook: Equatable {
         /// The person stopped the run (`stopped`) and nothing has moved the
         /// session since.
         package var stopped = false
-        /// The tool a `status` line said started and no `tool` line has
-        /// finished yet — what runs now. While it is set a silence is not a
-        /// stall (a 25-minute build says nothing until it ends).
-        package var running: Step?
+        /// The tools `status` lines said started and no `tool` line has
+        /// finished yet — what runs now, oldest first, at most `maxRunning`.
+        /// Each goes with its own step, so a short parallel tool ending
+        /// leaves the long build running; the turn's end clears them all.
+        /// While any is there a silence is not a stall (a 25-minute build
+        /// says nothing until it ends).
+        package var runningSteps: [Step] = []
+        /// The newest tool still running — what the row says runs now
+        /// (`SessionFacts.running`).
+        package var running: Step? { runningSteps.last }
         /// A turn waiting out the grace of the current block.
         package var heldTurn: HeldTurn?
+        /// Where the session was when the current block was raised while no
+        /// turn was live (your turn, at its prompt): answered, it goes back
+        /// there. Nil for a block raised during a turn.
+        package var interrupted: Interrupted?
         /// The block the last dismissal in Pulse cleared: the same block
         /// said again right after (Claude's `Notification` about six seconds
         /// after its `PermissionRequest`) with no work since is not raised
@@ -349,6 +379,8 @@ package struct SessionBook: Equatable {
     package static let maxSessions = 256
     /// Tool steps kept per session.
     package static let maxSteps = 5
+    /// Running tools kept per session.
+    package static let maxRunning = 8
     /// A step's target is at most this many characters.
     package static let stepTargetLimit = 120
     /// Heard lines kept per session — the detail page's timeline.
@@ -426,7 +458,9 @@ package struct SessionBook: Equatable {
         case .working:
             session.activityMs = max(session.activityMs, ms)
             Self.prompt(record.message, at: ms, into: &session)
-            Self.answer(&session, at: ms, event: event)
+            // A prompt stamped no later than the session's end is from
+            // before it: it revives nothing.
+            if !Self.endedBefore(session, ms) { Self.answer(&session, at: ms, event: event) }
         case .tool, .status:
             // A `status` that names no tool — a retry, a recoverable error, a
             // compaction — says work goes on: it keeps a live turn from
@@ -436,6 +470,9 @@ package struct SessionBook: Equatable {
                !Self.isLive(session.state) {
                 break
             }
+            // A tool said to start no later than the session's end runs
+            // nothing now.
+            if kind == .status, Self.endedBefore(session, ms) { break }
             session.activityMs = max(session.activityMs, ms)
             session.toolMs = max(session.toolMs, ms)
             Self.progress(record, at: ms, into: &session)
@@ -468,13 +505,16 @@ package struct SessionBook: Equatable {
                 }
             }
         case .permission, .question, .waiting:
-            Self.raise(kind, record: record, at: ms, in: &session)
+            Self.raise(kind, record: record, at: ms, new: before == nil, in: &session)
         case .stopped:
             Self.stop(&session, at: ms, event: event)
         case .title:
             // The vendor's name for the session; an empty one clears it.
             session.name = TitleHeuristics.firstLine(record.message)
         case .turn, .failed:
+            // A turn stamped no later than the session's end is from before
+            // it (the lines were numbered out of order): heard, no state.
+            if Self.endedBefore(session, ms) { break }
             let message = TitleHeuristics.firstLine(record.message)
             if !message.isEmpty {
                 if kind == .failed { session.lastError = message } else { session.message = message }
@@ -527,7 +567,7 @@ package struct SessionBook: Equatable {
     private static func applySubagent(_ record: AttentionRecord, sub: String, at ms: Int64, new: Bool, into session: inout Session) {
         let event = record.event
         var owned: Block?
-        if case .blocked(let block) = session.state, block.sub == sub { owned = block }
+        if case .blocked(let block) = session.state, block.sub == String(sub.prefix(80)) { owned = block }
         let live: Bool
         switch session.state {
         case .working, .blocked: live = true
@@ -535,7 +575,7 @@ package struct SessionBook: Equatable {
         }
         switch record.kind {
         case .permission, .question, .waiting:
-            raise(record.kind, record: record, at: ms, in: &session)
+            raise(record.kind, record: record, at: ms, new: new, in: &session)
         case .tool, .status:
             // Work inside a live turn — never a turn of its own after the
             // person's has ended. A session met only now is working.
@@ -547,17 +587,17 @@ package struct SessionBook: Equatable {
             if new, !live {
                 set(&session, .working, at: ms, event: event)
             } else if let owned, answers(record, owned) {
-                answer(&session, at: ms, event: event)
+                answer(&session, at: ms, event: event, restoring: true)
             }
         case .working:
             // Its own task, not the person's prompt.
             if live { session.activityMs = max(session.activityMs, ms) }
         case .done:
-            if let owned, ms >= owned.sinceMs { answer(&session, at: ms, event: event) }
+            if let owned, ms >= owned.sinceMs { answer(&session, at: ms, event: event, restoring: true) }
         case .turn, .failed, .idle, .stopped, .end:
             // The subagent is done: its own ask is over; the session's turn
-            // goes on.
-            if let owned, ms >= owned.sinceMs { answer(&session, at: ms, event: event) }
+            // goes on — or, raised after it ended, stays over.
+            if let owned, ms >= owned.sinceMs { answer(&session, at: ms, event: event, restoring: true) }
         case .start, .title, .dismiss, .ignored:
             break
         }
@@ -569,6 +609,12 @@ package struct SessionBook: Equatable {
         case .working, .blocked: return true
         case .idle, .yourTurn, .ended: return false
         }
+    }
+
+    /// The session has ended, and a line stamped `ms` is from no later than
+    /// its end.
+    private static func endedBefore(_ session: Session, _ ms: Int64) -> Bool {
+        session.isEnded && ms <= session.stateSinceMs
     }
 
     /// The person stopped the run (`stopped`): at its prompt, nothing owed,
@@ -710,26 +756,41 @@ package struct SessionBook: Equatable {
         session.failedTurn = false
         session.turnSteps = 0
         session.turnFailedSteps = 0
-        session.running = nil
+        session.runningSteps = []
         let text = TitleHeuristics.promptTitle(raw)
         guard !text.isEmpty else { return }
         session.lastPrompt = text
         if session.title.isEmpty, TitleHeuristics.isMeaningful(text) { session.title = text }
     }
 
-    /// A `tool` line that names its tool is a step, and finishes the tool
-    /// its speaker said was running (the same tool, or either unnamed); a
-    /// `status` line that names a tool says it runs now. Lines are applied
-    /// in order, so the last `maxSteps` steps are the newest.
+    /// A `tool` line that names its tool is a step, and finishes one tool
+    /// its speaker said was running — the same tool on the same target,
+    /// else the oldest of the same tool; one that names no tool finishes
+    /// every tool its speaker said was running. A `status` line that names
+    /// a tool says it runs now, beside any other (parallel tools). Lines
+    /// are applied in order, so the last `maxSteps` steps are the newest.
     private static func progress(_ record: AttentionRecord, at ms: Int64, into session: inout Session) {
         let step = stepOf(record)
         if record.kind == .status {
-            if let step { session.running = step }
+            if let step {
+                session.runningSteps.append(step)
+                if session.runningSteps.count > maxRunning {
+                    session.runningSteps.removeFirst(session.runningSteps.count - maxRunning)
+                }
+            }
             return
         }
-        if let running = session.running, running.sub == record.sub.trimmingCharacters(in: .whitespacesAndNewlines),
-           step == nil || running.tool.caseInsensitiveCompare(step?.tool ?? "") == .orderedSame {
-            session.running = nil
+        let speaker = String(record.sub.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+        if let step {
+            let same = session.runningSteps.indices.filter { index in
+                session.runningSteps[index].sub == speaker
+                    && session.runningSteps[index].tool.caseInsensitiveCompare(step.tool) == .orderedSame
+            }
+            if let index = same.first(where: { session.runningSteps[$0].target == step.target }) ?? same.first {
+                session.runningSteps.remove(at: index)
+            }
+        } else {
+            session.runningSteps.removeAll { $0.sub == speaker }
         }
         guard let step else { return }
         session.turnSteps += 1
@@ -763,8 +824,13 @@ package struct SessionBook: Equatable {
     /// in Pulse cleared it (a `dismiss` between the two) is not raised
     /// again: same kind, inside the grace of the first raise, no work since
     /// the clear, and words that say nothing new (the same ask, or only a
-    /// generic "needs your permission").
-    private static func raise(_ kind: AttentionKind, record: AttentionRecord, at ms: Int64, in session: inout Session) {
+    /// generic "needs your permission"). A re-raise that names no subagent
+    /// right after a subagent's ask of the same kind (Claude's main UI
+    /// `Notification` after the subagent's `PermissionRequest`) is that ask
+    /// said again: it stays the subagent's, on its clock. A block raised
+    /// while no turn was live remembers where the session was
+    /// (`Session.interrupted`).
+    private static func raise(_ kind: AttentionKind, record: AttentionRecord, at ms: Int64, new: Bool, in session: inout Session) {
         var block = Block(
             kind: kind,
             ask: ContentSanitizer.redact(record.message),
@@ -784,9 +850,24 @@ package struct SessionBook: Equatable {
         // The event that raised the block: a re-raise of the same block
         // keeps the first one's, as it keeps its clock.
         var cause = record.event
+        // Where a block raised outside a turn interrupted the session; a
+        // block raised over a block keeps the first one's. A session met
+        // only now, by its block, interrupted nothing Pulse saw.
+        var interrupted: Interrupted?
+        switch session.state {
+        case .blocked:
+            interrupted = session.interrupted
+        case .idle, .yourTurn:
+            if !new {
+                interrupted = Interrupted(state: session.state, sinceMs: session.stateSinceMs, event: session.stateEvent, stopped: session.stopped)
+            }
+        case .working, .ended:
+            interrupted = nil
+        }
         if case .blocked(let open) = session.state {
-            if open.kind == kind, open.sub == block.sub, abs(ms - open.sinceMs) < Self.stopGraceMs {
+            if open.kind == kind, open.sub == block.sub || block.sub.isEmpty, abs(ms - open.sinceMs) < Self.stopGraceMs {
                 cause = session.stateEvent
+                block.sub = open.sub
                 if askSpecificity(block.ask, tool: block.tool) <= askSpecificity(open.ask, tool: open.tool) {
                     block.ask = open.ask
                     if !open.tool.isEmpty { block.tool = open.tool }
@@ -805,6 +886,7 @@ package struct SessionBook: Equatable {
         }
         Self.set(&session, .blocked(block), at: block.sinceMs, event: cause)
         session.heldTurn = held
+        session.interrupted = interrupted
     }
 
     /// The tool a raise names, when its words are the receiver's tool
@@ -841,9 +923,10 @@ package struct SessionBook: Equatable {
         case .working: break
         case .idle, .yourTurn, .ended:
             // The turn is over: nothing runs now.
-            session.running = nil
+            session.runningSteps = []
         }
         session.heldTurn = nil
+        session.interrupted = nil
     }
 
     /// A turn event: held while a block is inside its grace, else the turn
@@ -871,11 +954,24 @@ package struct SessionBook: Equatable {
     }
 
     /// Work goes on (a prompt, a tool, a `done` for a block). A turn held
-    /// for the block that ended no earlier than this still ends it.
-    private static func answer(_ session: inout Session, at ms: Int64, event: String) {
+    /// for the block that ended no earlier than this still ends it. A
+    /// subagent's own answer (`restoring`) to a block raised while no turn
+    /// was live puts the session back where it was: its work is not a turn.
+    private static func answer(_ session: inout Session, at ms: Int64, event: String, restoring: Bool = false) {
         let held = session.heldTurn
+        if restoring, held == nil, let back = session.interrupted {
+            restore(&session, back)
+            return
+        }
         Self.set(&session, .working, at: ms, event: event)
         if let held, held.ms >= ms { endTurn(&session, held: held) }
+    }
+
+    /// A block raised while no turn was live is over: the session is back
+    /// in the state it interrupted, on that state's own clock and event.
+    private static func restore(_ session: inout Session, _ back: Interrupted) {
+        set(&session, back.state, at: back.sinceMs, event: back.event)
+        session.stopped = back.stopped
     }
 
     /// Apply a held turn once `nowMs` is past its block's grace. Returns
@@ -922,6 +1018,9 @@ package struct SessionBook: Equatable {
                 : nil
             if let held = session.heldTurn {
                 endTurn(&session, held: held)
+            } else if let back = session.interrupted {
+                // Raised while no turn was live: back where it was.
+                restore(&session, back)
             } else {
                 Self.set(&session, .working, at: ms, event: event)
             }
@@ -949,12 +1048,16 @@ package struct SessionBook: Equatable {
         return true
     }
 
-    /// Whether an activity line answers a block: a `tool` line does unless
-    /// both name a tool and the names differ (a parallel tool finishing is
-    /// not the answer); a `status` line never does (work going on — a retry,
-    /// a recoverable error — is not the person answering).
+    /// Whether an activity line answers a block: a `tool` line of the
+    /// block's own speaker (the main agent's for the main agent's block, the
+    /// subagent's for its own) does unless both name a tool and the names
+    /// differ (a parallel tool finishing is not the answer); a `status`
+    /// line never does (work going on — a retry, a recoverable error — is
+    /// not the person answering), and no step does for an agent whose
+    /// module sends every reply (`AgentSpec.stepsAnswerBlocks`).
     package static func answers(_ record: AttentionRecord, _ block: Block) -> Bool {
-        guard record.kind == .tool else { return false }
+        guard record.kind == .tool, record.agent.stepsAnswerBlocks else { return false }
+        guard String(record.sub.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80)) == block.sub else { return false }
         let tool = record.tool.trimmingCharacters(in: .whitespacesAndNewlines)
         if tool.isEmpty || block.tool.isEmpty { return true }
         return tool.caseInsensitiveCompare(block.tool) == .orderedSame

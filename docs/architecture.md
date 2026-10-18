@@ -89,7 +89,9 @@ Pulse's command against the adapter's contract (complete or partial), and
 the launcher paths they name against this Pulse's launcher, which must run,
 as must the app `hook-runner.path` names (else stale) — the last install's
 failure, which wins, and the newest line and `ignored` line per agent, kept
-by `ScanEngine` as it applies the log. `inspect` runs at launch, when
+by `ScanEngine` as it applies the log — with whether the log still held
+every line it was given when it was replayed (`ScanEngine.logWhole`): only
+then can "nothing heard yet" be said. `inspect` runs at launch, when
 Settings opens and after an install; never on the scan path. Install all
 fixes a partial or stale install.
 

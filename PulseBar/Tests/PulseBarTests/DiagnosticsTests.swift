@@ -373,16 +373,15 @@ struct ConnectionTests {
     }
 
     /// The caveats capture: every line says what its agent reports, then
-    /// its state — turned off, untrusted, nothing heard yet, a missing
-    /// config folder — in calm tones: only a silenced or untrusted install
-    /// is a warning.
+    /// its state — turned off, nothing heard yet, a missing config folder —
+    /// in calm tones: only a silenced install is a warning.
     @Test func theCaveatsFixtureSaysEachCaveatUnderItsCapability() {
         let model = SurfaceFixtures.settingsCaveats(lang: .en)
         let said = model.hookAgents.allSatisfy { $0.capability.hasPrefix("Reports ") }
         #expect(said)
         let tones = Dictionary(uniqueKeysWithValues: model.hookAgents.map { ($0.agent, $0.tone) })
         #expect(tones[.claude] == .warning)
-        #expect(tones[.codex] == .warning)
+        #expect(tones[.codex] == .ok)
         #expect(tones[.copilot] == .ok, "nothing heard yet is not a fault")
         #expect(tones[.cursor] == .ok)
         let pi = model.hookAgents.first { $0.agent == .pi }
@@ -460,31 +459,60 @@ struct ConnectionTests {
         #expect(AgentID.codex.spec.hooks.offSwitches.isEmpty, "config.toml is never read")
     }
 
-    /// Codex runs a hook only once trusted, bound to its text: a whole
-    /// install that a Codex started since the file changed has not spoken
-    /// through waits to be trusted. Anything heard since, no Codex since, or
-    /// an agent that is not trust-bound: nothing to say.
-    @Test func anUntrustedCodexHookIsSaid() {
+    /// A setting that silences hooks is said whatever was heard; nothing
+    /// else is guessed — Codex's trust (`/hooks`) is the install report's
+    /// note, never a caveat: a Codex that ran since its file changed and
+    /// said nothing is "nothing heard yet", or nothing at all once heard.
+    @Test func onlyASilencingSettingOrSilenceIsACaveat() {
         let changed: Int64 = 1_800_000_000_000
         let config = Connection.Config(changedMs: changed)
-        func caveat(_ agent: AgentID, _ install: Connection.Install = .complete, heard: Int64? = nil, running: [Int64]) -> Connection.Caveat? {
-            Connection.caveat(agent: agent, install: install, config: config, heardMs: heard, runningSince: running)
-        }
-        #expect(caveat(.codex, running: [changed + 5_000]) == .untrusted)
-        #expect(caveat(.codex, running: [0]) == .untrusted, "a start time not read counts")
-        #expect(caveat(.codex, heard: changed + 1_000, running: [changed + 5_000]) == nil, "heard since the change")
-        #expect(caveat(.codex, running: [changed - 5_000]) == .neverHeard, "only a Codex that read the changed file is untrusted")
-        #expect(caveat(.codex, running: []) == .neverHeard, "no Codex ran: nothing heard, nothing to trust")
-        #expect(caveat(.codex, heard: changed - 60_000, running: []) == nil, "heard before; its own file is the person's too")
-        #expect(caveat(.codex, .partial(found: 5, of: 7), running: [changed + 5_000]) == nil, "Install all says that")
-        #expect(caveat(.claude, running: [changed + 5_000]) == .neverHeard, "Claude's hooks need no trust")
-        #expect(AgentID.codex.spec.hooks.trustBound)
-        #expect(!AgentID.claude.spec.hooks.trustBound)
+        #expect(Connection.caveat(agent: .codex, install: .complete, config: config, heardMs: nil, logWhole: true) == .neverHeard)
+        #expect(Connection.caveat(agent: .codex, install: .complete, config: config, heardMs: changed - 60_000, logWhole: true) == nil, "heard before; its own file is the person's too")
+        #expect(Connection.caveat(agent: .codex, install: .partial(found: 5, of: 7), config: config, heardMs: nil, logWhole: true) == nil, "Install all says that")
         let silenced = Connection.caveat(
-            agent: .claude, install: .complete, config: Connection.Config(offBy: .turnedOff), heardMs: nil, runningSince: []
+            agent: .claude, install: .complete, config: Connection.Config(offBy: .turnedOff), heardMs: nil, logWhole: false
         )
-        #expect(silenced == .turnedOff)
-        #expect(Connection.caveat(agent: .claude, install: .notInstalled, config: Connection.Config(offBy: .turnedOff), heardMs: nil, runningSince: []) == nil)
+        #expect(silenced == .turnedOff, "a setting is read from the config, not the log")
+        #expect(Connection.caveat(agent: .claude, install: .notInstalled, config: Connection.Config(offBy: .turnedOff), heardMs: nil, logWhole: true) == nil)
+    }
+
+    /// "Nothing heard" is said only while the event log holds every line
+    /// it was given: a compaction drops old lines, and an agent heard only
+    /// in them was heard all the same. The engine knows from the launch
+    /// replay's numbering (`EventLog.keepsEveryLine`).
+    @MainActor
+    @Test func aCompactedLogCannotSayNothingWasHeard() {
+        let changed: Int64 = 1_800_000_000_000
+        let config = Connection.Config(changedMs: changed)
+        for agent in AgentID.allCases {
+            #expect(Connection.caveat(agent: agent, install: .complete, config: config, heardMs: nil, logWhole: false) == nil, "\(agent.rawValue)")
+        }
+        #expect(Connection.caveat(agent: .copilot, install: .complete, config: config, heardMs: changed - 1, logWhole: false) == nil)
+        #expect(Connection.caveat(agent: .copilot, install: .complete, config: config, heardMs: changed - 1, logWhole: true) == .neverHeard)
+
+        func line(_ seq: Int64) -> AttentionRecord {
+            AttentionRecord(agent: .claude, kind: .tool, ms: changed + seq, session: "s1", tool: "Read", seq: seq)
+        }
+        #expect(EventLog.keepsEveryLine([]))
+        #expect(EventLog.keepsEveryLine([line(1), line(2), line(3)]))
+        #expect(!EventLog.keepsEveryLine([line(1), line(3)]), "a compaction dropped the second")
+        #expect(!EventLog.keepsEveryLine([line(2), line(3)]), "the first is gone")
+
+        let header = AttentionProtocol.Header(next: 7, gen: "g1")
+        let compacted = StatusStore()
+        #expect(!compacted.engine.logWhole, "not read yet: nothing proves silence")
+        compacted.engine.landLog(EventLog.Chunk(header: header, records: [line(5), line(6)], end: 300))
+        #expect(!compacted.engine.logWhole)
+        let whole = StatusStore()
+        whole.engine.landLog(EventLog.Chunk(header: header, records: [line(1), line(2)], end: 300))
+        #expect(whole.engine.logWhole)
+        // A later read of the same log (a compaction since) keeps it: this
+        // launch applied every line it dropped.
+        whole.engine.landLog(EventLog.Chunk(header: AttentionProtocol.Header(next: 9, gen: "g1"), records: [line(2), line(8)], end: 200))
+        #expect(whole.engine.logWhole)
+        let none = StatusStore()
+        none.engine.landLog(.empty)
+        #expect(none.engine.logWhole, "no log yet: nothing was dropped")
     }
 
     /// A whole install nothing was heard through says so — for any agent:
@@ -497,7 +525,7 @@ struct ConnectionTests {
         let changed: Int64 = 1_800_000_000_000
         let config = Connection.Config(changedMs: changed)
         func caveat(_ agent: AgentID, heard: Int64?) -> Connection.Caveat? {
-            Connection.caveat(agent: agent, install: .complete, config: config, heardMs: heard, runningSince: [])
+            Connection.caveat(agent: agent, install: .complete, config: config, heardMs: heard, logWhole: true)
         }
         for agent in AgentID.allCases {
             #expect(caveat(agent, heard: nil) == .neverHeard, "\(agent.rawValue)")
@@ -506,7 +534,7 @@ struct ConnectionTests {
         #expect(caveat(.copilot, heard: changed - 1) == .neverHeard, "Pulse's own file: nothing since the install")
         #expect(caveat(.opencode, heard: changed - 1) == .neverHeard)
         #expect(caveat(.claude, heard: changed - 1) == nil, "the person's settings change for reasons of their own")
-        #expect(Connection.caveat(agent: .copilot, install: .partial(found: 8, of: 10), config: config, heardMs: nil, runningSince: []) == nil)
+        #expect(Connection.caveat(agent: .copilot, install: .partial(found: 8, of: 10), config: config, heardMs: nil, logWhole: true) == nil)
         let now = changed + 60_000
         let copilot = Connection.make(agent: .copilot, probed: .complete, failure: nil, heard: nil, ignored: nil, config: config)
         #expect(copilot.caveat == .neverHeard)
@@ -524,17 +552,6 @@ struct ConnectionTests {
     /// line, as a warning, in both languages and in the report.
     @Test func aCaveatIsSaidOnTheLine() {
         let now: Int64 = 1_800_000_000_000
-        let codex = Connection.make(
-            agent: .codex, probed: .complete, failure: nil, heard: nil, ignored: nil,
-            config: Connection.Config(changedMs: now - 60_000), runningSince: [now - 30_000]
-        )
-        #expect(codex.caveat == .untrusted)
-        let line = SettingsModel.HookAgent(codex, nowMs: now, lang: .en)
-        #expect(line.state == "Installed — Codex hasn't run it since it changed: trust it in Codex (/hooks)")
-        #expect(line.tone == .warning)
-        #expect(SettingsModel.HookAgent(codex, nowMs: now, lang: .zh).state.contains("/hooks"))
-        #expect(codex.reportLine(present: true, nowMs: now).contains("untrusted?"))
-
         let claude = Connection(agent: .claude, install: .complete, caveat: .turnedOff)
         #expect(SettingsModel.HookAgent(claude, nowMs: now, lang: .en).state == "Installed — but hooks are turned off in Claude's settings (disableAllHooks)")
         #expect(claude.reportLine(present: true, nowMs: now).contains("disableAllHooks"))

@@ -96,8 +96,8 @@ package struct Connection: Equatable, Sendable {
     }
 
     /// Why an installed hook may not be running, though the config carries
-    /// it whole: a vendor setting silences it, or the vendor has not run it
-    /// since the file changed and needs the person to trust it.
+    /// it whole: a vendor setting silences it, or nothing was ever heard
+    /// through it.
     package enum Caveat: String, Equatable, Sendable {
         /// The person's own settings turn every hook off (Claude's
         /// `disableAllHooks` in `~/.claude/settings.json`).
@@ -105,16 +105,14 @@ package struct Connection: Equatable, Sendable {
         /// A managed policy runs only managed hooks, or none
         /// (`allowManagedHooksOnly`, a managed `disableAllHooks`).
         case managedOnly
-        /// A trust-bound vendor (Codex: `NestedFlavor.trustBound`) has run
-        /// since the file last changed and nothing was heard: the changed
-        /// entries wait to be trusted (`/hooks`).
-        case untrusted
         /// The install is whole and nothing was ever heard from the agent
         /// through it: no line in the log — or, for a file Pulse owns
         /// whole (whose last change is Pulse's install), none since it was
-        /// written. Not a fault (the agent may not have run yet), but the
-        /// first thing to check when it has: a sandbox that keeps the hook
-        /// from Pulse's folder, a config folder moved by the environment.
+        /// written — and the log still holds every line it was given, so
+        /// it can say so. Not a fault (the agent may not have run yet), but
+        /// the first thing to check when it has: a sandbox that keeps the
+        /// hook from Pulse's folder, a config folder moved by the
+        /// environment.
         case neverHeard
     }
 
@@ -157,13 +155,13 @@ package struct Connection: Equatable, Sendable {
         ignored: Ignored?,
         configDirMissing: Bool = false,
         config: Config = Config(),
-        runningSince: [Int64] = []
+        logWhole: Bool = true
     ) -> Connection {
         let install = failure.map(Install.failed) ?? probed ?? .notInstalled
         return Connection(
             agent: agent, install: install, lastHeard: heard, lastIgnored: ignored,
             configDirMissing: configDirMissing && agent.spec.hooks.relocation != nil,
-            caveat: caveat(agent: agent, install: install, config: config, heardMs: heard?.ms, runningSince: runningSince)
+            caveat: caveat(agent: agent, install: install, config: config, heardMs: heard?.ms, logWhole: logWhole)
         )
     }
 
@@ -181,23 +179,18 @@ package struct Connection: Equatable, Sendable {
     }
 
     /// Why a whole install may still say nothing: a setting that silences
-    /// it; else, for a trust-bound vendor, a process of the agent that
-    /// started after the file last changed (`runningSince`: start times of
-    /// its running processes, 0 unknown) while nothing was heard since that
-    /// change; else nothing heard through it at all (`neverHeard`: no line
-    /// from the agent — or, in a file Pulse owns whole, none since it was
-    /// written). Nil for an install that is not whole. Pure.
+    /// it; else nothing heard through it at all (`neverHeard`: no line from
+    /// the agent — or, in a file Pulse owns whole, none since it was
+    /// written) — said only while the log holds every line it was given
+    /// (`logWhole`, `EventLog.keepsEveryLine`): once a compaction dropped
+    /// old lines, their absence proves nothing. Nil for an install that is
+    /// not whole. Pure.
     package static func caveat(
-        agent: AgentID, install: Install, config: Config, heardMs: Int64?, runningSince: [Int64]
+        agent: AgentID, install: Install, config: Config, heardMs: Int64?, logWhole: Bool
     ) -> Caveat? {
         guard install.carriesHook else { return nil }
         if let off = config.offBy { return off }
-        guard install == .complete else { return nil }
-        if agent.spec.hooks.trustBound, config.changedMs > 0,
-           (heardMs ?? 0) < config.changedMs,
-           runningSince.contains(where: { $0 == 0 || $0 >= config.changedMs }) {
-            return .untrusted
-        }
+        guard install == .complete, logWhole else { return nil }
         // A file the person edits too (Claude's settings) changes for
         // reasons of its own: only no line at all says nothing was heard.
         // A file Pulse owns changes only when Pulse writes it.
@@ -267,13 +260,12 @@ package struct Connection: Equatable, Sendable {
     }
 
     /// An installed hook that may not run, and why: "Installed — but
-    /// `disableAllHooks` turns every Claude hook off", "Installed — Codex
-    /// hasn't run it yet: trust it in Codex (/hooks)".
+    /// `disableAllHooks` turns every Claude hook off", "Installed — nothing
+    /// heard yet".
     package func caveatText(_ caveat: Caveat, lang: ResolvedLanguage) -> String {
         switch caveat {
         case .turnedOff: return String(format: L10n.t(.settingsHookTurnedOff, lang), agent.displayName)
         case .managedOnly: return String(format: L10n.t(.settingsHookManagedOnly, lang), agent.displayName)
-        case .untrusted: return String(format: L10n.t(.settingsHookUntrusted, lang), agent.displayName, agent.displayName)
         case .neverHeard: return L10n.t(.settingsHookNeverHeard, lang)
         }
     }
@@ -371,7 +363,6 @@ package struct Connection: Equatable, Sendable {
         switch caveat {
         case .turnedOff?: parts.append("hooks turned off by its settings (disableAllHooks)")
         case .managedOnly?: parts.append("blocked by managed policy (allowManagedHooksOnly / disableAllHooks)")
-        case .untrusted?: parts.append("not run since its file changed while it ran (untrusted?)")
         case .neverHeard?: parts.append("nothing heard through it since it was installed")
         case nil: break
         }

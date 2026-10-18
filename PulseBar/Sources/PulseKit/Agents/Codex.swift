@@ -24,18 +24,17 @@ extension AgentSpec {
         // (engine/discovery.rs). Interrupt runs async but its timeout is
         // capped at 3 s too; its only output is a `systemMessage`. PostToolUse
         // runs `async`, so it cannot change what Codex does; it is the
-        // per-tool activity the stall rule needs. SubagentStop is installed
+        // per-tool activity — the steps. SubagentStop is installed
         // async: its block decision is never read from an async entry. A
         // turn that ends on an error fires no Stop (core session/turn.rs):
         // Pulse infers nothing from the silence. Codex runs an entry only
-        // once it is trusted, bound to the entry's text (`/hooks`): any
-        // change leaves it "modified" and silent until trusted again.
+        // once it is trusted, bound to the entry's text (`/hooks`): the
+        // install report says to trust it once.
         hooks: HookContract(
             format: .nested(NestedFlavor(
                 async: true,
                 synchronous: ["SessionEnd": 3],
                 timeoutCaps: ["Interrupt": 3],
-                trustBound: true,
                 installNote: "trust them once in Codex: /hooks"
             )),
             path: ".codex/hooks.json",

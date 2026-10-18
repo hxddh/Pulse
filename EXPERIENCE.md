@@ -68,8 +68,8 @@ Pi `tool_execution_end`、OpenCode 的工具完成）就熄灭；OpenCode 同时
 - 灰灯是 template 图像，由菜单栏着色；红 / 绿 / 橙把颜色画进像素。灯按按钮自己的尺寸绘制，外观一变就重画。
 - **标题只在卡住时有**：数量与最久的等待时长 `2 · 4m`；不到一分钟只写数量。**≤ 8 个显示宽度**（CJK 两格），
   放不下先去掉点两侧空格，再放不下只留数量。不写 Agent 名、项目。
-- **Tooltip 一句**：决定颜色的规则（`TrayState.tooltip`）。红灯点名等得最久的那个：「红：Claude 在等你——app · 8分钟。
-  另有 1 个在等你。2 个运行中。」（不到一分钟不写时长）；其余颜色是规则句，如「绿：Agent 在工作，没有需要你的事。」
+- **Tooltip 一句**：决定颜色的规则（`TrayState.lampSentence`），红灯也一样：「红：有 Agent 在等你。」—— 不点名
+  会话，会话由托盘列出；其余颜色同样是规则句，如「绿：Agent 在工作，没有需要你的事。」
   VoiceOver 对彩色灯读同一句，对灰灯读状态词：轮到你 / 仅进程 / 空闲（不再一律「空闲」）。
 - **没有常驻动画**：新等待出现时灯暗一下即止（减少动态效果时不动）。
 - 按下鼠标就打开、再按就关；托盘开着时按钮保持按下。右键 / Control-点：「打开 Pulse」「设置…」「退出 Pulse」。
@@ -204,17 +204,22 @@ Pulse；什么都没落到就说没能打开并重扫。提示停留 8 秒，没
 - Pulse 启动前就在跑的会话先显示为「仅进程」，「为什么」说「在 Pulse 之前启动——下一步之后显示详情」；这个 Agent
   的 hook 没装时改说「只看到进程——Pulse 还没有连接它」。
 - 知道进程的会话只在进程活着时算在跑；不知道进程的 30 分钟无事件转为「最近」并照实说明。工作中的会话
-  （被打断的回合不报 Stop）20 分钟无事件先变橙，两小时无任何消息转为「最近」—— 不会一直橙着。停滞只对逐个报告
-  工具调用的 Agent 成立（现在 Cursor、OpenCode 也逐个报告）。Agent 报了一个工具开始、还没报它结束时（Pi 的
-  `tool_execution_start`、OpenCode 的工具开始），沉默不算停滞 —— 25 分钟的构建不会变橙；Cursor 不报工具开始，
-  它的长命令和 Copilot、Codex 一样，20 分钟无事件会变橙。「工作在继续」这类不点名工具的状态（重试、可恢复的错误、
+  （被打断的回合不报 Stop）20 分钟无事件先变橙，两小时无任何消息转为「最近」—— 不会一直橙着。停滞只对既报告
+  工具开始、也报告工具结束的 Agent 成立（Pi 的 `tool_execution_start`、OpenCode 的工具开始，由各自的 hook 契约
+  决定）：它报了一个工具开始、还没报它结束时，沉默不算停滞 —— 25 分钟的构建不会变橙；同时开始的几个工具各自到
+  自己结束为止，短的先结束不会让还在跑的构建变橙，「当前：…」说最近开始、还没结束的那个。Claude、Codex、Cursor、
+  Copilot 不报工具开始，长命令和卡住在它们那里分不开：它们的行只陈述事实，从不变橙。「工作在继续」这类不点名工具的状态（重试、可恢复的错误、
   压缩）只让进行中的回合不算停滞，从不开始一个回合：回合结束后到达的不会让行重新「运行中」。Codex 的回合以错误结束时不报 Stop，
   Pulse 也不去猜：这一行照常按上面的沉默规则走。Claude 自动压缩上下文（`PostCompact`，只说「已压缩」，
   不读摘要、不报数字）和 auto 模式拒绝一个调用（`PermissionDenied`）都算工作在继续，不是一步；手动 `/compact`
   是你在提示符前，不算工作。OpenCode 上下文溢出后自动压缩（1.x `ContextOverflowError`）、Copilot 自动压缩
   （`preCompact`）同样只算工作在继续。
 - **子代理不是你**：子代理的事件不会回答主 Agent（或另一个子代理）的提问，不会让已结束的回合重新「运行中」，
-  它的任务不算你的提示。子代理自己的开始与结束（Claude `SubagentStart` / `SubagentStop`、Codex `SubagentStop`）
+  它的任务不算你的提示。反过来，主 Agent 的一步也不回答子代理的提问（只有子代理自己的事件、你的提示、厂商的
+  「已回答」、停下或会话结束才算）；子代理提问后几秒内 Claude 主界面同一类的 `Notification` 仍是那个子代理的
+  同一个提问。回合结束后后台子代理提问、随后被回答，这一行回到「轮到你」（或提示符前），不会变成没人开始的
+  「运行中」。OpenCode 的提问只由它自己的回复关掉（插件会说还有几个没回答），同一个工具的两个并行提问要两个回复，
+  第一个工具跑完不算回答第二个。子代理自己的开始与结束（Claude `SubagentStart` / `SubagentStop`、Codex `SubagentStop`）
   只进时间线，从不结束你的回合；回合结束后后台子代理才收尾，也不会让它重新「运行中」。你在 Agent 自己的提示符前
   按 Esc 停下（Pi 的 aborted、Codex 的 `Interrupt`、Claude 打断工具时 `is_interrupt` 的 `PostToolUseFailure`、
   OpenCode 1.x 的 `MessageAbortedError` 与 2.x 的 `session.execution.interrupted`、Cursor `stop` 的 `aborted`）
@@ -251,11 +256,11 @@ Pulse；什么都没落到就说没能打开并重扫。提示停留 8 秒，没
    `disableAllHooks: true` →「已安装——但 Claude 的设置关掉了所有 hooks」；管理设置
    （`/Library/Application Support/ClaudeCode/managed-settings.json` 或 `managed-settings.d/*.json`）里
    `allowManagedHooksOnly` 或 `disableAllHooks` →「已安装——但管理策略不让 Claude 运行它」（只读，从不改）；
-   Codex 按条目内容的哈希信任 hook，Pulse 一改就变「已修改」、不再运行 —— 装全了、`hooks.json` 改动后有 Codex
-   进程启动过、却一个 Codex 事件也没听到 →「已安装——改动后 Codex 还没运行过它：请在 Codex 里信任它（/hooks）」。
-   Codex 的 `allow_managed_hooks_only` 在 `config.toml` 里，Pulse 不读它。装全了却从没听到过这个 Agent 的任何事件
-   （Pulse 自己整份拥有的文件 —— Copilot、OpenCode、Pi —— 则是装好以后一个也没听到）时，状态写「已安装——还没有
-   听到事件」（不标橙：可能只是还没用过它），小字不再重复；它是排查的起点：Copilot 的会话沙箱没放行 Pulse 的文件夹、
+   Codex 的 `allow_managed_hooks_only` 在 `config.toml` 里，Pulse 不读它；Codex 要在 `/hooks` 里信任一次，只在
+   设置卡的后续里说，Pulse 不去猜它信没信任。装全了却从没听到过这个 Agent 的任何事件
+   （Pulse 自己整份拥有的文件 —— Copilot、OpenCode、Pi —— 则是装好以后一个也没听到），而且事件日志还留着它收到的
+   每一行时，状态写「已安装——还没有听到事件」（不标橙：可能只是还没用过它；日志压缩丢掉旧行后，没听到证明不了
+   什么，就不说），小字不再重复；它是排查的起点：Copilot 的会话沙箱没放行 Pulse 的文件夹、
    `COPILOT_HOME` / `OPENCODE_CONFIG_DIR` 把配置挪走了。有需要更新的 Agent 时，按钮下说一次「「全部安装」会更新所有需要更新的 Agent」——
    没有逐个 Agent 的按钮。不在这台 Mac 上的合成一行。运行期间按钮置灰。「**复制报告**」把版本与分发通道、
    macOS 版本、每个 Agent 的连接（安装、最近听到的事件、最近未采用的事件及原因、`capabilities: waits steps words

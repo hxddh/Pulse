@@ -168,7 +168,6 @@ final class StatusStore {
     /// redraw reads no file.
     var connections: [Connection] {
         let failures = hooksStatus.failures
-        let processes = engine.processes
         return AgentID.priority.map { agent in
             Connection.make(
                 agent: agent,
@@ -179,7 +178,7 @@ final class StatusStore {
                 ignored: engine.latestIgnored[agent],
                 configDirMissing: configDirMissing.contains(agent),
                 config: hookConfigs[agent] ?? Connection.Config(),
-                runningSince: processes.filter { $0.agent == agent }.map(\.startedMs)
+                logWhole: engine.logWhole
             )
         }
     }
