@@ -66,7 +66,7 @@ extension StatusStore {
             case "status-running":
                 facts[fixtureRow.key] = SessionFacts(
                     lastWords: "The fixtures pass.",
-                    steps: [SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 60 * 1000)],
+                    lastStep: SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 60 * 1000),
                     turnStartMs: now - 14 * 60 * 1000,
                     lastEventMs: now - 60 * 1000
                 )
@@ -104,10 +104,7 @@ extension StatusStore {
         )
         facts[active.key] = SessionFacts(
             lastWords: "Corners now follow the panel radius.",
-            steps: [
-                SessionBook.Step(tool: "Edit", target: "Sources/PulseApp/PulseTheme.swift", ms: now - 3 * 60 * 1000),
-                SessionBook.Step(tool: "Bash", target: "swift test --filter Snapshot", ms: now - 15_000),
-            ],
+            lastStep: SessionBook.Step(tool: "Bash", target: "swift test --filter Snapshot", ms: now - 15_000),
             turnStartMs: now - 9 * 60 * 1000,
             lastEventMs: now - 60 * 1000,
             activityMs: now - 15_000

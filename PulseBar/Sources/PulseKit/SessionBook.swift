@@ -17,9 +17,9 @@ import Foundation
 ///
 /// What a session says about itself, from its events only:
 ///
-/// - **steps**: the last `maxSteps` tool lines that named their tool (the
-///   tool, its target, when, whether it failed, how long it ran, which
-///   subagent ran it), the tools `status` lines say are running now (each
+/// - **steps**: the last tool line that named its tool (the tool, its
+///   target, when, whether it failed, how long it ran, which subagent ran
+///   it), the tools `status` lines say are running now (each
 ///   until its own step), and the clock of the prompt that started the
 ///   current turn — the row's quiet "last step" and its turn's duration;
 /// - **title**: the vendor's own name for the session when it has one (a
@@ -273,6 +273,11 @@ package struct SessionBook: Equatable {
         case skipped(reason: String)
     }
 
+    /// One session: who it is, where it runs, the one state it is in and
+    /// the reducer's own bookkeeping; what it said lately is its `facts`,
+    /// read and written through the session's own members
+    /// (`session.lastEventMs` is `session.facts.lastEventMs`).
+    @dynamicMemberLookup
     package struct Session: Equatable, Sendable {
         /// Decided by the first event, never changed.
         package var key: SessionKey
@@ -293,17 +298,8 @@ package struct SessionBook: Equatable {
         package var stateSinceMs: Int64 = 0
         /// The first event seen.
         package var startedMs: Int64 = 0
-        /// The newest event of any kind.
-        package var lastEventMs: Int64 = 0
-        /// The newest activity (a `tool` line, or a prompt).
-        package var activityMs: Int64 = 0
         /// The newest tool event — the only evidence a silence can be a stall.
         package var toolMs: Int64 = 0
-        /// What the latest turn line carried (a vendor's last words, when
-        /// its hook sends them).
-        package var message = ""
-        /// The text of the latest `failed` turn; cleared by the next turn.
-        package var lastError = ""
         /// The first prompt that says something — the session's title when
         /// the vendor has not named it.
         package var title = ""
@@ -312,32 +308,6 @@ package struct SessionBook: Equatable {
         package var name = ""
         /// The latest prompt's text.
         package var lastPrompt = ""
-        /// The prompt (or, with none seen, the step) that started the
-        /// current turn; 0 unknown.
-        package var turnStartMs: Int64 = 0
-        /// The last `maxSteps` tool steps, oldest first.
-        package var steps: [Step] = []
-        /// Steps the current turn has taken (its subagents' among them),
-        /// and how many of them failed — counted as the lines apply, so a
-        /// replay counts them again.
-        package var turnSteps = 0
-        package var turnFailedSteps = 0
-        /// The latest turn ended on an error (a `failed` line); cleared by
-        /// the next turn.
-        package var failedTurn = false
-        /// The person stopped the run (`stopped`) and nothing has moved the
-        /// session since.
-        package var stopped = false
-        /// The tools `status` lines said started and no `tool` line has
-        /// finished yet — what runs now, oldest first, at most `maxRunning`.
-        /// Each goes with its own step, so a short parallel tool ending
-        /// leaves the long build running; the turn's end clears them all.
-        /// While any is there a silence is not a stall (a 25-minute build
-        /// says nothing until it ends).
-        package var runningSteps: [Step] = []
-        /// The newest tool still running — what the row says runs now
-        /// (`SessionFacts.running`).
-        package var running: Step? { runningSteps.last }
         /// A turn waiting out the grace of the current block.
         package var heldTurn: HeldTurn?
         /// Where the session was when the current block was raised while no
@@ -350,13 +320,18 @@ package struct SessionBook: Equatable {
         /// again. A vendor's own "resolved" `done` sets none — the same ask
         /// after it is a new ask.
         package var clearedBlock: ClearedBlock?
-        /// The vendor event of the line that put the session in its current
-        /// state ("" for a process exit) — what the why cites.
-        package var stateEvent = ""
-        /// The vendor event of the newest line.
-        package var lastEvent = ""
-        /// The last `maxTimeline` lines it heard, oldest first.
-        package var timeline: [Heard] = []
+        /// What it said lately — its last words, step, clocks, events and
+        /// timeline (`SessionFacts`).
+        package var facts = SessionFacts()
+
+        package subscript<T>(dynamicMember path: WritableKeyPath<SessionFacts, T>) -> T {
+            get { facts[keyPath: path] }
+            set { facts[keyPath: path] = newValue }
+        }
+
+        package subscript<T>(dynamicMember path: KeyPath<SessionFacts, T>) -> T {
+            facts[keyPath: path]
+        }
 
         package var isEnded: Bool {
             if case .ended = state { return true }
@@ -377,8 +352,6 @@ package struct SessionBook: Equatable {
     /// A session nothing has said anything about for this long is dropped.
     package static let retentionMs: Int64 = 24 * 60 * 60 * 1000
     package static let maxSessions = 256
-    /// Tool steps kept per session.
-    package static let maxSteps = 5
     /// Running tools kept per session.
     package static let maxRunning = 8
     /// A step's target is at most this many characters.
@@ -481,7 +454,7 @@ package struct SessionBook: Equatable {
             // carries none keeps them.
             if kind == .tool, record.tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 let words = TitleHeuristics.firstLine(record.message)
-                if !words.isEmpty { session.message = words }
+                if !words.isEmpty { session.lastWords = words }
             }
             // Work goes on — unless it is older than the state it would
             // end, or a different tool than the one a block is about.
@@ -517,7 +490,7 @@ package struct SessionBook: Equatable {
             if Self.endedBefore(session, ms) { break }
             let message = TitleHeuristics.firstLine(record.message)
             if !message.isEmpty {
-                if kind == .failed { session.lastError = message } else { session.message = message }
+                if kind == .failed { session.lastError = message } else { session.lastWords = message }
             }
             session.failedTurn = kind == .failed
             Self.turn(&session, at: ms, front: record.front == true, event: event)
@@ -767,8 +740,7 @@ package struct SessionBook: Equatable {
     /// its speaker said was running — the same tool on the same target,
     /// else the oldest of the same tool; one that names no tool finishes
     /// every tool its speaker said was running. A `status` line that names
-    /// a tool says it runs now, beside any other (parallel tools). Lines
-    /// are applied in order, so the last `maxSteps` steps are the newest.
+    /// a tool says it runs now, beside any other (parallel tools).
     private static func progress(_ record: AttentionRecord, at ms: Int64, into session: inout Session) {
         let step = stepOf(record)
         if record.kind == .status {
@@ -795,8 +767,7 @@ package struct SessionBook: Equatable {
         guard let step else { return }
         session.turnSteps += 1
         if step.failed { session.turnFailedSteps += 1 }
-        session.steps.append(step)
-        if session.steps.count > maxSteps { session.steps.removeFirst(session.steps.count - maxSteps) }
+        session.lastStep = step
     }
 
     /// The step a `tool` (or `status`) line names; nil when it names no tool.
@@ -1112,23 +1083,7 @@ package struct SessionBook: Equatable {
     /// projection, so a burst of tool lines moves no row. Empty for a key
     /// the book does not hold (a process-only row).
     package func facts(for key: SessionKey) -> SessionFacts {
-        guard let session = sessions[key] else { return SessionFacts() }
-        return SessionFacts(
-            lastWords: session.message,
-            lastError: session.lastError,
-            steps: session.steps,
-            running: session.running,
-            turnStartMs: session.turnStartMs,
-            lastEventMs: session.lastEventMs,
-            activityMs: session.activityMs,
-            stateEvent: session.stateEvent,
-            lastEvent: session.lastEvent,
-            timeline: session.timeline,
-            turnSteps: session.turnSteps,
-            turnFailedSteps: session.turnFailedSteps,
-            failedTurn: session.failedTurn,
-            stopped: session.stopped
-        )
+        sessions[key]?.facts ?? SessionFacts()
     }
 
     // MARK: - Bounds

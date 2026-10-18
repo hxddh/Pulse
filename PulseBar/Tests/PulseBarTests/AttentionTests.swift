@@ -85,19 +85,20 @@ final class AttentionBookTests: XCTestCase {
         XCTAssertEqual(state(b, SessionKey(.copilot, "", cwd: "/q")), "blocked:permission")
     }
 
-    /// The steps: the last five tool lines that name a tool, oldest first,
-    /// rebuilt by replaying the log; a tool line with no tool (Cursor,
-    /// OpenCode activity) is no step.
-    func testTheLastFiveToolStepsAreKept() throws {
+    /// The last step: the newest tool line that names a tool, rebuilt by
+    /// replaying the log; a tool line with no tool (Cursor, OpenCode
+    /// activity) is no step.
+    func testTheLastToolStepIsKept() throws {
         var rows = [["claude", "working", "\(now - 60_000)", "Fix the login test", "s1", "/p"]]
         for index in 0..<7 {
             rows.append(["claude", "tool", "\(now - 50_000 + Int64(index) * 1000)", "target \(index)", "s1", "/p", "", "", "", "Tool\(index)"])
         }
         rows.append(["claude", "tool", "\(now - 1000)", "", "s1", "/p"])
         let session = try XCTUnwrap(book(tsv(rows)).sessions[SessionKey(.claude, "s1")])
-        XCTAssertEqual(session.steps.map(\.tool), ["Tool2", "Tool3", "Tool4", "Tool5", "Tool6"])
-        XCTAssertEqual(session.steps.last?.target, "target 6")
-        XCTAssertEqual(session.steps.last?.ms, now - 44_000)
+        XCTAssertEqual(session.lastStep?.tool, "Tool6")
+        XCTAssertEqual(session.lastStep?.target, "target 6")
+        XCTAssertEqual(session.lastStep?.ms, now - 44_000)
+        XCTAssertEqual(session.turnSteps, 7)
         XCTAssertEqual(session.turnStartMs, now - 60_000, "the prompt started the turn")
         XCTAssertEqual(session.title, "Fix the login test")
         XCTAssertEqual(session.lastPrompt, "Fix the login test")
@@ -116,7 +117,7 @@ final class AttentionBookTests: XCTestCase {
         XCTAssertEqual(session.title, "Port the parser to Swift")
         XCTAssertEqual(session.lastPrompt, "continue")
         XCTAssertEqual(session.turnStartMs, now - 2000)
-        XCTAssertEqual(session.message, "Ported.", "the last words stay until the next turn says something")
+        XCTAssertEqual(session.lastWords, "Ported.", "the last words stay until the next turn says something")
     }
 
     /// A `failed` turn is the session's last error — its last words are
@@ -129,7 +130,7 @@ final class AttentionBookTests: XCTestCase {
         ])
         let session = try XCTUnwrap(book(failed).sessions[SessionKey(.claude, "s1")])
         XCTAssertEqual(session.lastError, "API Error: Rate limit reached")
-        XCTAssertEqual(session.message, "All green.")
+        XCTAssertEqual(session.lastWords, "All green.")
         XCTAssertEqual(HookFeed.word(session.state), "turn", "a failed turn is your turn, never red")
         let next = failed + tsv([["claude", "working", "\(now - 1000)", "Try again", "s1", "/p"]])
         XCTAssertEqual(book(next).sessions[SessionKey(.claude, "s1")]?.lastError, "")

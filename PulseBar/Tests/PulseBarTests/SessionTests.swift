@@ -189,7 +189,8 @@ struct SessionBookTests {
         ])
         let session = run.book.sessions[SessionKey(.pi, "s1")]
         #expect(session?.title == "Clean the build folder")
-        #expect(session?.steps.first == SessionBook.Step(tool: "bash", target: "ls build", ms: t0 + 3 * minute))
+        let listed = session?.timeline.contains { $0.effect == .step(tool: "bash", target: "ls build") }
+        #expect(listed == true)
         #expect(session?.lastError == "429 rate limited")
         let ask = HookFeed.write(.pi, "ui_prompt_start", ["kind": "confirm", "title": "Delete build/?", "reason": "ui_prompt"], at: t0).lines.first?.message
         #expect(ask == "Delete build/?", "the title, never the reason")
@@ -240,8 +241,10 @@ struct SessionBookTests {
         let session = run.book.sessions[SessionKey(.opencode, "s1")]
         #expect(session?.shownTitle == "Login test", "the vendor's name over the first prompt")
         #expect(session?.title == "Fix the login test")
-        #expect(session?.steps.map(\.tool) == ["bash"])
-        #expect(session?.steps.first?.target == "npm test")
+        #expect(session?.lastStep?.tool == "bash")
+        #expect(session?.lastStep?.target == "npm test")
+        let npmSteps = session?.timeline.filter { $0.effect == .step(tool: "bash", target: "npm test") }.count
+        #expect(npmSteps == 1, "one step")
         let ask = HookFeed.write(.opencode, "permission.asked", ["permission": "bash", "patterns": ["npm test"]], at: t0).lines.first?.message
         #expect(ask == "bash: npm test")
     }
@@ -268,7 +271,7 @@ struct SessionBookTests {
             "turn", "working", "idle",
         ])
         let session = run.book.sessions[SessionKey(.opencode, "s1")]
-        #expect(session?.steps.first == SessionBook.Step(tool: "bash", target: "redis-cli ping", ms: t0 + 4 * minute, tookMs: 800))
+        #expect(session?.lastStep == SessionBook.Step(tool: "bash", target: "redis-cli ping", ms: t0 + 4 * minute, tookMs: 800))
         #expect(session?.name == "Port the cache")
     }
 
@@ -289,15 +292,15 @@ struct SessionBookTests {
         for (agent, event, payload, tool, target) in cases {
             var book = SessionBook()
             for line in HookFeed.write(agent, event, payload, at: t0).lines { book.apply(line, nowMs: t0) }
-            let step = book.sessions[SessionKey(agent, "s1")]?.steps.last
+            let step = book.sessions[SessionKey(agent, "s1")]?.lastStep
             #expect(step == SessionBook.Step(tool: tool, target: target, ms: t0), "\(agent.rawValue)")
         }
         let quiet: [(AgentID, String, [String: Any])] = [(.cursor, "afterAgentResponse", [:]), (.opencode, "session.status", ["status": "busy"])]
         for (agent, event, payload) in quiet {
             var book = SessionBook()
             for line in HookFeed.write(agent, event, payload, at: t0).lines { book.apply(line, nowMs: t0) }
-            let steps = book.sessions[SessionKey(agent, "s1")]?.steps ?? []
-            #expect(steps.isEmpty, "\(agent.rawValue)")
+            let step = book.sessions[SessionKey(agent, "s1")]?.lastStep
+            #expect(step == nil, "\(agent.rawValue)")
         }
         let prompts: [(AgentID, String)] = [
             (.claude, "UserPromptSubmit"), (.codex, "UserPromptSubmit"), (.copilot, "userPromptSubmitted"), (.pi, "message_start"),
@@ -366,8 +369,10 @@ struct SessionBookTests {
             "working", "turn", "turn", "turn", "turn",
         ])
         let session = try #require(run.book.sessions[SessionKey(.copilot, "s1")])
-        #expect(session.steps.map(\.sub) == ["sub-1", "sub-1", ""], "the subagent's steps are marked as its own")
-        #expect(session.steps[1].failed)
+        #expect(session.lastStep?.sub == "", "the subagent's step after the turn ended is not taken")
+        #expect(session.turnSteps == 3 && session.turnFailedSteps == 1, "its steps count in the turn")
+        let marked = session.timeline.contains { $0.sub == "sub-1" }
+        #expect(marked, "the subagent's steps are marked as its own")
         #expect(session.timeline.contains { $0.sub == "explore" && $0.effect == .status }, "a subagent began, on the timeline")
     }
 
@@ -386,9 +391,12 @@ struct SessionBookTests {
         ])
         #expect(run.states == ["idle", "working", "working", "turn", "working", "idle", "working", "turn"])
         let session = try #require(run.book.sessions[SessionKey(.cursor, "s1")])
-        #expect(session.message == "All 42 tests pass.")
-        #expect(session.steps.map(\.tool) == ["Shell", "Edit", "Shell"])
-        #expect(session.steps[1].target == "src/a.ts")
+        #expect(session.lastWords == "All 42 tests pass.")
+        let steps = session.timeline.compactMap { heard -> String? in
+            if case .step(let tool, let target) = heard.effect { return "\(tool) \(target)" }
+            return nil
+        }
+        #expect(steps == ["Shell npm test", "Edit src/a.ts", "Shell make"])
         #expect(AgentID.cursor.reportsToolActivity, "its steps")
         #expect(!AgentID.cursor.silenceCanStall, "no tool start: its silence is never a stall")
         #expect(AgentID.cursor.waitingSource == .none, "still never red")
@@ -874,7 +882,7 @@ struct SessionBookTests {
         let status = HookFeed.write(.copilot, "errorOccurred", ["recoverable": true], at: t0).lines.first
         #expect(status?.kind == .status)
         #expect(status?.event == "errorOccurred")
-        #expect(openCode.book.sessions[SessionKey(.opencode, "s1")]?.steps.isEmpty == true, "a status is not a step")
+        #expect(openCode.book.sessions[SessionKey(.opencode, "s1")]?.lastStep == nil, "a status is not a step")
     }
 
     /// Work going on is its own kind: no tool column can spell it. A real
@@ -889,8 +897,8 @@ struct SessionBookTests {
             (2 * second, "PostToolUse", ["tool_name": "status"]),
         ])
         #expect(claude.states == ["blocked:permission", "working"], "a tool named status answers its own block")
-        let steps = claude.book.sessions[SessionKey(.claude, "s1")]?.steps.map(\.tool)
-        #expect(steps == ["status"])
+        let step = claude.book.sessions[SessionKey(.claude, "s1")]?.lastStep?.tool
+        #expect(step == "status")
         let colon = HookFeed.write(.claude, "PostToolUse", ["tool_name": ":status"], at: t0).lines.first
         #expect(colon?.kind == .tool)
         #expect(colon?.tool == ":status")
@@ -1225,8 +1233,7 @@ struct SessionBookTests {
         #expect(heard.first?.0 == .step(tool: "Grep", target: "TODO"))
         #expect(heard.first?.1 == "a1")
         #expect(heard.last?.1 == "")
-        let speakers = session.steps.map(\.sub)
-        #expect(speakers == ["a1", ""])
+        #expect(session.lastStep?.sub == "")
         let marked = try #require(session.timeline.first { !$0.sub.isEmpty })
         #expect(TrayRowModel.heardText(marked, lang: .en) == "Subagent · Grep · TODO")
         #expect(SettingsModel.ReportSession.word(.subagent) == "subagent lifecycle")
@@ -1306,7 +1313,7 @@ struct SessionBookTests {
         ])
         #expect(run.states == ["working", "working", "working", "working", "turn", "turn"])
         let session = try #require(run.book.sessions[SessionKey(.claude, "s1")])
-        #expect(session.steps.isEmpty, "neither is a step")
+        #expect(session.lastStep == nil, "neither is a step")
         #expect(session.running == nil, "nor a tool that runs now")
         #expect(session.toolMs == t0 + 3 * minute, "work: a silence after it is not a stall")
     }
@@ -1352,15 +1359,15 @@ struct SessionBookTests {
             var book = SessionBook()
             for line in HookFeed.write(agent, event, payload, at: t0).lines { book.apply(line, nowMs: t0) }
             let session = try #require(book.sessions[SessionKey(agent, "s1")])
-            #expect(session.steps.last?.failed == true, "\(agent.rawValue)")
-            #expect(session.timeline.last?.effect == .failedStep(tool: session.steps.last?.tool ?? "", target: "swift test"), "\(agent.rawValue)")
+            #expect(session.lastStep?.failed == true, "\(agent.rawValue)")
+            #expect(session.timeline.last?.effect == .failedStep(tool: session.lastStep?.tool ?? "", target: "swift test"), "\(agent.rawValue)")
         }
         let pi = HookFeed.write(.pi, "tool_execution_end", ["tool_name": "bash", "is_error": false, "duration_ms": 4200], at: t0).lines.first
         #expect(pi?.failed == false)
         #expect(pi?.tookMs == 4200)
         var book = SessionBook()
         for line in HookFeed.write(.pi, "tool_execution_end", ["tool_name": "bash", "duration_ms": 4200], at: t0).lines { book.apply(line, nowMs: t0) }
-        #expect(book.sessions[SessionKey(.pi, "s1")]?.steps.last?.tookMs == 4200)
+        #expect(book.sessions[SessionKey(.pi, "s1")]?.lastStep?.tookMs == 4200)
         #expect(TrayRowModel.effectText(.failedStep(tool: "Bash", target: "swift test"), lang: .en) == "Bash · swift test — failed")
     }
 
@@ -1425,7 +1432,7 @@ struct SessionBookTests {
         let running = try #require(book.sessions[key]?.running)
         #expect(running.tool == "bash")
         #expect(running.target == "swift build")
-        #expect(book.sessions[key]?.steps.isEmpty == true, "a start is not a step")
+        #expect(book.sessions[key]?.lastStep == nil, "a start is not a step")
         #expect(book.facts(for: key).running == running)
         let later = t0 + 25 * minute
         let session = try #require(book.sessions[key])
@@ -1435,7 +1442,7 @@ struct SessionBookTests {
         }
         let ended = try #require(book.sessions[key])
         #expect(ended.running == nil)
-        #expect(ended.steps.last?.target == "swift build")
+        #expect(ended.lastStep?.target == "swift build")
         #expect(TrayState.status(of: ended, nowMs: later + 25 * minute) == .running(stalled: true))
         // The turn's end clears it too.
         var turned = SessionBook()
@@ -1464,7 +1471,8 @@ struct SessionBookTests {
         #expect(TrayState.status(of: session, nowMs: t0 + 25 * minute) == .running(stalled: false), "the build still runs")
         feed("tool_execution_end", ["tool_name": "bash", "tool_input": ["command": "swift build"]], at: t0 + 26 * minute)
         #expect(book.sessions[key]?.runningSteps.isEmpty == true)
-        #expect(book.sessions[key]?.steps.map(\.target) == ["swiftlint", "swift build"])
+        #expect(book.sessions[key]?.lastStep?.target == "swift build")
+        #expect(book.sessions[key]?.turnSteps == 2)
         // The turn's end clears every tool still said to run.
         feed("tool_execution_start", ["tool_name": "bash", "tool_input": ["command": "sleep 1"]], at: t0 + 27 * minute)
         feed("tool_execution_start", ["tool_name": "read", "tool_input": ["path": "a.txt"]], at: t0 + 27 * minute)
@@ -1746,7 +1754,7 @@ struct TrayStateTests {
         let facts = b.facts(for: row.key)
         #expect(facts.lastWords == "All green.")
         #expect(facts.lastStep == SessionBook.Step(tool: "Bash", target: "git push", ms: t0 + 5 * minute))
-        #expect(facts.steps.count == 3)
+        #expect(facts.turnSteps == 1, "this turn took one step")
         #expect(facts.turnStartMs == t0 + 4 * minute)
         #expect(facts.lastError == "")
         #expect(b.facts(for: .process(.claude, pid: 70)) == SessionFacts(), "a key the book does not hold has no facts")
@@ -1759,7 +1767,7 @@ struct TrayStateTests {
             AttentionRecord(agent: .cursor, kind: .tool, ms: t0 + minute, session: "cu1", pid: 72),
         ])
         let row = try #require(rows(b, at: t0 + 2 * minute).first)
-        #expect(b.facts(for: row.key).steps.isEmpty)
+        #expect(b.facts(for: row.key).lastStep == nil)
     }
 
     @Test func withoutATranscriptTheTurnSaysTheLastWords() throws {

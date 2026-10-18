@@ -205,21 +205,15 @@ enum SurfaceFixtures {
         return sample
     }
 
-    /// Five steps, as a hook reports them: the tool, its target, when.
-    static func steps(endingAt last: Int64) -> [SessionBook.Step] {
-        [
-            SessionBook.Step(tool: "Read", target: "Sources/Upload/Queue.swift", ms: last - 9 * minute),
-            SessionBook.Step(tool: "Edit", target: "Sources/Upload/Queue.swift", ms: last - 7 * minute),
-            SessionBook.Step(tool: "Grep", target: "retryDelay", ms: last - 5 * minute),
-            SessionBook.Step(tool: "Edit", target: "Sources/Upload/Backoff.swift", ms: last - 3 * minute),
-            SessionBook.Step(tool: "Bash", target: "swift test", ms: last),
-        ]
+    /// The last step, as a hook reports it: the tool, its target, when.
+    static func step(at ms: Int64) -> SessionBook.Step {
+        SessionBook.Step(tool: "Bash", target: "swift test", ms: ms)
     }
 
     static func rowRunningStep() -> Sample {
         var sample = base(.claude, id: "fx-running-step", task: "Add retry with jitter to the upload queue")
         sample.facts = SessionFacts(
-            steps: steps(endingAt: nowMs - 2 * minute),
+            lastStep: step(at: nowMs - 2 * minute),
             turnStartMs: nowMs - 14 * minute,
             lastEventMs: nowMs - 2 * minute,
             activityMs: nowMs - 2 * minute,
@@ -272,7 +266,7 @@ enum SurfaceFixtures {
 
     static func rowStalledStep() -> Sample {
         var sample = rowStalled()
-        sample.facts.steps = steps(endingAt: nowMs - 25 * minute)
+        sample.facts.lastStep = step(at: nowMs - 25 * minute)
         sample.facts.turnStartMs = nowMs - 40 * minute
         return sample
     }
@@ -282,8 +276,8 @@ enum SurfaceFixtures {
     static func rowLiveTool() -> Sample {
         var sample = base(.pi, id: "fx-live", task: "Make the test suite pass on CI")
         sample.facts = SessionFacts(
-            steps: steps(endingAt: nowMs - 4 * minute),
-            running: SessionBook.Step(tool: "bash", target: "npm test", ms: nowMs - 3 * minute),
+            lastStep: step(at: nowMs - 4 * minute),
+            runningSteps: [SessionBook.Step(tool: "bash", target: "npm test", ms: nowMs - 3 * minute)],
             turnStartMs: nowMs - 9 * minute,
             lastEventMs: nowMs - 3 * minute,
             activityMs: nowMs - 3 * minute,
@@ -297,7 +291,7 @@ enum SurfaceFixtures {
         var sample = base(.claude, id: "fx-failed-step", task: "Audit the auth flows")
         let last = SessionBook.Step(tool: "Bash", target: "swift test", ms: nowMs - minute, failed: true, tookMs: 2_300, sub: "a1")
         sample.facts = SessionFacts(
-            steps: Array(steps(endingAt: nowMs - 2 * minute).dropLast()) + [last],
+            lastStep: last,
             turnStartMs: nowMs - 11 * minute,
             lastEventMs: nowMs - minute,
             activityMs: nowMs - minute,

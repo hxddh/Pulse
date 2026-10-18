@@ -1132,7 +1132,7 @@ struct RowWordsTests {
     /// says whose it is.
     @Test func aFailedOrSubagentStepIsMarked() {
         let step = SessionBook.Step(tool: "Bash", target: "swift test", ms: now - minute, failed: true, tookMs: 0, sub: "a1")
-        let facts = SessionFacts(steps: [step], lastEventMs: now - minute)
+        let facts = SessionFacts(lastStep: step, lastEventMs: now - minute)
         #expect(face(session(), facts).secondLine == TrayRowModel.SecondLine(kind: .step, text: "Subagent · Bash · swift test · failed · 1m ago"))
         let zh = face(session(), facts, lang: .zh).secondLine?.text
         #expect(zh == "子代理 · Bash · swift test · 失败 · " + L10n.ago(now - minute, nowMs: now, .zh))
@@ -1143,12 +1143,12 @@ struct RowWordsTests {
     @Test func aLiveToolIsNowNotAStep() {
         let live = SessionBook.Step(tool: "Bash", target: "npm test", ms: now - 3 * minute)
         let done = SessionBook.Step(tool: "Read", target: "a.swift", ms: now - 4 * minute)
-        let facts = SessionFacts(steps: [done], running: live, lastEventMs: now - 3 * minute)
+        let facts = SessionFacts(lastStep: done, runningSteps: [live], lastEventMs: now - 3 * minute)
         #expect(face(session(), facts).secondLine == TrayRowModel.SecondLine(kind: .now, text: "Now: Bash · npm test · 3m"))
         #expect(face(session(), facts, lang: .zh).secondLine?.text == "当前：Bash · npm test · " + L10n.duration(3 * 60, .zh))
-        let young = SessionFacts(running: SessionBook.Step(tool: "Bash", target: "npm test", ms: now - 20_000), lastEventMs: now - 20_000)
+        let young = SessionFacts(runningSteps: [SessionBook.Step(tool: "Bash", target: "npm test", ms: now - 20_000)], lastEventMs: now - 20_000)
         #expect(face(session(), young).secondLine?.text == "Now: Bash · npm test")
-        let finished = SessionFacts(steps: [done], lastEventMs: now - 4 * minute)
+        let finished = SessionFacts(lastStep: done, lastEventMs: now - 4 * minute)
         #expect(face(session(), finished).secondLine?.kind == .step, "a finished step is never live")
     }
 
@@ -1245,7 +1245,7 @@ struct RowWordsTests {
         #expect(zh.age == L10n.duration(14 * 60, .zh))
         // Under a minute the turn and the step both say "now".
         facts.turnStartMs = now - 20_000
-        facts.steps = [SessionBook.Step(tool: "Read", target: "", ms: now - 10_000)]
+        facts.lastStep = SessionBook.Step(tool: "Read", target: "", ms: now - 10_000)
         let young = face(row, facts)
         #expect(young.age == "now")
         #expect(young.secondLine?.text == "Read · now")
