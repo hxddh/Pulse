@@ -215,6 +215,13 @@ jobs:
           PULSE_NOTARY_PROFILE: ${{ steps.signing.outputs.notary_profile }}
         run: ./PulseBar/Scripts/package.sh
 
+      # The packaged app on the real path: installed hooks → launcher →
+      # PulseBar --hook → the replayed tray (scripts/e2e.sh). A failure
+      # stops the release before anything is published.
+      - name: End to end
+        timeout-minutes: 10
+        run: ./scripts/e2e.sh
+
       # SLSA build provenance for the DMG, signed with this run's OIDC
       # identity and stored on GitHub (no key to manage). It proves the file
       # was built by this workflow from this commit — it is not an Apple

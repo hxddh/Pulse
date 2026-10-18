@@ -1,0 +1,10 @@
+{
+  "sessionID": "ses_fx1",
+  "directory": "/Users/me/code/app",
+  "permission": "bash",
+  "patterns": [
+    "rm -rf dist"
+  ],
+  "title": "rm -rf dist",
+  "tool_name": "bash"
+}

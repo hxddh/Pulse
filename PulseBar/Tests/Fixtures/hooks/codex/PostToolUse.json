@@ -1,0 +1,14 @@
+{
+  "session_id": "fx-codex-1",
+  "transcript_path": null,
+  "cwd": "/Users/me/code/app",
+  "model": "gpt-5-codex",
+  "hook_event_name": "PostToolUse",
+  "turn_id": "turn-1",
+  "tool_name": "Bash",
+  "tool_use_id": "call_1",
+  "tool_input": {
+    "command": "cargo test -p uploader"
+  },
+  "tool_response": "test result: ok. 12 passed"
+}

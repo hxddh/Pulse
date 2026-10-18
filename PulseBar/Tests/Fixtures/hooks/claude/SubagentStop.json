@@ -1,0 +1,11 @@
+{
+  "session_id": "fx-claude-1",
+  "transcript_path": "/Users/me/.claude/projects/-Users-me-code-app/fx-claude-1.jsonl",
+  "cwd": "/Users/me/code/app",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_id": "agent_7f3a",
+  "agent_type": "Explore",
+  "agent_transcript_path": "/Users/me/.claude/projects/-Users-me-code-app/fx-claude-1/subagents/agent-7f3a.jsonl",
+  "last_assistant_message": "Found 3 call sites."
+}

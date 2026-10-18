@@ -1,0 +1,6 @@
+{
+  "sessionID": "ses_fx1",
+  "directory": "/Users/me/code/app",
+  "tool_name": "read",
+  "target": "src/cache.ts"
+}

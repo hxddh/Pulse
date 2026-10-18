@@ -9,6 +9,16 @@ as the wrong state — so each contract names the source it was read from
 (`vendor-formats.json`). The line each event writes is
 [`attention-protocol.md`](attention-protocol.md).
 
+Every installed event also has a payload in
+`PulseBar/Tests/Fixtures/hooks/<agent>/<event>.json` (variants
+`<event>@<variant>.json`), as the hook hands it to `pulse-hook`, and
+`expected.json` there says the line it becomes; `catalog_check` fails an
+event without one. They are reconstructed from the pinned source, not
+captured from a live run: a field no primary source confirms is listed under
+the agent's `unverified` in `vendor-formats.json` (today: Cursor's payload
+fields). `RecordedPayloadTests` reads them in process and `scripts/e2e.sh`
+through the packaged app ([`architecture.md`](architecture.md), "Proof").
+
 Each agent is one adapter file in `PulseBar/Sources/PulseKit/Agents/`
 (`Claude.swift`, `Codex.swift`, `Cursor.swift`, `Pi.swift`, `Copilot.swift`,
 `OpenCode.swift`): its identity, process rule, where its hook goes and in
