@@ -133,6 +133,10 @@ package struct SessionFacts: Equatable, Sendable {
     /// The person stopped the run, and nothing has moved it since.
     package var stopped = false
 
+    /// Nothing said: what a key the book does not hold has. (The
+    /// memberwise initializer is the module's; the app takes this.)
+    package static let empty = SessionFacts()
+
     /// The newest tool still running — what the row says runs now ("Now:
     /// …"); nil none.
     package var running: SessionBook.Step? { runningSteps.last }

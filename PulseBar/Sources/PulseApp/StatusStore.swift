@@ -151,7 +151,7 @@ final class StatusStore {
     /// clocks — read from the book when a row or the detail page is drawn.
     /// Not observed: the views redraw it on their clock (`TimelineView`).
     func facts(for key: SessionKey) -> SessionFacts {
-        previewFixtureActive ? fixtureFacts[key] ?? SessionFacts() : engine.book.facts(for: key)
+        previewFixtureActive ? fixtureFacts[key] ?? .empty : engine.book.facts(for: key)
     }
 
     /// What the agents' configs carry now: the status line and each
