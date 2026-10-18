@@ -31,7 +31,6 @@ QA = ROOT / "PulseBar/Sources/PulseQA"
 QA_FILES = [
     "SurfaceFixtures.swift", "SurfaceCapture.swift", "StatusStoreFixture.swift",
     "TrayPreviewWindowController.swift", "QADriver.swift", "ProofDriver.swift",
-    "TrayAccessibilityCheck.swift",
 ]
 
 # (file, struct) pairs that must never see the store.

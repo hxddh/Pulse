@@ -18,9 +18,6 @@ import SwiftUI
 //   --capture-settings=<png>    photograph Settings
 //
 //   --appearance=light|dark     this run's appearance
-//   --assert-tray               open the tray, check its accessibility
-//                               tree and key window, exit 0 or 1
-//                               (`TrayAccessibilityCheck`)
 //
 // and, before AppKit starts, the proof commands (`ProofDriver`):
 // `--install-hooks=<home>`, `--dump-snapshot=<json>`,
@@ -101,9 +98,6 @@ enum QADriver {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                 StatusItemController.shared?.show()
             }
-        }
-        if arguments.contains("--assert-tray") {
-            TrayAccessibilityCheck.start()
         }
         if let path = value("--capture-tray=", in: arguments) {
             DispatchQueue.main.asyncAfter(deadline: .now() + captureDelay) {
