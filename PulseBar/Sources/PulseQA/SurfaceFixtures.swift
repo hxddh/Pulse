@@ -183,7 +183,7 @@ enum SurfaceFixtures {
     }
 
     static func rowStalled() -> Sample {
-        var sample = base(.copilot, id: "fx-stalled", task: "Port the parser to Swift")
+        var sample = base(.opencode, id: "fx-stalled", task: "Port the parser to Swift")
         sample.row.status = .running(stalled: true)
         sample.facts.lastEventMs = nowMs - 25 * minute
         sample.facts.activityMs = nowMs - 25 * minute

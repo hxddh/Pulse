@@ -236,10 +236,10 @@ it"). A project's own `disableAllHooks: false` can override the user's
 `true`; Pulse reads only the user file and says so as a warning, not a
 verdict. Codex trusts each hook by a hash of its entry
 (`engine/discovery.rs`): any change Pulse makes leaves its entries
-"modified" and silent until the person trusts them again in `/hooks`
-(`NestedFlavor.trustBound`). When the install is whole, a Codex process
-started after `hooks.json` last changed and nothing was heard since,
-Settings says Codex hasn't run it — trust it in `/hooks`. Codex's
+"modified" and silent until the person trusts them again in `/hooks`.
+Pulse does not guess at that from a process's start: Settings says only
+what the log proves — nothing heard since the install, on a log that has
+kept every line. Codex's
 `allow_managed_hooks_only` lives in `config.toml`, which Pulse never reads.
 
 **What Pi cannot report.** Pulse sees only what passes through Pi's

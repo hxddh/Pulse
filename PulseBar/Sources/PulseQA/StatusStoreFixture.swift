@@ -46,7 +46,8 @@ extension StatusStore {
             // for that lamp state.
             var fixtureRow = row(
                 "status-fixture",
-                .cursor,
+                // Only an agent that says a tool started can stall.
+                name == "status-stalled" ? .pi : .cursor,
                 task: name == "status-waiting"
                     ? "Approve the packaging step"
                     : "Ship Signal Quality",

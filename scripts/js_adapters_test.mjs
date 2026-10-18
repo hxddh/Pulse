@@ -233,42 +233,24 @@ scenario("pi · a subagent (json mode) and a reload send nothing", async () => {
   return [pi("agent_start")]
 })
 
-// Everything queued when Pi goes away still goes, the shutdown last.
-const shutdownEvents = [
-  ["agent_start", {}],
-  ["tool_execution_start", { toolCallId: "c1", toolName: "bash", args: { command: "make" } }],
-  ["tool_execution_end", { toolCallId: "c1", toolName: "bash", isError: false, durationMs: 5 }],
-  ["agent_end", { messages: [{ role: "assistant", content: [{ type: "text", text: "Bye" }], stopReason: "stop" }] }],
-  ["agent_settled", {}],
-  ["session_shutdown", { reason: "quit" }],
-]
-const shutdownExpected = [
-  pi("agent_start"),
-  pi("tool_execution_start", { tool_name: "bash", tool_input: { command: "make" } }),
-  pi("tool_execution_end", { tool_name: "bash", tool_input: { command: "make" }, is_error: false, duration_ms: 5 }),
-  pi("agent_settled", { last_assistant_message: "Bye" }),
-  pi("session_shutdown", { reason: "quit" }),
-]
-
+// When Pi goes away the child already running finishes and the queue
+// behind it is dropped: the shutdown goes at once, and nothing numbered
+// after the session's end can revive it. The running child and the
+// shutdown take the log's lock in either order.
 scenario(
-  "pi · shutdown flushes every queued event",
+  "pi · shutdown drops the queue and goes at once",
   async () => {
-    await piRun(shutdownEvents)
-    return shutdownExpected
+    await piRun([
+      ["agent_start", {}],
+      ["tool_execution_start", { toolCallId: "c1", toolName: "bash", args: { command: "make" } }],
+      ["tool_execution_end", { toolCallId: "c1", toolName: "bash", isError: false, durationMs: 5 }],
+      ["agent_end", { messages: [{ role: "assistant", content: [{ type: "text", text: "Bye" }], stopReason: "stop" }] }],
+      ["agent_settled", {}],
+      ["session_shutdown", { reason: "quit" }],
+    ])
+    return [pi("agent_start"), pi("session_shutdown", { reason: "quit" })]
   },
   { compare: "multiset" },
-)
-
-// Known bug (31.0): `flush()` spawns every queued event at once while the
-// child before them may still be running, so the log can number the
-// shutdown before the turn's end. Correct: the queue drains in order.
-scenario(
-  "pi · shutdown flush keeps the order",
-  async () => {
-    await piRun(shutdownEvents)
-    return shutdownExpected
-  },
-  { knownBug: "Pi shutdown flush reorders the queued events" },
 )
 
 // --- OpenCode 1.x -------------------------------------------------------------
@@ -378,10 +360,8 @@ scenario("opencode 1.x · a subagent's asks go under the root, the rest is dropp
   ]
 })
 
-// Known bug (31.0): an ask the turn left open — the run aborted, the ask
-// never replied — stays in OPEN for good, so every later answer says
-// another ask is still open and the lamp never goes out. Correct: once
-// the turn is over, the next ask's answer is the last one.
+// An ask the turn left open — the run aborted, the ask never replied — is
+// forgotten when the turn is over, so the next ask's answer is the last one.
 scenario(
   "opencode 1.x · an ask the turn abandoned does not hold later answers",
   async () => {
@@ -396,7 +376,7 @@ scenario(
     ])
     return [oc("permission.replied", S1, { pending: 0 })]
   },
-  { knownBug: "OpenCode stale OPEN asks are never cleared", compare: "last" },
+  { compare: "last" },
 )
 
 // --- OpenCode 2.x -------------------------------------------------------------
