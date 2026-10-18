@@ -273,6 +273,29 @@ package struct SessionBook: Equatable {
         }
     }
 
+    /// The lines a replay rebuilds a session's own facts from, by the `seq`
+    /// each was applied with (0 none) — what a compaction keeps whatever its
+    /// budget (`EventLog.compact`). None of `lines` raises anything.
+    package struct Anchors: Equatable, Sendable {
+        /// Its first line that raises nothing and can introduce it
+        /// (`introduces`) — its first clock.
+        package var first: Int64 = 0
+        /// The prompt its title came from.
+        package var title: Int64 = 0
+        /// The line that started the current turn — its clock.
+        package var turn: Int64 = 0
+        /// The latest prompt that said something.
+        package var prompt: Int64 = 0
+        /// The line its vendor name came from.
+        package var name: Int64 = 0
+        /// The raise that turned it red, while it is blocked — the open
+        /// block's first line.
+        package var block: Int64 = 0
+
+        /// Every anchor but the block.
+        package var lines: [Int64] { [first, title, turn, prompt, name].filter { $0 > 0 } }
+    }
+
     /// One session: who it is, where it runs, the one state it is in and
     /// the reducer's own bookkeeping; what it said lately is its `facts`,
     /// read and written through the session's own members
@@ -323,6 +346,8 @@ package struct SessionBook: Equatable {
         /// What it said lately — its last words, step, clocks, events and
         /// timeline (`SessionFacts`).
         package var facts = SessionFacts()
+        /// The lines its facts and its open block came from.
+        package var anchors = Anchors()
 
         package subscript<T>(dynamicMember path: WritableKeyPath<SessionFacts, T>) -> T {
             get { facts[keyPath: path] }
@@ -413,11 +438,7 @@ package struct SessionBook: Equatable {
         if !sub.isEmpty {
             Self.applySubagent(record, sub: sub, at: ms, new: before == nil, into: &session)
             Self.hear(&session, Heard(ms: ms, event: event, effect: Self.effect(of: record, prior: prior, now: session), sub: sub, tookMs: Self.took(record)))
-            sessions[key] = session
-            guard let before else { return true }
-            var unheard = session
-            unheard.timeline = before.timeline
-            return unheard != before
+            return land(session, record: record, before: before)
         }
 
         switch kind {
@@ -427,10 +448,13 @@ package struct SessionBook: Equatable {
             if session.state != .working { Self.set(&session, .idle, at: ms, event: event) }
             // A session the vendor already named (a resume).
             let name = TitleHeuristics.firstLine(record.message)
-            if !name.isEmpty { session.name = name }
+            if !name.isEmpty {
+                session.name = name
+                session.anchors.name = record.seq
+            }
         case .working:
             session.activityMs = max(session.activityMs, ms)
-            Self.prompt(record.message, at: ms, into: &session)
+            Self.prompt(record, at: ms, into: &session)
             // A prompt stamped no later than the session's end is from
             // before it: it revives nothing.
             if !Self.endedBefore(session, ms) { Self.answer(&session, at: ms, event: event) }
@@ -469,6 +493,7 @@ package struct SessionBook: Equatable {
                     // the error of the last one is over, and its count is
                     // this line's step alone.
                     session.turnStartMs = ms
+                    session.anchors.turn = record.seq
                     session.lastError = ""
                     session.failedTurn = false
                     let step = kind == .tool ? Self.stepOf(record) : nil
@@ -484,6 +509,7 @@ package struct SessionBook: Equatable {
         case .title:
             // The vendor's name for the session; an empty one clears it.
             session.name = TitleHeuristics.firstLine(record.message)
+            session.anchors.name = record.seq
         case .turn, .failed:
             // A turn stamped no later than the session's end is from before
             // it (the lines were numbered out of order): heard, no state.
@@ -515,11 +541,36 @@ package struct SessionBook: Equatable {
             return false
         }
         Self.hear(&session, Heard(ms: ms, event: event, effect: Self.effect(of: record, prior: prior, now: session), tookMs: Self.took(record)))
-        sessions[key] = session
-        guard let before else { return true }
-        var unheard = session
-        unheard.timeline = before.timeline
-        return unheard != before
+        return land(session, record: record, before: before)
+    }
+
+    /// The applied line's session goes back in the book, with its first
+    /// clock when this is it. Returns whether anything but the timeline and
+    /// the anchors changed.
+    private mutating func land(_ session: Session, record: AttentionRecord, before: Session?) -> Bool {
+        var session = session
+        if session.anchors.first == 0, Self.introduces(record) { session.anchors.first = record.seq }
+        sessions[session.key] = session
+        guard var unheard = before else { return true }
+        unheard.timeline = session.timeline
+        unheard.anchors = session.anchors
+        return unheard != session
+    }
+
+    /// Whether a line can introduce a session without raising anything —
+    /// a session's first clock: a `start` or a prompt, or a turn, an idle or
+    /// activity that names its session. Never a block (an answered one kept
+    /// without its answer would be red again), a resolution, an `end`, a
+    /// title or an ignored line.
+    package static func introduces(_ record: AttentionRecord) -> Bool {
+        switch record.kind {
+        case .start, .working:
+            return true
+        case .turn, .failed, .idle, .tool, .status, .stopped:
+            return !record.session.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .permission, .question, .waiting, .done, .dismiss, .end, .title, .ignored:
+            return false
+        }
     }
 
     /// An `ignored` line: no state. When it names a session the book holds
@@ -723,17 +774,22 @@ package struct SessionBook: Equatable {
     /// A prompt: a new turn. Its text is the latest prompt, and the title
     /// when the session has none yet and it says something. The error of
     /// the last turn is over.
-    private static func prompt(_ raw: String, at ms: Int64, into session: inout Session) {
+    private static func prompt(_ record: AttentionRecord, at ms: Int64, into session: inout Session) {
         session.turnStartMs = ms
+        session.anchors.turn = record.seq
         session.lastError = ""
         session.failedTurn = false
         session.turnSteps = 0
         session.turnFailedSteps = 0
         session.runningSteps = []
-        let text = TitleHeuristics.promptTitle(raw)
+        let text = TitleHeuristics.promptTitle(record.message)
         guard !text.isEmpty else { return }
         session.lastPrompt = text
-        if session.title.isEmpty, TitleHeuristics.isMeaningful(text) { session.title = text }
+        session.anchors.prompt = record.seq
+        if session.title.isEmpty, TitleHeuristics.isMeaningful(text) {
+            session.title = text
+            session.anchors.title = record.seq
+        }
     }
 
     /// A `tool` line that names its tool is a step, and finishes one tool
@@ -855,6 +911,8 @@ package struct SessionBook: Equatable {
             // out of order); a raise after it is a new block.
             if let turn = session.heldTurn, turn.ms >= ms { held = turn }
         }
+        // The raise that turned it red; a raise over a block keeps it.
+        if case .blocked = session.state {} else { session.anchors.block = record.seq }
         Self.set(&session, .blocked(block), at: block.sinceMs, event: cause)
         session.heldTurn = held
         session.interrupted = interrupted

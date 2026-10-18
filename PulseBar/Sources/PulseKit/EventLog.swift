@@ -18,11 +18,11 @@ import Foundation
 ///   compacts it first (`compact`) and rewrites it under a header with the
 ///   same `gen` and a new `next`. Every kept line keeps its `seq`. Per
 ///   session (or per agent + folder for a session-less one) it keeps the
-///   last `linesPerSession` lines, every line of the last `recentWindowMs`,
-///   its first line that is not a block, the prompt its title came from and
-///   its latest prompt; it never drops an open block, nor anything after it
-///   in that session — the lines that answer it — nor the line being
-///   appended.
+///   last `linesPerSession` lines, every line of the last `recentWindowMs`
+///   and the lines a replay rebuilds its title and clocks from; it never
+///   drops an open block — as a replay through `SessionBook` holds it —
+///   nor anything after it in that session (the lines that answer it), nor
+///   the line being appended.
 /// - **Readers read from an offset** (`read(after:)`) under a shared lock,
 ///   only complete lines, split on `\n` bytes alone. A cursor whose header
 ///   is not the file's (a compaction, a log started over), or one past the
@@ -300,16 +300,16 @@ package enum EventLog {
     /// is grouped by agent **and** folder, never by agent alone — and a
     /// session-less `done` or `dismiss` naming no folder belongs to every
     /// session-less group of its agent before it. A group whose newest line
-    /// is older than `retentionMs` goes whole. Of the rest, each keeps its
-    /// last `linesPerSession` lines, every line newer than `recentWindowMs`,
-    /// and — whatever the budget — its first line that is not a block (the
-    /// session's first clock), the prompt its title came from, its latest
-    /// prompt, and everything from its open block on (a block no later line
-    /// in the group answers; a `status` line answers nothing), so a replay
-    /// keeps the session's title and first clock, and a block is never kept
-    /// without the lines that answer it and never dropped while it is open.
-    /// Over `budget`, the per-session count and the window halve until it
-    /// fits (or reach one line and nothing).
+    /// is older than `retentionMs` goes whole. The records are replayed
+    /// through `SessionBook`, so its own rules say what a session needs:
+    /// each group keeps its last `linesPerSession` lines, every line newer
+    /// than `recentWindowMs`, and — whatever the budget — the lines its first
+    /// clock, title, turn clock, latest prompt and vendor name came from
+    /// (`SessionBook.Anchors`, none of them a block) and, while the book
+    /// holds it blocked, the raise that turned it red with everything after
+    /// it — so a block is never kept without the lines that answer it and
+    /// never dropped while it is open. Over `budget`, the per-session count
+    /// and the window halve until it fits (or reach one line and nothing).
     package static func compact(_ records: [AttentionRecord], nowMs: Int64, budget: Int = targetBytes) -> [AttentionRecord] {
         var groupsOf: [[SessionKey]] = []
         var sessionless: [AgentID: Set<SessionKey>] = [:]
@@ -324,8 +324,6 @@ package enum EventLog {
                 groupsOf.append([key])
             }
         }
-
-        // Each group's positions, its newest stamp and its open block.
         var members: [SessionKey: [Int]] = [:]
         var newest: [SessionKey: Int64] = [:]
         for (position, groups) in groupsOf.enumerated() {
@@ -334,104 +332,22 @@ package enum EventLog {
                 newest[group] = max(newest[group] ?? .min, records[position].ms)
             }
         }
+
+        // The replay, each line numbered by its position (1-based: 0 is
+        // "none" to the book).
+        var book = SessionBook()
+        for (position, record) in records.enumerated() {
+            var line = record
+            line.seq = Int64(position) + 1
+            book.apply(line, nowMs: nowMs)
+        }
+        var anchors: [SessionKey: [Int]] = [:]
         var openFrom: [SessionKey: Int] = [:]
-        for (group, positions) in members {
-            var open: Int?
-            var openTool = ""
-            var openSub = ""
-            var openMs: Int64 = 0
-            for position in positions {
-                let record = records[position]
-                let sub = String(record.sub.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
-                // As `SessionBook` does: a subagent's line answers only its
-                // own block (its step, its `done`, its end); a main-agent
-                // step answers only the main agent's block, while a prompt,
-                // a `done`, a stop or an end answers either. A line stamped
-                // before the block is about an earlier one; an agent whose
-                // module sends every reply is answered by no step
-                // (`AgentSpec.stepsAnswerBlocks`).
-                let own = !sub.isEmpty && sub == openSub
-                let after = record.ms >= openMs
-                switch record.kind {
-                case .permission, .question, .waiting:
-                    if open == nil {
-                        open = position
-                        openTool = record.tool.isEmpty ? AttentionProtocol.blockedTool(record.message) : record.tool
-                        openSub = sub
-                        openMs = record.ms
-                    }
-                case .working, .start:
-                    if sub.isEmpty { open = nil }
-                case .done, .stopped:
-                    if sub.isEmpty || own, after { open = nil }
-                case .end:
-                    if sub.isEmpty || (own && after) { open = nil }
-                case .dismiss:
-                    if sub.isEmpty, after { open = nil }
-                case .tool:
-                    if sub == openSub, record.ms > openMs, record.agent.stepsAnswerBlocks,
-                       openTool.isEmpty || record.tool.isEmpty
-                        || record.tool.caseInsensitiveCompare(openTool) == .orderedSame {
-                        open = nil
-                    }
-                case .turn, .failed, .idle:
-                    // A turn inside a block's grace is held, not an answer:
-                    // keep the block (keeping too much is only bytes). A
-                    // subagent's end of turn ends its own ask.
-                    if own, after { open = nil }
-                case .status, .title, .ignored:
-                    // Work going on is never an answer.
-                    break
-                }
-            }
-            if let open { openFrom[group] = open }
+        for (key, session) in book.sessions {
+            anchors[key] = session.anchors.lines.map { Int($0) - 1 }
+            if case .blocked = session.state, session.anchors.block > 0 { openFrom[key] = Int(session.anchors.block) - 1 }
         }
         let live = Set(members.keys.filter { nowMs - (newest[$0] ?? 0) <= retentionMs })
-        // What a replay needs to rebuild a session's own facts, whatever the
-        // budget: its first line that is not a block (its first clock), the
-        // prompt its title came from — the first main-agent `working` line
-        // whose text says something (`SessionBook`'s rule) — its latest
-        // prompt (the current turn's clock), its latest prompt with words
-        // (the latest prompt's text) and the line its vendor name came from
-        // (the latest `title`, or `start` that carries a name).
-        // None of them raises anything: a block is kept only by the rules
-        // above, with what answers it.
-        func person(_ record: AttentionRecord) -> Bool {
-            record.sub.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-        var anchors: [SessionKey: Set<Int>] = [:]
-        for (group, positions) in members {
-            var kept = Set<Int>()
-            if let first = positions.first(where: { introduces(records[$0]) }) {
-                kept.insert(first)
-            }
-            if let title = positions.first(where: { position in
-                guard records[position].kind == .working, person(records[position]) else { return false }
-                let text = TitleHeuristics.promptTitle(records[position].message)
-                return !text.isEmpty && TitleHeuristics.isMeaningful(text)
-            }) {
-                kept.insert(title)
-            }
-            if let latest = positions.last(where: { records[$0].kind == .working && person(records[$0]) }) {
-                kept.insert(latest)
-            }
-            // The latest prompt that says something — the latest prompt's
-            // text, when the latest prompt line carries none (a run's start).
-            if let said = positions.last(where: { position in
-                records[position].kind == .working && person(records[position])
-                    && !TitleHeuristics.promptTitle(records[position].message).isEmpty
-            }) {
-                kept.insert(said)
-            }
-            if let named = positions.last(where: { position in
-                let record = records[position]
-                guard person(record) else { return false }
-                return record.kind == .title || (record.kind == .start && !record.message.isEmpty)
-            }) {
-                kept.insert(named)
-            }
-            anchors[group] = kept
-        }
 
         func select(perSession: Int, windowMs: Int64) -> Set<Int> {
             var keep = Set<Int>()
@@ -472,22 +388,6 @@ package enum EventLog {
     package static func keepsEveryLine(_ records: [AttentionRecord]) -> Bool {
         for (index, record) in records.enumerated() where record.seq != Int64(index) + 1 { return false }
         return true
-    }
-
-    /// Whether a record can introduce a session in `SessionBook` without
-    /// raising anything — the line a compaction keeps as a session's first
-    /// clock: a `start` or a prompt, or a turn, an idle or activity that
-    /// names its session. Never a block (an answered one kept without its
-    /// answer would be red again), a resolution, an `end` or an ignored line.
-    package static func introduces(_ record: AttentionRecord) -> Bool {
-        switch record.kind {
-        case .start, .working:
-            return true
-        case .turn, .failed, .idle, .tool, .status, .stopped:
-            return !record.session.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .permission, .question, .waiting, .done, .dismiss, .end, .title, .ignored:
-            return false
-        }
     }
 
     // MARK: - Descriptors

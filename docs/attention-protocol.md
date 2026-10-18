@@ -56,17 +56,14 @@ granted. The first line is the header:
   the group of the folder it names, or — naming none — to every session-less
   group of its agent before it), the last 64 lines and every line of the
   last two hours are kept; a session whose newest line is a day old goes
-  whole; whatever the budget, each session keeps what a replay rebuilds its
-  own facts from — its first line that is not a block (its first clock), the
-  prompt its title came from (the first main-agent `working` line that says
-  something), its latest main-agent prompt (the turn's clock), its latest
-  main-agent prompt that says something (the latest prompt's text) and the
-  line its vendor name came from (the latest `title`, or a `start` that
-  carries a name); and an **open block** (a `permission` / `question` /
-  `waiting` no later line in its session answers, by the reader's rules: a
-  `status` line answers nothing, a subagent's line only that subagent's
-  block, a main-agent step only the main agent's, a line stamped before the
-  block nothing) is kept with every line after it. An answered block is never kept without its answer. Over half a MiB
+  whole. The lines are replayed through the reader itself (`SessionBook`),
+  so its own rules decide the rest: whatever the budget, each session keeps
+  the lines a replay rebuilds its own facts from (`SessionBook.Anchors`: its
+  first line that raises nothing — its first clock — the prompt its title
+  came from, the line that started its turn, its latest prompt that says
+  something and the line its vendor name came from) and, while the replay
+  holds it blocked, the raise that turned it red with every line after it.
+  An answered block is never kept without its answer. Over half a MiB
   the per-session count and the window halve until it fits. The line being
   appended is always kept: an append reports success only when its line is
   in the file. `ignored` lines are bounded like any other.
