@@ -116,9 +116,19 @@ jobs:
       # The real tray popover's accessibility tree: every row a button, its
       # "›" a separate one, the window key. New; it reports without failing
       # the job until it has been green on the runner (then drop the flag).
+      # Exit 2 is inconclusive (SwiftUI built no elements in process); any
+      # non-zero exit leaves a warning annotation on the run.
       - name: Tray accessibility
         continue-on-error: true
-        run: ./scripts/qa_captures.sh tray-a11y
+        run: |
+          status=0
+          ./scripts/qa_captures.sh tray-a11y || status=$?
+          case $status in
+            0) ;;
+            2) echo "::warning title=Tray accessibility::inconclusive — SwiftUI exposed no accessibility elements in process (see the step log)" ;;
+            *) echo "::warning title=Tray accessibility::failed with exit $status (see the assert-tray lines in the step log)" ;;
+          esac
+          exit $status
 
       - name: Upload QA captures
         uses: actions/upload-artifact@v7

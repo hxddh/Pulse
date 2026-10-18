@@ -12,7 +12,9 @@
 #   ./scripts/qa_captures.sh tray-a11y  # open the real tray on a fixture and
 #                                       # check its accessibility tree: each
 #                                       # row a button, its "›" a separate
-#                                       # one, the window key (not in `all`)
+#                                       # one, the window key (not in `all`;
+#                                       # exit 2 = inconclusive: SwiftUI built
+#                                       # no elements in process)
 #
 # Writes under zig-out/qa-captures/{surfaces,status}/ — never into the repo.
 # Surface fixture names come from `SurfaceFixtures.names`; this script reads
@@ -201,14 +203,20 @@ tray_a11y() {
     sleep 0.25
   done
   if kill -0 "$pid" 2>/dev/null; then
-    echo "error: --assert-tray did not finish in ${timeout}s" >&2
     kill "$pid" 2>/dev/null || true
-    status=1
-  elif ! wait "$pid"; then
-    status=1
+    status=124
+  else
+    wait "$pid" || status=$?
   fi
   cat "$out"
   quit_pulse
+  # One verdict line after the tree, so the log says which case this was.
+  case $status in
+    0)   echo "tray-a11y: OK — every row is a button with its own Details button" ;;
+    2)   echo "tray-a11y: INCONCLUSIVE — SwiftUI exposed no accessibility elements in process; the tray's shape was not observed" >&2 ;;
+    124) echo "tray-a11y: TIMEOUT — --assert-tray did not finish in ${timeout}s" >&2 ;;
+    *)   echo "tray-a11y: FAILED (exit $status) — see the assert-tray FAIL lines above" >&2 ;;
+  esac
   return $status
 }
 
