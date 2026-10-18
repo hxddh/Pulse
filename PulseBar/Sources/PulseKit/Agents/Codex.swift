@@ -52,8 +52,6 @@ extension AgentSpec {
         // A subagent's events carry its `agent_id` (its thread); the main
         // agent's none. Every thread of a session shares its `session_id`.
         subagentKeys: ["agent_id"],
-        // A turn says its last words: `Stop` carries `last_assistant_message`.
-        lastWords: true,
         read: { Codex.read($0, $1) }
     )
 }

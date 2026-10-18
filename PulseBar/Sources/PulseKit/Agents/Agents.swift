@@ -495,11 +495,6 @@ package struct AgentSpec: Sendable {
     /// Cursor's `conversation_id` is the one every event carries, its
     /// `session_id` only some).
     package let sessionKeys: [String]
-    /// A turn line carries the agent's last words (Claude's and Codex's
-    /// `last_assistant_message`, Cursor's reply text, Pi's last assistant
-    /// message) — declared, since it is in the payload, not in the event
-    /// list. `capabilities` says it in Settings.
-    package let lastWords: Bool
     /// The reading of an event whose meaning is in its payload; nil leaves
     /// the event's own action (`HookEvent.action`). Called only for an
     /// installed event.
@@ -517,7 +512,6 @@ package struct AgentSpec: Sendable {
         subagentKeys: [String] = [],
         reportsOwnPID: Bool = false,
         sessionKeys: [String] = HookContext.sessionKeys,
-        lastWords: Bool = false,
         read: @escaping @Sendable (_ event: String, _ payload: [String: Any]) -> HookReading? = { _, _ in nil }
     ) {
         self.id = id
@@ -531,7 +525,6 @@ package struct AgentSpec: Sendable {
         self.subagentKeys = subagentKeys
         self.reportsOwnPID = reportsOwnPID
         self.sessionKeys = sessionKeys
-        self.lastWords = lastWords
         self.read = read
     }
 
@@ -545,53 +538,6 @@ package struct AgentSpec: Sendable {
             reading.sub = PulseHookReceiver.string(payload, keys: subagentKeys)
         }
         return reading
-    }
-}
-
-/// What an agent's adapter lets Pulse say about its sessions, derived from
-/// the contract once: whether it reports a wait (`waiting`), its steps (a
-/// per-tool event — `HookContract.reportsToolActivity`), its last words
-/// (`AgentSpec.lastWords`) and a title (an event that is a prompt or the
-/// vendor's own name for the session). Every agent reports its turns.
-/// Settings → Hooks and the report say it; nothing is guessed. Pure.
-package struct AgentCapabilities: Equatable, Sendable {
-    package var waits: Bool
-    package var steps: Bool
-    package var lastWords: Bool
-    package var titles: Bool
-
-    package init(waits: Bool, steps: Bool, lastWords: Bool, titles: Bool) {
-        self.waits = waits
-        self.steps = steps
-        self.lastWords = lastWords
-        self.titles = titles
-    }
-
-    /// The report's words, in a fixed order: "waits steps words titles".
-    package var reportWords: [String] {
-        var words: [String] = []
-        if waits { words.append("waits") }
-        if steps { words.append("steps") }
-        if lastWords { words.append("words") }
-        if titles { words.append("titles") }
-        return words
-    }
-}
-
-extension AgentSpec {
-    /// What this adapter reports (`AgentCapabilities`), from its contract.
-    package var capabilities: AgentCapabilities {
-        AgentCapabilities(
-            waits: waiting == .hooks,
-            steps: hooks.reportsToolActivity,
-            lastWords: lastWords,
-            titles: hooks.events.contains { event in
-                switch event.action {
-                case .prompt, .title: return true
-                default: return false
-                }
-            }
-        )
     }
 }
 

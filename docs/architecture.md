@@ -79,9 +79,9 @@ rebuilt by the launch replay like every other fact. The why says what
 happened in plain words and cites no event; the event names are the detail
 page's timeline column (`EventName.display` refuses a column that is not a
 name), Settings → Hooks and the report, which carries the last three
-entries, a step by its tool only. Each agent's capability line (waits,
-steps, last words, titles) is `AgentSpec.capabilities`, derived from its
-adapter.
+entries, a step by its tool only. An agent that cannot report a wait
+(`WaitingSource.none`) says so — "doesn't report waits" — on its Settings
+line, its detail page and its report line.
 
 Settings' per-agent line is a `Connection`: the install
 `HooksSupport.inspect` reads from the agent's config — the events that carry

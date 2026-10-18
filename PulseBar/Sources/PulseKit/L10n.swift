@@ -35,13 +35,6 @@ package enum L10n {
         }
     }
 
-    /// A list of a few words as a sentence says it: "waits, steps, last
-    /// words" / "等待、步骤和最后一句话".
-    package static func list(_ words: [String], _ lang: ResolvedLanguage) -> String {
-        guard lang == .zh, words.count > 1 else { return words.joined(separator: lang == .zh ? "、" : ", ") }
-        return words.dropLast().joined(separator: "、") + "和" + (words.last ?? "")
-    }
-
     /// Joins a list of agent display names the way the language does it.
     package static func joinNames(_ names: [String], _ lang: ResolvedLanguage) -> String {
         names.joined(separator: lang == .zh ? "、" : ", ")
@@ -254,13 +247,6 @@ package enum L10n {
         case turnStepsN
         case turnStepsFailed
         case detailNoWaits
-        case capWaits
-        case capTurns
-        case capSteps
-        case capWords
-        case capTitles
-        case capReports
-        case capReportsNoWaits
     }
 }
 
@@ -448,13 +434,6 @@ extension L10n.Key {
         case .turnStepsN: return ("%d steps", "%d 步")
         case .turnStepsFailed: return ("%@ (%d failed)", "%@（%d 步失败）")
         case .detailNoWaits: return ("This agent doesn't report waits", "这个 Agent 不报告等待")
-        case .capWaits: return ("waits", "等待")
-        case .capTurns: return ("turns", "回合")
-        case .capSteps: return ("steps", "步骤")
-        case .capWords: return ("last words", "最后一句话")
-        case .capTitles: return ("titles", "标题")
-        case .capReports: return ("Reports %@", "报告%@")
-        case .capReportsNoWaits: return ("Reports %@ — not waits", "报告%@——不报告等待")
         }
     }
 }

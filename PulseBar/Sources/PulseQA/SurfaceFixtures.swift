@@ -100,8 +100,8 @@ enum SurfaceFixtures {
             // failed, not installed — and the agent not on this Mac.
             Fixture(name: "settings", width: 500, value: .settings(settings(lang: lang))),
             // Whole installs that may not run: turned off,
-            // nothing heard yet, a config folder that is missing — under
-            // each agent's capability line.
+            // nothing heard yet, a config folder that is missing — and
+            // that Codex and Cursor do not report waits.
             Fixture(name: "settings-caveats", width: 500, value: .settings(settingsCaveats(lang: lang))),
             // Open at login registered, and macOS waiting for approval.
             Fixture(name: "settings-login-approval", width: 500, value: .settings(settingsLoginApproval(lang: lang))),
@@ -469,9 +469,9 @@ enum SurfaceFixtures {
         )
     }
 
-    /// Whole installs that may not run, each with its capability line:
-    /// Claude's hooks turned off in its settings, Copilot nothing heard
-    /// yet, Pi's config folder missing; Codex and Cursor whole and heard.
+    /// Whole installs that may not run: Claude's hooks turned off in its settings, Copilot nothing heard
+    /// yet, Pi's config folder missing; Codex and Cursor whole and heard,
+    /// and saying they do not report waits.
     static func settingsCaveats(lang: ResolvedLanguage) -> SettingsModel {
         let present: Set<AgentID> = [.claude, .codex, .cursor, .copilot, .pi]
         let caveats = [

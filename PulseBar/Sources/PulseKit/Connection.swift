@@ -3,9 +3,7 @@ import Foundation
 /// One agent's hook connection, as Settings → Hooks says it on the agent's
 /// line and "Copy report" says it in English: whether Pulse's hook is
 /// installed and whole, which vendor event was heard last and when, the
-/// last event it heard and did not use (and why), and what the agent's
-/// adapter reports at all (`AgentCapabilities`: waits, steps, last words,
-/// titles).
+/// last event it heard and did not use (and why).
 ///
 /// Pure: built from what the installer read (`HooksSupport.inspect`), the
 /// last install's failure and the event log's newest lines (kept by
@@ -296,24 +294,6 @@ package struct Connection: Equatable, Sendable {
         )
     }
 
-    /// What the agent reports, from its adapter (`AgentCapabilities`):
-    /// "Reports waits, steps, last words, titles"; an agent that cannot
-    /// report a wait says so and names its turns — "Reports turns, steps,
-    /// last words — not waits".
-    package func capabilityText(lang: ResolvedLanguage) -> String {
-        Self.capabilityText(agent.spec.capabilities, lang: lang)
-    }
-
-    /// `capabilityText`, for a set of capabilities. Pure.
-    package static func capabilityText(_ can: AgentCapabilities, lang: ResolvedLanguage) -> String {
-        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-        var words: [String] = [t(can.waits ? .capWaits : .capTurns)]
-        if can.steps { words.append(t(.capSteps)) }
-        if can.lastWords { words.append(t(.capWords)) }
-        if can.titles { words.append(t(.capTitles)) }
-        return String(format: t(can.waits ? .capReports : .capReportsNoWaits), L10n.list(words, lang))
-    }
-
     /// The receiver's reason for an `ignored` line, in the person's
     /// language. A reason the receiver never writes (a hand-edited log) is
     /// "not used" — its words are never repeated.
@@ -348,8 +328,8 @@ package struct Connection: Equatable, Sendable {
     }
 
     /// One agent's line: "  claude: installed, heard Stop 42s ago, last not
-    /// used PreCompact (not an installed event) 3s ago, capabilities: waits
-    /// steps words titles".
+    /// used PreCompact (not an installed event) 3s ago"; "doesn't report
+    /// waits" for an agent that cannot (`WaitingSource.none`).
     package func reportLine(present: Bool, nowMs: Int64) -> String {
         func age(_ ms: Int64) -> String { "\(max(0, (nowMs - ms) / 1000))s ago" }
         var parts: [String] = []
@@ -374,8 +354,8 @@ package struct Connection: Equatable, Sendable {
         if let ignored = lastIgnored, ignored.ms > 0 {
             parts.append("last not used \(Self.reportEvent(ignored.event)) (\(Self.reportReason(ignored.reason))) \(age(ignored.ms))")
         }
-        if install.carriesHook || present {
-            parts.append("capabilities: " + agent.spec.capabilities.reportWords.joined(separator: " "))
+        if agent.waitingSource == .none, install.carriesHook || present {
+            parts.append("doesn't report waits")
         }
         if configDirMissing, let relocation = agent.spec.hooks.relocation {
             parts.append("installs to ~/\(relocation.dir), not there (\(relocation.variable) is not followed)")

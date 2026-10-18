@@ -66,8 +66,7 @@ macOS 拦下而丢失。把 Pulse 换到别的位置时，打开一次新位置�
 | Codex | `PostToolUse` | 有 | 有 | **不会** —— 它的 PermissionRequest 在自己的自动审查之前触发，装了就是假等待 |
 | Cursor（编辑器与 `cursor-agent`） | `afterShellExecution` / `afterFileEdit` / `afterMCPExecution` | 有 | — | **不会** —— 没有不拦截的等待事件 |
 
-设置 → Hooks 的每个 Agent 下面有一行同样的能力（「报告等待、步骤、最后一句话和标题」），由适配器的契约得出。
-不会报告的两个只显示「运行中」与「轮到你」，Pulse 如实这样写（「报告回合、步骤……——不报告等待」），不伪造红灯。每个事件装在哪、变成什么、出处在哪，
+不会报告等待的两个只显示「运行中」与「轮到你」，Pulse 在设置 → Hooks 和详情页如实这样写（「这个 Agent 不报告等待」），不伪造红灯。每个事件装在哪、变成什么、出处在哪，
 见 [`docs/vendor-formats.md`](docs/vendor-formats.md)。
 
 Pi 的扩展装在 `~/.pi/agent/extensions/`。如果你用 `PI_CODING_AGENT_DIR` 让 Pi 读别的文件夹，Pulse 看不到这个

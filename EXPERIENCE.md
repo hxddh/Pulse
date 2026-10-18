@@ -26,7 +26,7 @@ Claude Code、Codex、Copilot CLI、OpenCode、Cursor（编辑器与 `cursor-age
 | --- | --- |
 | Claude（PermissionRequest、权限 / 提问通知）· Copilot（`permission_prompt` / `elicitation_dialog`）· OpenCode（1.x `permission.asked` / `question.asked`，2.x `permission.asked` / `form.created`）· Pi（`ui_prompt_start`） | Codex（它的 PermissionRequest 在自动审查之前触发，装了就是假等待）· Cursor（没有不拦截的等待事件） |
 
-后两者在设置 → Hooks 的能力行里明说「……——不报告等待」，详情页也安静地说「这个 Agent 不报告等待」；不伪造红灯，
+后两者在设置 → Hooks 的那一行和详情页都安静地说「这个 Agent 不报告等待」；不伪造红灯，
 也没有任何让它们报告等待的设置。
 
 没人能看见的请求也不变红：Claude 在 `dontAsk` 模式下、或以 `claude -p` 运行又没有权限宿主
@@ -247,8 +247,8 @@ Pulse；什么都没落到就说没能打开并重扫。提示停留 8 秒，没
 3. **Hooks —— 也是诊断**：「全部安装」「全部移除」；这台 Mac 上的每个 Agent 一行（`Connection`）：名字与连接
    状态 —— 已安装 /「需要更新——9 / 11 个事件」（装上的事件与适配器的契约不一致）/「需要更新——指向旧的 Pulse」
    （hook 命令指向的启动器不是这个 Pulse 的，或它、或它启动的 App 已不在）/ 安装失败及原因 / 未安装（不出现
-   路径）；下面几行小字，顺序固定：先是它报告什么（由适配器的契约静态得出，与安装状态无关）——「报告等待、步骤、
-   最后一句话和标题」，不会报告等待的写「报告回合、步骤和最后一句话——不报告等待」（Cursor）；再是「最近听到
+   路径）；下面几行小字，顺序固定：先是——只对不会报告等待的 Agent（Codex、Cursor），与安装状态无关——「这个
+   Agent 不报告等待」；再是「最近听到
    PermissionRequest · 4分钟前」或「还没有听到事件」；Pi 在这台 Mac 上但 `~/.pi/agent` 不存在时再加一句「Pulse 装在
    ~/.pi/agent，这个文件夹还不存在——若 Pi 用了别的文件夹（PI_CODING_AGENT_DIR），就不会加载它」（Pulse 不读
    环境变量）；最近有没采用的事件时最后一行「最近未采用 PreCompact——不是已
@@ -263,8 +263,8 @@ Pulse；什么都没落到就说没能打开并重扫。提示停留 8 秒，没
    什么，就不说），小字不再重复；它是排查的起点：Copilot 的会话沙箱没放行 Pulse 的文件夹、
    `COPILOT_HOME` / `OPENCODE_CONFIG_DIR` 把配置挪走了。有需要更新的 Agent 时，按钮下说一次「「全部安装」会更新所有需要更新的 Agent」——
    没有逐个 Agent 的按钮。不在这台 Mac 上的合成一行。运行期间按钮置灰。「**复制报告**」把版本与分发通道、
-   macOS 版本、每个 Agent 的连接（安装、最近听到的事件、最近未采用的事件及原因、`capabilities: waits steps words
-   titles`）、通知授权、登录项、每个会话 Pulse 怎么读它、这一轮的步数（`steps 23 (2 failed)`）及最近 3 条时间线
+   macOS 版本、每个 Agent 的连接（安装、最近听到的事件、最近未采用的事件及原因、不会报告等待的写
+   `doesn't report waits`）、通知授权、登录项、每个会话 Pulse 怎么读它、这一轮的步数（`steps 23 (2 failed)`）及最近 3 条时间线
    （连续的步骤已合成一条：`steps Edit×4 Bash×2 (1 failed)`）写成纯文本放进剪贴板，不含路径、提示、会话或项目：
    步骤只写工具名与次数，未采用只写接收器自己的原因，不是事件名的事件写成「?」。
 4. 页脚：版本与构建 · 分发通道（`preview` 或版本不一致用橙色；只有公证过的包是 `stable`）·「版本发布…」在浏览器
