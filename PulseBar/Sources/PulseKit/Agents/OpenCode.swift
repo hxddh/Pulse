@@ -246,9 +246,8 @@ package enum OpenCode {
         // 1.x: tool call id → tool name; 2.x: tool call id → { name, target, at }.
         const NAMES = new Map()
         const CALLS = new Map()
-        // 1.x: call ids whose start / end was sent.
-        const STARTED = new Set()
-        const DONE = new Set()
+        // 1.x: tool call id → the phase last sent ("running", then "done").
+        const PHASES = new Map()
         // 1.x: user message ids, and those whose prompt was sent; a text part
         // seen before its message.
         const USERS = new Set()
@@ -396,13 +395,13 @@ package enum OpenCode {
             const name = text(part.tool, 64)
             if (state.status === "pending" || state.status === "running") {
               remember(NAMES, part.callID, name, 256)
-              if (state.status !== "running" || STARTED.has(part.callID)) return
-              mark(STARTED, part.callID, 512)
+              if (state.status !== "running" || PHASES.has(part.callID)) return
+              remember(PHASES, part.callID, "running", 512)
               return deliver(type, own, directory, { phase: "running", tool_name: name, target: target(state.input) })
             }
             if (state.status !== "completed" && state.status !== "error") return
-            if (DONE.has(part.callID)) return
-            mark(DONE, part.callID, 512)
+            if (PHASES.get(part.callID) === "done") return
+            remember(PHASES, part.callID, "done", 512)
             NAMES.delete(part.callID)
             // A call an abort cut short is no step: the stop says it.
             if (state.status === "error" && state.metadata && state.metadata.interrupted === true) return
