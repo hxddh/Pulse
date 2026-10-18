@@ -1258,7 +1258,7 @@ struct SessionBookTests {
         ])
         #expect(run.states == ["working", "working", "working", "working", "working", "turn", "turn", "turn", "turn"])
         let session = try #require(run.book.sessions[SessionKey(.claude, "s1")])
-        #expect(session.message == "Here is the map.", "a subagent's last words are not the turn's")
+        #expect(session.lastWords == "Here is the map.", "a subagent's last words are not the turn's")
         #expect(session.title == "Map the API")
         let lifecycle = session.timeline.filter { $0.event == "SubagentStart" || $0.event == "SubagentStop" }
         #expect(lifecycle.map(\.effect) == [.subagent, .subagent, .subagent, .subagent])
@@ -1338,7 +1338,7 @@ struct SessionBookTests {
         let session = try #require(run.book.sessions[SessionKey(.codex, "s1")])
         #expect(session.title == "Index the repo")
         #expect(session.lastPrompt == "Go on")
-        #expect(session.message == "Indexed.")
+        #expect(session.lastWords == "Indexed.")
         let stop = session.timeline.first { $0.event == "SubagentStop" }
         #expect(stop?.effect == .subagent)
         #expect(stop?.sub == "th-9")
@@ -1383,7 +1383,7 @@ struct SessionBookTests {
         ])
         #expect(run.states == ["working", "idle", "working", "blocked:permission", "idle"])
         let session = try #require(run.book.sessions[SessionKey(.pi, "s1")])
-        #expect(session.message == "", "an aborted run's partial words are not its last words")
+        #expect(session.lastWords == "", "an aborted run's partial words are not its last words")
         #expect(session.heldTurn == nil)
         #expect(session.timeline.last?.effect == .stopped)
         // A stop stamped before the block it would end is about an earlier one.
