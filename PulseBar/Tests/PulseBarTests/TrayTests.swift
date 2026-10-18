@@ -1099,7 +1099,7 @@ struct RowWordsTests {
             row.status = .needsYou(Block(kind: kind, sinceMs: now - 4 * minute))
             #expect(why(row).hasPrefix(en))
             #expect(face(row).secondLine?.text == en)
-            #expect(TrayRowModel.effectText(.raised(kind), lang: .en) == en)
+            #expect(SessionBook.Effect.raised(kind).text(.en) == en)
             #expect(WaitingBanner.body(row, lang: .zh) == zh)
         }
         for lang in [ResolvedLanguage.en, .zh] {

@@ -303,42 +303,9 @@ package struct SettingsModel: Equatable {
             }
             for heard in timeline {
                 let by = heard.sub.isEmpty ? "" : "subagent "
-                text += "\n    \(max(0, (nowMs - heard.ms) / 1000))s ago · \(Connection.reportEvent(heard.event)) · \(by)\(Self.word(heard.effect))"
+                text += "\n    \(max(0, (nowMs - heard.ms) / 1000))s ago · \(Connection.reportEvent(heard.event)) · \(by)\(heard.effect.reportWord)"
             }
             return text
-        }
-
-        /// What a heard line did, in the report's words — a step by its tool
-        /// alone (its target can be a path or a command), an ignored line by
-        /// a reason the receiver writes.
-        package static func word(_ effect: SessionBook.Effect) -> String {
-            switch effect {
-            case .started: return "started"
-            case .prompt: return "prompt"
-            case .step(let tool, _): return "step \(Connection.reportEvent(tool))"
-            case .failedStep(let tool, _): return "failed step \(Connection.reportEvent(tool))"
-            case .steps(let run):
-                let tools = run.tools.map { "\(Connection.reportEvent($0.tool))×\($0.count)" }.joined(separator: " ")
-                return "steps \(tools)" + (run.failed > 0 ? " (\(run.failed) failed)" : "")
-            case .working: return "working"
-            case .status: return "status"
-            case .raised(let kind): return "raised \(kind.rawValue)"
-            case .again: return "same ask again"
-            case .answered: return "answered"
-            case .yourTurn: return "your turn"
-            case .turnEnded: return "turn ended in front"
-            case .failed: return "turn failed"
-            case .held: return "turn held"
-            case .atPrompt: return "at prompt"
-            case .resolved: return "resolved"
-            case .dismissed: return "dismissed"
-            case .seen: return "seen"
-            case .stopped: return "stopped"
-            case .named: return "named"
-            case .subagent: return "subagent lifecycle"
-            case .ended: return "ended"
-            case .skipped(let reason): return "not used (\(Connection.reportReason(reason)))"
-            }
         }
     }
 

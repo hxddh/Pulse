@@ -167,11 +167,12 @@ package struct SessionBook: Equatable {
         }
     }
 
-    /// Consecutive steps of one speaker, said as one timeline entry ("Edit
-    /// ×4 · Bash ×2"): each tool once, in the order it first ran, with how
-    /// many times; how many steps in all and how many failed. So the
-    /// timeline's `maxTimeline` entries cover a whole turn, not its last
-    /// dozen tool calls.
+    /// Steps of one speaker, said as one timeline entry: a single step
+    /// (its tool and target), or consecutive ones ("Edit ×4 · Bash ×2") —
+    /// each tool once, in the order it first ran, with how many times; how
+    /// many steps in all and how many failed. So the timeline's
+    /// `maxTimeline` entries cover a whole turn, not its last dozen tool
+    /// calls.
     package struct StepRun: Hashable, Sendable {
         package struct Tally: Hashable, Sendable {
             package var tool: String
@@ -186,50 +187,44 @@ package struct SessionBook: Equatable {
         package var tools: [Tally]
         package var count: Int
         package var failed: Int
+        /// A single step's target ("" when it said none); "" for a run.
+        package var target: String
 
-        package init(tools: [Tally] = [], count: Int = 0, failed: Int = 0) {
+        package init(tools: [Tally] = [], count: Int = 0, failed: Int = 0, target: String = "") {
             self.tools = tools
             self.count = count
             self.failed = failed
+            self.target = target
         }
 
-        /// One more step of `tool`.
+        /// One step.
+        package init(tool: String, target: String, failed: Bool) {
+            self.init(tools: [Tally(tool: tool, count: 1)], count: 1, failed: failed ? 1 : 0, target: target)
+        }
+
+        /// One more step of `tool`: a run, which names no target.
         package mutating func add(_ tool: String, failed stepFailed: Bool) {
             count += 1
             if stepFailed { failed += 1 }
+            target = ""
             if let index = tools.firstIndex(where: { $0.tool == tool }) {
                 tools[index].count += 1
             } else {
                 tools.append(Tally(tool: tool, count: 1))
             }
         }
-
-        /// The run a single step's effect starts; nil for any other effect.
-        package static func of(_ effect: Effect) -> StepRun? {
-            var run = StepRun()
-            switch effect {
-            case .step(let tool, _): run.add(tool, failed: false)
-            case .failedStep(let tool, _): run.add(tool, failed: true)
-            case .steps(let existing): return existing
-            default: return nil
-            }
-            return run
-        }
     }
 
     /// What one heard line did, decided by the reducer as it applied it —
-    /// never guessed from the event's name.
+    /// never guessed from the event's name. How each is said, and how loud,
+    /// is `Effect.text`, `.tone` and `.reportWord`.
     package enum Effect: Hashable, Sendable {
         /// The session started or resumed (`start`).
         case started
         /// A prompt started a turn (`working`).
         case prompt
-        /// A tool ran: a step (the tool, its target).
-        case step(tool: String, target: String)
-        /// A tool ran and failed: a step marked failed.
-        case failedStep(tool: String, target: String)
-        /// Two or more consecutive steps of one speaker, as one entry
-        /// (`StepRun`) — the timeline's grouping, decided as it is heard.
+        /// A tool ran (`step`), or consecutive steps of one speaker, as one
+        /// entry — the timeline's grouping, decided as it is heard.
         case steps(StepRun)
         /// Activity that named no tool.
         case working
@@ -271,6 +266,11 @@ package struct SessionBook: Equatable {
         /// Heard, and not turned into state — the receiver's reason
         /// (`PulseHookReceiver.Ignored` raw value).
         case skipped(reason: String)
+
+        /// One step: its tool, its target, whether it failed.
+        package static func step(tool: String, target: String, failed: Bool = false) -> Effect {
+            .steps(StepRun(tool: tool, target: target, failed: failed))
+        }
     }
 
     /// One session: who it is, where it runs, the one state it is in and
@@ -616,7 +616,7 @@ package struct SessionBook: Equatable {
     /// and duration.
     private static func hear(_ session: inout Session, _ heard: Heard) {
         if let last = session.timeline.last, last.sub == heard.sub,
-           var run = StepRun.of(last.effect), let next = StepRun.of(heard.effect), next.count == 1,
+           case .steps(var run) = last.effect, case .steps(let next) = heard.effect, next.count == 1,
            let tool = next.tools.first?.tool {
             run.add(tool, failed: next.failed > 0)
             session.timeline[session.timeline.count - 1] = Heard(ms: max(last.ms, heard.ms), event: heard.event, effect: .steps(run), sub: heard.sub)
@@ -657,7 +657,7 @@ package struct SessionBook: Equatable {
         case .tool:
             if answered { return .answered }
             guard let step = stepOf(record) else { return .working }
-            return step.failed ? .failedStep(tool: step.tool, target: step.target) : .step(tool: step.tool, target: step.target)
+            return .step(tool: step.tool, target: step.target, failed: step.failed)
         case .status:
             return .status
         case .permission, .question, .waiting:

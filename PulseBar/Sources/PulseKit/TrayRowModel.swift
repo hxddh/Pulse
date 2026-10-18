@@ -381,53 +381,14 @@ extension TrayRowModel {
 
     // MARK: - Timeline
 
-    /// What one heard line did, in a few words: "Asked permission" (the
-    /// banner's and the why's words), "Answered", "Bash · swift test" (a
-    /// step, as the row says it), "Edit ×4 · Bash ×2" (a run of steps),
-    /// "Not used — not an installed event". The detail page's timeline.
-    package static func effectText(_ effect: SessionBook.Effect, lang: ResolvedLanguage) -> String {
-        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-        switch effect {
-        case .started: return t(.timelineStarted)
-        case .prompt: return t(.timelinePrompt)
-        case .step(let tool, let target): return stepText(SessionBook.Step(tool: tool, target: target, ms: 0))
-        case .failedStep(let tool, let target):
-            return String(format: t(.timelineFailedStep), stepText(SessionBook.Step(tool: tool, target: target, ms: 0)))
-        case .steps(let run):
-            let tools = run.tools.map { $0.count > 1 ? "\($0.tool) ×\($0.count)" : $0.tool }.joined(separator: " · ")
-            return run.failed > 0 ? String(format: t(.timelineStepsFailed), tools, run.failed) : tools
-        case .working: return t(.timelineWorking)
-        case .status: return t(.timelineStatus)
-        case .raised(let kind): return L10n.waitKind(kind, lang)
-        case .again: return t(.timelineAgain)
-        case .answered: return t(.timelineAnswered)
-        case .yourTurn: return t(.yourTurn)
-        case .turnEnded: return t(.timelineTurnEnded)
-        case .failed: return t(.timelineFailed)
-        case .held: return t(.timelineHeld)
-        case .atPrompt: return t(.timelineAtPrompt)
-        case .resolved: return t(.timelineResolved)
-        case .dismissed: return t(.timelineDismissed)
-        case .seen: return t(.timelineSeen)
-        case .stopped: return t(.timelineStopped)
-        case .named: return t(.timelineNamed)
-        case .subagent: return t(.timelineSubagent)
-        case .ended: return t(.timelineEnded)
-        case .skipped(let reason): return String(format: t(.timelineSkipped), Connection.reasonText(reason, lang: lang))
-        }
-    }
-
     /// One heard line's words on the timeline: what it did, how long a
     /// single step ran ("Bash · swift test · 2.3s"), marked "Subagent · …"
     /// when a subagent said it.
     package static func heardText(_ heard: SessionBook.Heard, lang: ResolvedLanguage) -> String {
-        var text = effectText(heard.effect, lang: lang)
-        switch heard.effect {
-        case .step, .failedStep:
+        var text = heard.effect.text(lang)
+        if case .steps(let run) = heard.effect, run.count == 1 {
             let took = tookText(heard.tookMs, lang: lang)
             if !took.isEmpty { text += " · " + took }
-        default:
-            break
         }
         return heard.sub.isEmpty ? text : String(format: L10n.t(.timelineBySubagent, lang), text)
     }
@@ -522,16 +483,7 @@ package struct DetailModel: Equatable {
     /// One heard line on the timeline: how long ago, the vendor's event
     /// ("" when it is not a name) and what it did.
     package struct Entry: Equatable {
-        package enum Tone: Equatable {
-            /// The lamp went red.
-            case alert
-            /// A step or a turn failed.
-            case failure
-            /// It moved the session.
-            case plain
-            /// Heard, and nothing new: said again, held, status, ignored.
-            case quiet
-        }
+        package typealias Tone = SessionBook.Effect.Tone
         package var time: String
         package var event: String
         package var effect: String
@@ -594,7 +546,7 @@ package struct DetailModel: Equatable {
                 time: L10n.ago(min(heard.ms, nowMs), nowMs: nowMs, lang),
                 event: EventName.display(heard.event),
                 effect: Words.heardText(heard, lang: lang),
-                tone: tone(heard.effect)
+                tone: heard.effect.tone
             )
         }
         let why = Words.why(row, facts: said, lang: lang, nowMs: nowMs, connected: connected)
@@ -620,18 +572,99 @@ package struct DetailModel: Equatable {
             notice: notice
         )
     }
+}
 
-    /// How loud a timeline line is: red for a raise, the warning tone for
-    /// a failure, quiet for a line that changed nothing anyone waits on.
-    package static func tone(_ effect: SessionBook.Effect) -> Entry.Tone {
-        switch effect {
-        case .raised: return .alert
-        case .failedStep, .failed: return .failure
+/// How a heard line is said: in a few words on the timeline ("Asked
+/// permission" — the banner's and the why's words — "Answered", "Bash ·
+/// swift test" as the row says a step, "Edit ×4 · Bash ×2" for a run, "Not
+/// used — not an installed event"), how loud (`tone`), and in Copy report's
+/// words (`reportWord`: a step by its tool alone — its target can be a path
+/// or a command — an ignored line by a reason the receiver writes). One
+/// table for the effects that carry nothing, so the three say one thing.
+extension SessionBook.Effect {
+    /// How loud a timeline line is.
+    package enum Tone: Equatable, Sendable {
+        /// The lamp went red.
+        case alert
+        /// A step or a turn failed.
+        case failure
+        /// It moved the session.
+        case plain
+        /// Heard, and nothing new: said again, held, status, ignored.
+        case quiet
+    }
+
+    /// The words, report word and tone of an effect that carries nothing;
+    /// nil for a step, a raise or an ignored line.
+    private var named: (key: L10n.Key, word: String, tone: Tone)? {
+        switch self {
+        case .started: return (.timelineStarted, "started", .plain)
+        case .prompt: return (.timelinePrompt, "prompt", .plain)
+        case .working: return (.timelineWorking, "working", .plain)
+        case .status: return (.timelineStatus, "status", .quiet)
+        case .again: return (.timelineAgain, "same ask again", .quiet)
+        case .answered: return (.timelineAnswered, "answered", .plain)
+        case .yourTurn: return (.yourTurn, "your turn", .plain)
+        case .turnEnded: return (.timelineTurnEnded, "turn ended in front", .plain)
+        case .failed: return (.timelineFailed, "turn failed", .failure)
+        case .held: return (.timelineHeld, "turn held", .quiet)
+        case .atPrompt: return (.timelineAtPrompt, "at prompt", .quiet)
+        case .resolved: return (.timelineResolved, "resolved", .plain)
+        case .dismissed: return (.timelineDismissed, "dismissed", .plain)
+        case .seen: return (.timelineSeen, "seen", .plain)
+        case .stopped: return (.timelineStopped, "stopped", .plain)
+        case .named: return (.timelineNamed, "named", .quiet)
+        case .subagent: return (.timelineSubagent, "subagent lifecycle", .quiet)
+        case .ended: return (.timelineEnded, "ended", .plain)
+        case .steps, .raised, .skipped: return nil
+        }
+    }
+
+    /// The timeline's words.
+    package func text(_ lang: ResolvedLanguage) -> String {
+        switch self {
+        case .steps(let run):
+            if run.count == 1, let tool = run.tools.first?.tool {
+                let step = TrayRowModel.stepText(SessionBook.Step(tool: tool, target: run.target, ms: 0))
+                return run.failed > 0 ? String(format: L10n.t(.timelineFailedStep, lang), step) : step
+            }
+            let tools = run.tools.map { $0.count > 1 ? "\($0.tool) ×\($0.count)" : $0.tool }.joined(separator: " · ")
+            return run.failed > 0 ? String(format: L10n.t(.timelineStepsFailed, lang), tools, run.failed) : tools
+        case .raised(let kind):
+            return L10n.waitKind(kind, lang)
+        case .skipped(let reason):
+            return String(format: L10n.t(.timelineSkipped, lang), Connection.reasonText(reason, lang: lang))
+        default:
+            return named.map { L10n.t($0.key, lang) } ?? ""
+        }
+    }
+
+    /// Red for a raise, the warning tone for a failure, quiet for a line
+    /// that changed nothing anyone waits on.
+    package var tone: Tone {
+        switch self {
         case .steps(let run): return run.failed > 0 ? .failure : .plain
-        case .again, .held, .status, .atPrompt, .skipped, .subagent, .named: return .quiet
-        case .started, .prompt, .step, .working, .answered, .yourTurn, .turnEnded,
-             .resolved, .dismissed, .seen, .stopped, .ended:
-            return .plain
+        case .raised: return .alert
+        case .skipped: return .quiet
+        default: return named?.tone ?? .plain
+        }
+    }
+
+    /// Copy report's words.
+    package var reportWord: String {
+        switch self {
+        case .steps(let run):
+            if run.count == 1, let tool = run.tools.first?.tool {
+                return (run.failed > 0 ? "failed step " : "step ") + Connection.reportEvent(tool)
+            }
+            let tools = run.tools.map { "\(Connection.reportEvent($0.tool))×\($0.count)" }.joined(separator: " ")
+            return "steps \(tools)" + (run.failed > 0 ? " (\(run.failed) failed)" : "")
+        case .raised(let kind):
+            return "raised \(kind.rawValue)"
+        case .skipped(let reason):
+            return "not used (\(Connection.reportReason(reason)))"
+        default:
+            return named?.word ?? ""
         }
     }
 }

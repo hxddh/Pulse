@@ -393,10 +393,10 @@ struct SessionBookTests {
         let session = try #require(run.book.sessions[SessionKey(.cursor, "s1")])
         #expect(session.lastWords == "All 42 tests pass.")
         let steps = session.timeline.compactMap { heard -> String? in
-            if case .step(let tool, let target) = heard.effect { return "\(tool) \(target)" }
+            if case .steps = heard.effect { return heard.effect.text(.en) }
             return nil
         }
-        #expect(steps == ["Shell npm test", "Edit src/a.ts", "Shell make"])
+        #expect(steps == ["Shell · npm test", "Edit · src/a.ts", "Shell · make"])
         #expect(AgentID.cursor.reportsToolActivity, "its steps")
         #expect(!AgentID.cursor.silenceCanStall, "no tool start: its silence is never a stall")
         #expect(AgentID.cursor.waitingSource == .none, "still never red")
@@ -1015,9 +1015,9 @@ struct SessionBookTests {
         #expect(main.effect == .steps(run))
         #expect(main.ms == t0 + 6 * second, "the newest step's clock")
         #expect(main.event == "PostToolUse")
-        #expect(TrayRowModel.effectText(main.effect, lang: .en) == "Edit ×4 · Bash ×2 · 1 failed")
-        #expect(TrayRowModel.effectText(main.effect, lang: .zh) == "Edit ×4 · Bash ×2 · 1 步失败")
-        #expect(DetailModel.tone(main.effect) == .failure)
+        #expect(main.effect.text(.en) == "Edit ×4 · Bash ×2 · 1 failed")
+        #expect(main.effect.text(.zh) == "Edit ×4 · Bash ×2 · 1 步失败")
+        #expect(main.effect.tone == .failure)
         let sub = try #require(timeline.dropFirst(2).first)
         #expect(sub.sub == "a1")
         #expect(TrayRowModel.heardText(sub, lang: .en) == "Subagent · Grep ×2")
@@ -1025,7 +1025,7 @@ struct SessionBookTests {
         #expect(single.effect == .step(tool: "Read", target: "x"))
         #expect(TrayRowModel.heardText(single, lang: .en) == "Read · x · 2.3s")
         #expect(TrayRowModel.heardText(single, lang: .zh) == "Read · x · 2.3秒")
-        #expect(SettingsModel.ReportSession.word(main.effect) == "steps Edit×4 Bash×2 (1 failed)")
+        #expect(main.effect.reportWord == "steps Edit×4 Bash×2 (1 failed)")
         let facts = book.facts(for: SessionKey(.claude, "s1"))
         #expect(facts.turnSteps == 9, "every step of the turn, the subagent's among them")
         #expect(facts.turnFailedSteps == 1)
@@ -1236,7 +1236,7 @@ struct SessionBookTests {
         #expect(session.lastStep?.sub == "")
         let marked = try #require(session.timeline.first { !$0.sub.isEmpty })
         #expect(TrayRowModel.heardText(marked, lang: .en) == "Subagent · Grep · TODO")
-        #expect(SettingsModel.ReportSession.word(.subagent) == "subagent lifecycle")
+        #expect(SessionBook.Effect.subagent.reportWord == "subagent lifecycle")
     }
 
     /// Claude's subagent lifecycle (SubagentStart / SubagentStop, each with
@@ -1360,7 +1360,7 @@ struct SessionBookTests {
             for line in HookFeed.write(agent, event, payload, at: t0).lines { book.apply(line, nowMs: t0) }
             let session = try #require(book.sessions[SessionKey(agent, "s1")])
             #expect(session.lastStep?.failed == true, "\(agent.rawValue)")
-            #expect(session.timeline.last?.effect == .failedStep(tool: session.lastStep?.tool ?? "", target: "swift test"), "\(agent.rawValue)")
+            #expect(session.timeline.last?.effect == .step(tool: session.lastStep?.tool ?? "", target: "swift test", failed: true), "\(agent.rawValue)")
         }
         let pi = HookFeed.write(.pi, "tool_execution_end", ["tool_name": "bash", "is_error": false, "duration_ms": 4200], at: t0).lines.first
         #expect(pi?.failed == false)
@@ -1368,7 +1368,7 @@ struct SessionBookTests {
         var book = SessionBook()
         for line in HookFeed.write(.pi, "tool_execution_end", ["tool_name": "bash", "duration_ms": 4200], at: t0).lines { book.apply(line, nowMs: t0) }
         #expect(book.sessions[SessionKey(.pi, "s1")]?.lastStep?.tookMs == 4200)
-        #expect(TrayRowModel.effectText(.failedStep(tool: "Bash", target: "swift test"), lang: .en) == "Bash · swift test — failed")
+        #expect(SessionBook.Effect.step(tool: "Bash", target: "swift test", failed: true).text(.en) == "Bash · swift test — failed")
     }
 
     /// The person stopped the run (Pi's aborted `agent_settled`): at its
