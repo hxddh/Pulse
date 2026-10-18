@@ -151,7 +151,7 @@ events carry: its status line is marked with the name.
 | | `UserPromptSubmit` | `working` (message = `prompt`) |
 | | `PostToolUse`, `PostToolUseFailure` (*payload*) | `tool` (tool = `tool_name`, an MCP tool `mcp__server__tool` as `server · tool`; message = its target — an `Agent` / `Task` call's `description`, else `subagent_type`; a `Skill`'s `skill`; else the command, path, URL, pattern or query; `PostToolUseFailure`: `err` = 1) |
 | | `PostToolUseFailure` with `is_interrupt: true` | `stopped` (the call reached Claude as an abort: the person interrupted) |
-| | `PermissionRequest` (*payload*) | `permission` — ask = `tool_name: command/file_path/url` (an `Agent` call: its description), tool = `tool_name`; `AskUserQuestion` → `question`, ask = `tool_input.questions[0].question`; `ExitPlanMode` → ask = the plan's first line. `ignored` — "no prompt can be shown" — when `permission_mode` is `dontAsk`, or the Claude process runs `-p` / `--print` without `--permission-prompt-tool` (its argv, `AgentProcessRule.promptlessFlags`): Claude denies it itself |
+| | `PermissionRequest` (*payload*) | `permission` — ask = `tool_name: command/file_path/url` (an `Agent` call: its description), tool = `tool_name`; `AskUserQuestion` → `question`, ask = `tool_input.questions[0].question`; `ExitPlanMode` → ask = the plan's first line. `ignored` when no prompt can be shown (below) |
 | | `PermissionDenied` (*payload*; async) | `status` (message = `auto mode denied <tool>`; no tool column — a status that names a tool says it runs now; `reason` is not read) |
 | | `Notification` `permission_prompt` (*payload*, as every `Notification` row) | `permission` |
 | | `Notification` `elicitation_dialog` / `elicitation_url_dialog` | `question` |
@@ -221,9 +221,11 @@ events carry: its status line is marked with the name.
 **What Claude says without a prompt.** Claude runs `PermissionRequest`
 hooks in sessions that cannot show a prompt and denies the call when no hook
 decides; in `dontAsk` mode it denies whatever is not pre-approved. Neither is
-a wait: the line is `ignored`, "no prompt can be shown". A `claude -p` run
-with `--permission-prompt-tool` (the Agent SDK's host — Claude Desktop, the
-VS Code extension) does show its prompt and stays a wait.
+a wait: the line is `ignored`, "no prompt can be shown" — `permission_mode`
+`dontAsk`, or a Claude process running `-p` / `--print` without
+`--permission-prompt-tool` (its argv, `AgentProcessRule.promptlessFlags`).
+With that flag (the Agent SDK's host — Claude Desktop, the VS Code
+extension) it does show its prompt and stays a wait.
 
 **Silenced installs.** Settings → Hooks reads, never writes, what keeps an
 installed hook from running (`HookContract.offSwitches`,
@@ -254,17 +256,6 @@ at most 64 waiting (a block, its answer, the turn's end and the shutdown are
 dropped last) and spawns whatever is left at once on `session_shutdown`. A
 prompt's end is never numbered before its start.
 
-## Title, steps and last words
-
-| Agent | Title (prompt event) | Step (tool event) | Last words / error |
-| --- | --- | --- | --- |
-| Claude | `UserPromptSubmit` `prompt` | `PostToolUse(Failure)` `tool_name` (MCP: `server · tool`) + `tool_input` (`Agent`: `description` / `subagent_type`; `Skill`: `skill`) | `Stop` `last_assistant_message`; `StopFailure` error |
-| Codex | `UserPromptSubmit` `prompt` | `PostToolUse` `tool_name` + `tool_input` | `Stop` `last_assistant_message`; none for a turn that ends on an error (no `Stop`) |
-| Copilot | `userPromptSubmitted` `prompt` | `postToolUse` `toolName` + `toolArgs` (a JSON string) | unrecoverable `errorOccurred` `error.message` |
-| Pi | `session_info_changed` / `session_start` name, else `message_start` (the person's message) | `tool_execution_end` + its call's argument from `tool_execution_start` (failed, duration); `tool_execution_start` is what runs now | `agent_settled` with `agent_end`'s last assistant words; its `errorMessage`; none when aborted |
-| OpenCode | `session.updated` / 2.x `session.renamed` title, else the user message's text (1.x) / `session.inbox.enqueued` (2.x) | 1.x tool part `completed` / `error` + one input argument; 2.x `session.tool.success` / `failed` (+ the call's name and argument); the tool's start is what runs now | `session.error` / `session.execution.failed` message |
-| Cursor | — (`beforeSubmitPrompt` can stop a prompt: not installed) | `afterShellExecution` command, `afterFileEdit` path, `afterMCPExecution` server · tool | `afterAgentResponse` `text`; no error text |
-
 ## The manifest
 
 `docs/vendor-formats.json` has one entry per adapter, and each entry holds
@@ -284,18 +275,12 @@ adapter file or no entry, an entry carries anything besides `hooks`, a repo
 block lacks a full commit or watch list, the events disagree with the
 adapter, a named test file is missing or never mentions the agent, a
 contract lists a gating event, or a source outside `PulseKit/Agents/` spells
-an installed vendor event. It also holds two facts: an agent that can raise a block installs an event that
-answers it (`HookContract.answerEvents`: a per-tool event, or the vendor's
-own "replied" / "prompt closed"), and Claude, Codex, Copilot, Pi, OpenCode
-and Cursor install their per-tool event (`PostToolUse`, `postToolUse`,
-`tool_execution_end`, `message.part.updated` and `session.tool.success`,
-`afterShellExecution`) — the answer to a permission, and the only silence
-that means a stall
-(`HookContract.reportsToolActivity`). Each was checked non-blocking at exit 0
-with empty output against the pinned source. Claude also installs
-`PostToolUseFailure` (its output cannot change the outcome) and, async,
-`PermissionDenied` (its `retry` is a decision output, never read from an
-async hook — "async neutralizes decision output", above).
+an installed vendor event. It also holds two facts: an agent that can raise
+a block installs an event that answers it (`HookContract.answerEvents`: a
+per-tool event, or the vendor's own "replied" / "prompt closed"), and every
+agent installs its per-tool event (`HookContract.reportsToolActivity`) — the
+answer to a permission, and the only silence that means a stall. Each was
+checked non-blocking at exit 0 with empty output against the pinned source.
 **Changing a hook contract means updating its block and its test in the same
 change.**
 

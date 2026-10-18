@@ -50,9 +50,10 @@ format's flavor — never by the agent.
   (`ScanQuietTests`). The projection carries state only — a row's
   `AgentRow.Status`, never a step or a clock — so plain equality says "the
   same world" and a burst of tool lines lands nothing. What a session said
-  lately (`SessionFacts`: steps, last words, error, clocks, the vendor
-  events behind its state — `stateEvent`, `lastEvent` — and its timeline)
-  is read from the book when a row or the detail page is drawn
+  lately (`SessionFacts`: its last step and what runs now, last words,
+  error, clocks, the vendor events behind its state — `stateEvent`,
+  `lastEvent` — and its timeline) is kept on each session as one value and
+  handed out when a row or the detail page is drawn
   (`StatusStore.facts(for:)`),
   on the tray's own clock (`TimelineView`, `TrayChrome.clock`). Settings (open at login,
   "don't suggest hooks") go through `StatusStore.set`, which writes
@@ -67,9 +68,9 @@ re-raise inside the grace keeps the first raise's, a held turn lands with
 its own, a process exit has none) and its last `SessionBook.maxTimeline`
 heard lines, each with the `SessionBook.Effect` the reducer decided as it
 applied it — raised, said again, answered, your turn, held, dismissed,
-seen, stopped, named, a step (or a failed one, with its `took`), a run of
-consecutive steps of one speaker merged as it is heard (`StepRun`: each
-tool and its count, how many failed — so the ring covers a turn), a
+seen, stopped, named, steps (`StepRun`: one step with its target and
+`took`, or consecutive steps of one speaker merged as they are heard —
+each tool and its count, how many failed — so the ring covers a turn), a
 subagent's own lifecycle, an `ignored` line's reason — and which subagent
 said it (`Heard.sub`, the v8 `sub` column; the detail page marks it
 "Subagent · …"). The session also counts the current turn's steps and
@@ -93,7 +94,11 @@ by `ScanEngine` as it applies the log — with whether the log still held
 every line it was given when it was replayed (`ScanEngine.logWhole`): only
 then can "nothing heard yet" be said. `inspect` runs at launch, when
 Settings opens and after an install; never on the scan path. Install all
-fixes a partial or stale install.
+fixes a partial or stale install. Which agents carry the hook — the
+status line's count, the tray's setup card — is read from the
+connections; `HooksSupport.Status` holds only what they cannot say (not
+read yet, an install running, the last run's per-agent failures, a
+launcher that could not be written).
 
 ## Processes (libproc)
 
