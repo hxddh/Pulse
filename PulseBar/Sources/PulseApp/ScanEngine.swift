@@ -60,6 +60,12 @@ final class ScanEngine {
     /// The newest line each agent's hook sent that was `ignored` — its
     /// event, why and when.
     private(set) var latestIgnored: [AgentID: Connection.Ignored] = [:]
+    /// Every line the event log was ever given has been applied this launch
+    /// (`EventLog.keepsEveryLine` of the launch replay, and of every log
+    /// started over since): only then does "nothing heard" in
+    /// `latestHeard` prove the agent said nothing (`Connection.caveat`).
+    /// False until the log has been read.
+    private(set) var logWhole = false
     /// The last projection's open waits (`TrayState.waitingSince`) — what
     /// the next one finds its Waiting edges against.
     private var lastWaits: [SessionKey: Int64] = [:]
@@ -294,6 +300,15 @@ final class ScanEngine {
         logRetryDelay = Self.firstLogRetry
         let baseline = !logRead
         let records = chunk.unapplied(after: logCursor)
+        // The launch replay, or a log started over (another `gen`), is read
+        // whole: did it keep every line? A rewrite of the same log drops
+        // only lines this launch has already applied.
+        if let header = chunk.header, logCursor?.gen != header.gen {
+            let whole = EventLog.keepsEveryLine(chunk.records)
+            logWhole = baseline ? whole : logWhole && whole
+        } else if chunk.header == nil, baseline {
+            logWhole = true
+        }
         logCursor = chunk.advancing(logCursor)
         if records.isEmpty {
             // Nothing new (or nothing there): the empty replay is still the

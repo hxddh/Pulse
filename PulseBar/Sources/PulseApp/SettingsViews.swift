@@ -52,8 +52,8 @@ extension StatusStore {
             launchAtLogin: login.isOn,
             loginNote: login.note,
             notifications: SettingsModel.notifications(notifyAuthorized),
-            hooksStatus: hooksStatus.label(lang: lang),
-            hooksInstalled: !hooksStatus.installedAgents.isEmpty || connections.contains { $0.install.carriesHook },
+            hooksStatus: hooksStatus.label(installed: connections.filter { $0.install.carriesHook }.count, lang: lang),
+            hooksInstalled: connections.contains { $0.install.carriesHook },
             hooksBusy: hooksStatus.isWorking,
             hookAgents: SettingsModel.hookAgents(
                 connections: connections,
@@ -215,9 +215,9 @@ struct SettingsFace: View {
                     .font(PulseTheme.Font.caption)
                     .foregroundStyle(PulseTheme.warning)
             }
-            // One line per agent: its name and state, then — quietly — what
-            // it reports, what was heard (and any caveat), and the last
-            // event not used.
+            // One line per agent: its name and state, then — quietly — that
+            // it does not report waits, what was heard (and any caveat), and
+            // the last event not used.
             ForEach(model.hookAgents) { line in
                 LabeledContent {
                     Text(line.state)
@@ -225,7 +225,9 @@ struct SettingsFace: View {
                 } label: {
                     Label {
                         Text(line.agent.displayName)
-                        Text(line.capability)
+                        if let noWaits = line.noWaits {
+                            Text(noWaits)
+                        }
                         if !line.detail.isEmpty {
                             Text(line.detail)
                         }

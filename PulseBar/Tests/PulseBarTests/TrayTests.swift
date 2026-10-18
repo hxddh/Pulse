@@ -577,9 +577,6 @@ final class AccessibilityLocalizationTests: XCTestCase {
     }
 
     func testStatusBarIconsKeepTheirTrafficLightColourAcrossAppearances() throws {
-        let original = NSAppearance.current
-        defer { NSAppearance.current = original }
-
         let appearances: [NSAppearance.Name] = [
             .aqua,
             .darkAqua,
@@ -587,42 +584,33 @@ final class AccessibilityLocalizationTests: XCTestCase {
             .accessibilityHighContrastDarkAqua,
         ]
         for appearanceName in appearances {
-            NSAppearance.current = try XCTUnwrap(NSAppearance(named: appearanceName))
+            let appearance = try XCTUnwrap(NSAppearance(named: appearanceName))
             var rgba: Set<String> = []
-            for glance in [Lamp.idle, .running, .stalled, .waiting] {
-                let icon = glance.statusBarImage
-                let bitmap = try XCTUnwrap(
-                    icon.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:))
-                )
-                var visiblePixels = 0
-                for y in 0..<bitmap.pixelsHigh {
-                    for x in 0..<bitmap.pixelsWide
-                    where (bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.08 {
-                        visiblePixels += 1
+            var visible: [Lamp: Int] = [:]
+            appearance.performAsCurrentDrawingAppearance {
+                for glance in [Lamp.idle, .running, .stalled, .waiting] {
+                    var pixels = 0
+                    if let bitmap = glance.statusBarImage.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)) {
+                        for y in 0..<bitmap.pixelsHigh {
+                            for x in 0..<bitmap.pixelsWide
+                            where (bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.08 {
+                                pixels += 1
+                            }
+                        }
                     }
-                }
-                XCTAssertGreaterThan(
-                    visiblePixels,
-                    8,
-                    "\(glance) disappeared in \(appearanceName.rawValue)"
-                )
-
-                let color = glance.nsColor.usingColorSpace(.deviceRGB) ?? glance.nsColor
-                rgba.insert(
-                    String(
+                    visible[glance] = pixels
+                    let color = glance.nsColor.usingColorSpace(.deviceRGB) ?? glance.nsColor
+                    rgba.insert(String(
                         format: "%.3f,%.3f,%.3f,%.3f",
-                        color.redComponent,
-                        color.greenComponent,
-                        color.blueComponent,
-                        color.alphaComponent
-                    )
-                )
+                        color.redComponent, color.greenComponent, color.blueComponent, color.alphaComponent
+                    ))
+                }
             }
-            XCTAssertEqual(
-                rgba.count,
-                4,
-                "red, green, grey and orange merged in \(appearanceName.rawValue)"
-            )
+            XCTAssertEqual(visible.count, 4)
+            for (glance, pixels) in visible {
+                XCTAssertGreaterThan(pixels, 8, "\(glance) disappeared in \(appearanceName.rawValue)")
+            }
+            XCTAssertEqual(rgba.count, 4, "red, green, grey and orange merged in \(appearanceName.rawValue)")
         }
     }
 }
@@ -1015,26 +1003,58 @@ struct RowWordsTests {
 
     // MARK: - Why: which evidence, and since when
 
-    @Test func aHookWaitNamesItsEvidenceAndItsAge() {
-        let text = why(blocked())
-        #expect(!text.contains("Claude"), "the row's icon already says who")
-        #expect(text.contains(L10n.t(.kindPermission, .en)))
-        #expect(text.contains(L10n.ago(now - 4 * minute, nowMs: now, .en)))
-        #expect(!text.hasSuffix(L10n.t(.explainAskedFront, .en)))
-    }
-
-    @Test func aWaitRaisedInFrontSaysWhyThereWasNoBanner() {
-        let text = why(blocked(inFront: true))
-        #expect(text.hasSuffix(L10n.t(.explainAskedFront, .en)))
-    }
-
-    /// The why is plain words — what was asked, and when.
-    @Test func aWaitIsSaidInPlainWords() {
-        #expect(why(blocked()) == "Asked permission · 4m ago")
-        #expect(why(blocked(), .zh) == "请求权限 · " + L10n.ago(now - 4 * minute, nowMs: now, .zh))
+    /// One golden why per state, in both languages: what put the row
+    /// there, and since when — in plain words (never "hook", never "now
+    /// ago"). The rest of this suite checks structure.
+    @Test func eachStateHasOneWhy() {
+        func ago(_ minutes: Int64, _ lang: ResolvedLanguage) -> String { L10n.ago(now - minutes * minute, nowMs: now, lang) }
+        func quiet(_ minutes: Int64) -> String { L10n.duration(Double(minutes * 60), .zh) }
+        var turn = session(.codex)
+        turn.status = .yourTurn(sinceMs: now - 2 * minute)
+        var justNow = session(.codex)
+        justNow.status = .yourTurn(sinceMs: now - 2_000)
+        var atPrompt = session(.pi)
+        atPrompt.status = .recent(.atPrompt)
+        var ended = session()
+        ended.liveProcess = false
+        ended.status = .recent(.ended(atMs: now - 5 * minute))
+        var gone = session()
+        gone.status = .recent(.quiet)
+        var silent = session()
+        silent.status = .recent(.silent)
         let process = AgentRow(key: .process(.cursor, pid: 7), status: .processOnly)
-        #expect(why(process) == "Started before Pulse — details after its next step")
-        #expect(why(process, .zh) == "在 Pulse 之前启动——下一步之后显示详情")
+        let failed = SessionFacts(lastError: "rate limit reached", lastEventMs: now - 2 * minute, failedTurn: true)
+        let stopped = SessionFacts(lastEventMs: now - minute, stopped: true)
+        let silence = SessionFacts(lastEventMs: now - 23 * minute)
+        let lastStep = SessionFacts(lastStep: SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 23 * minute), lastEventMs: now - 23 * minute)
+        let cases: [(AgentRow, SessionFacts, String, String)] = [
+            (blocked(), said, "Asked permission · 4m ago", "请求权限 · \(ago(4, .zh))"),
+            (blocked(kind: .question), said, "Asked a question · 4m ago", "在问你 · \(ago(4, .zh))"),
+            (
+                blocked(inFront: true), said, "Asked permission · 4m ago — it was in front of you, so no banner yet",
+                "请求权限 · \(ago(4, .zh))——当时它就在你眼前，所以先不发通知"
+            ),
+            (turn, said, "Turn ended · 2m ago", "回合结束 · \(ago(2, .zh))"),
+            (justNow, said, "Turn ended · now", "回合结束 · 刚刚"),
+            (turn, failed, "Turn failed · 2m ago", "回合出错 · \(ago(2, .zh))"),
+            (session(), said, "Working · 1m ago", "在工作 · \(ago(1, .zh))"),
+            (session(), SessionFacts(), "Working — no step reported yet", "在工作——还没有报告任何一步"),
+            (stalled(), silence, "Nothing new for 23m", "已经\(quiet(23))没有新动静"),
+            (stalled(), lastStep, "Nothing new for 23m — last step: Bash · swift test", "已经\(quiet(23))没有新动静——上一步：Bash · swift test"),
+            (stalled(), SessionFacts(), "Running, but its last step has no time", "在运行，但不知道它上一步的时间"),
+            (atPrompt, said, "At its prompt · 1m ago", "停在提示符 · \(ago(1, .zh))"),
+            (atPrompt, stopped, "Stopped by you · 1m ago", "你中止了 · \(ago(1, .zh))"),
+            (ended, said, "Session ended · 5m ago", "会话已结束 · \(ago(5, .zh))"),
+            (gone, said, "Nothing heard for 1m and no process to watch — moved to recent", "已经\(quiet(1))没有消息，也看不到进程——移到最近"),
+            (silent, said, "Nothing heard for 1m — moved to recent", "已经\(quiet(1))没有消息——移到最近"),
+            (process, SessionFacts(), "Started before Pulse — details after its next step", "在 Pulse 之前启动——下一步之后显示详情"),
+        ]
+        for (row, facts, en, zh) in cases {
+            #expect(why(row, .en, facts: facts) == en)
+            #expect(why(row, .zh, facts: facts) == zh)
+        }
+        #expect(TrayRowModel.why(process, lang: .en, nowMs: now, connected: false) == "Seen as a process only — Pulse isn't connected to it yet")
+        #expect(TrayRowModel.why(process, lang: .zh, nowMs: now, connected: false) == "只看到进程——Pulse 还没有连接它")
         for lang in [ResolvedLanguage.en, .zh] {
             for key in L10n.Key.allCases where "\(key)".hasPrefix("explain") {
                 let text = L10n.t(key, lang).lowercased()
@@ -1043,45 +1063,20 @@ struct RowWordsTests {
         }
     }
 
-    @Test func aQuestionSaysInput() {
-        let text = why(blocked(kind: .question))
-        #expect(text.hasPrefix(L10n.t(.kindInput, .en)))
-    }
-
-    @Test func yourTurnSaysHowToClearItWithoutNowAgo() {
-        var row = session(.codex)
-        row.status = .yourTurn(sinceMs: now - 2_000)
-        let text = why(row, .zh)
-        #expect(text.hasPrefix(L10n.t(.explainTurn, .zh)))
-        #expect(!text.contains("刚刚前"), "never 'just now ago'")
-    }
-
     // MARK: - Why: plain words, no vendor event
 
     /// The why says what happened and when, in the words the banner and the
     /// timeline use — never the vendor's event name (that is the timeline's
-    /// monospaced column, and Settings → Hooks).
+    /// monospaced column, and Settings → Hooks), nor a column that is not a
+    /// name.
     @Test func theWhyNamesNoVendorEvent() {
-        var facts = said
-        facts.stateEvent = "PermissionRequest"
-        #expect(why(blocked(), facts: facts) == "Asked permission · 4m ago")
-        #expect(why(blocked(), .zh, facts: facts) == "请求权限 · " + L10n.ago(now - 4 * minute, nowMs: now, .zh))
-        var turn = session(.codex)
-        turn.status = .yourTurn(sinceMs: now - 2 * minute)
-        facts.stateEvent = "Stop"
-        #expect(why(turn, facts: facts) == "Turn ended · 2m ago")
-        #expect(why(turn, .zh, facts: facts) == "回合结束 · " + L10n.ago(now - 2 * minute, nowMs: now, .zh))
-        var running = said
-        running.lastEvent = "PostToolUse"
-        #expect(why(session(), facts: running) == "Working · 1m ago")
-        var ended = session()
-        ended.liveProcess = false
-        ended.status = .recent(.ended(atMs: now - 5 * minute))
-        facts.stateEvent = "SessionEnd"
-        #expect(why(ended, facts: facts) == "Session ended · 5m ago")
-        let face = TrayRowModel.make(TrayRowModel.Input(row: blocked(), facts: facts, lang: .en, nowMs: now))
-        #expect(!face.accessibilityLabel.contains("SessionEnd"), "VoiceOver hears no event name either")
-        #expect(!face.accessibilityLabel.contains("PermissionRequest"))
+        for event in ["PermissionRequest", "/Users/me/secret", "hook event with spaces"] {
+            var facts = said
+            facts.stateEvent = event
+            #expect(why(blocked(), facts: facts) == why(blocked()))
+            let face = TrayRowModel.make(TrayRowModel.Input(row: blocked(), facts: facts, lang: .en, nowMs: now))
+            #expect(!face.accessibilityLabel.contains(event), "VoiceOver hears no event name either")
+        }
     }
 
     /// One phrase per wait, everywhere: the why, the row's second line when
@@ -1099,7 +1094,7 @@ struct RowWordsTests {
             row.status = .needsYou(Block(kind: kind, sinceMs: now - 4 * minute))
             #expect(why(row).hasPrefix(en))
             #expect(face(row).secondLine?.text == en)
-            #expect(TrayRowModel.effectText(.raised(kind), lang: .en) == en)
+            #expect(SessionBook.Effect.raised(kind).text(.en) == en)
             #expect(WaitingBanner.body(row, lang: .zh) == zh)
         }
         for lang in [ResolvedLanguage.en, .zh] {
@@ -1112,14 +1107,12 @@ struct RowWordsTests {
         }
     }
 
-    /// A failed turn says so — on the why and, quietly, its error's first
-    /// line; the lamp stays grey.
+    /// A failed turn says so, quietly, with its error's first line; the
+    /// lamp stays grey.
     @Test func aFailedTurnIsVisible() {
         var row = session(.codex)
         row.status = .yourTurn(sinceMs: now - 2 * minute)
         let failed = SessionFacts(lastError: "rate limit reached", lastEventMs: now - 2 * minute, failedTurn: true)
-        #expect(why(row, facts: failed) == "Turn failed · 2m ago")
-        #expect(why(row, .zh, facts: failed) == "回合出错 · " + L10n.ago(now - 2 * minute, nowMs: now, .zh))
         let model = face(row, failed)
         #expect(model.secondLine == TrayRowModel.SecondLine(kind: .failure, text: "Turn failed: rate limit reached"))
         #expect(face(row, failed, lang: .zh).secondLine?.text == "回合出错：rate limit reached")
@@ -1132,7 +1125,7 @@ struct RowWordsTests {
     /// says whose it is.
     @Test func aFailedOrSubagentStepIsMarked() {
         let step = SessionBook.Step(tool: "Bash", target: "swift test", ms: now - minute, failed: true, tookMs: 0, sub: "a1")
-        let facts = SessionFacts(steps: [step], lastEventMs: now - minute)
+        let facts = SessionFacts(lastStep: step, lastEventMs: now - minute)
         #expect(face(session(), facts).secondLine == TrayRowModel.SecondLine(kind: .step, text: "Subagent · Bash · swift test · failed · 1m ago"))
         let zh = face(session(), facts, lang: .zh).secondLine?.text
         #expect(zh == "子代理 · Bash · swift test · 失败 · " + L10n.ago(now - minute, nowMs: now, .zh))
@@ -1143,45 +1136,22 @@ struct RowWordsTests {
     @Test func aLiveToolIsNowNotAStep() {
         let live = SessionBook.Step(tool: "Bash", target: "npm test", ms: now - 3 * minute)
         let done = SessionBook.Step(tool: "Read", target: "a.swift", ms: now - 4 * minute)
-        let facts = SessionFacts(steps: [done], running: live, lastEventMs: now - 3 * minute)
+        let facts = SessionFacts(lastStep: done, runningSteps: [live], lastEventMs: now - 3 * minute)
         #expect(face(session(), facts).secondLine == TrayRowModel.SecondLine(kind: .now, text: "Now: Bash · npm test · 3m"))
         #expect(face(session(), facts, lang: .zh).secondLine?.text == "当前：Bash · npm test · " + L10n.duration(3 * 60, .zh))
-        let young = SessionFacts(running: SessionBook.Step(tool: "Bash", target: "npm test", ms: now - 20_000), lastEventMs: now - 20_000)
+        let young = SessionFacts(runningSteps: [SessionBook.Step(tool: "Bash", target: "npm test", ms: now - 20_000)], lastEventMs: now - 20_000)
         #expect(face(session(), young).secondLine?.text == "Now: Bash · npm test")
-        let finished = SessionFacts(steps: [done], lastEventMs: now - 4 * minute)
+        let finished = SessionFacts(lastStep: done, lastEventMs: now - 4 * minute)
         #expect(face(session(), finished).secondLine?.kind == .step, "a finished step is never live")
     }
 
-    /// The person stopped it: "Stopped by you", not "At its prompt".
-    @Test func aStopSaysWhoStoppedIt() {
-        var row = session(.pi)
-        row.status = .recent(.atPrompt)
-        let facts = SessionFacts(lastEventMs: now - minute, stopped: true)
-        #expect(why(row, facts: facts) == "Stopped by you · 1m ago")
-        #expect(why(row, .zh, facts: facts) == "你中止了 · " + L10n.ago(now - minute, nowMs: now, .zh))
-    }
-
-    /// A process of an agent Pulse is not connected to says so; one of a
-    /// connected agent is waiting for its next step.
+    /// The detail page says the same why as the row for a process Pulse is
+    /// not connected to.
     @Test func aProcessOnlyRowSaysWhetherItIsConnected() {
         let row = AgentRow(key: .process(.cursor, pid: 7), status: .processOnly)
-        let connected = TrayRowModel.why(row, lang: .en, nowMs: now, connected: true)
-        let unconnected = TrayRowModel.why(row, lang: .en, nowMs: now, connected: false)
-        #expect(connected == "Started before Pulse — details after its next step")
-        #expect(unconnected == "Seen as a process only — Pulse isn't connected to it yet")
-        #expect(TrayRowModel.why(row, lang: .zh, nowMs: now, connected: false) == "只看到进程——Pulse 还没有连接它")
         let detail = DetailModel.make(row: row, lang: .en, nowMs: now, connected: false)
-        #expect(detail.why == unconnected)
-    }
-
-    /// An event column that is not a name — a hand-edited log, a path — is
-    /// not repeated in the why.
-    @Test func aWhyNeverQuotesWhatIsNotAnEventName() {
-        var facts = said
-        facts.stateEvent = "/Users/me/secret"
-        #expect(why(blocked(), facts: facts) == "Asked permission · 4m ago")
-        facts.stateEvent = "hook event with spaces"
-        #expect(!why(blocked(), facts: facts).contains("hook"))
+        #expect(detail.why == TrayRowModel.why(row, lang: .en, nowMs: now, connected: false))
+        #expect(detail.why != TrayRowModel.why(row, lang: .en, nowMs: now, connected: true))
     }
 
     /// The book carries the event into the why: a raise and its echo keep
@@ -1200,30 +1170,13 @@ struct RowWordsTests {
         #expect(facts.lastEvent == "Stop")
     }
 
-    @Test func aProcessOnlyRowSaysItIsOnlyAProcess() {
-        var row = AgentRow(key: .process(.cursor, pid: 7), status: .processOnly)
-        row.liveProcess = true
-        #expect(why(row, facts: SessionFacts()) == L10n.t(.explainProcessOnly, .en))
-    }
-
-    /// The stall rule is not a setting, so the sentence names the
-    /// silence and nothing the person could not have set.
-    @Test func aStalledRowNamesTheSilence() {
-        let quiet = L10n.duration(23 * 60, .en)
-        let expected = String(format: L10n.t(.explainStalled, .en), quiet)
-        #expect(why(stalled(), facts: SessionFacts(lastEventMs: now - 23 * minute)) == expected)
-    }
-
-    /// A stalled row's why names its last step: "Nothing new for 23m — last
-    /// step: Bash · swift test".
+    /// A stalled row's second line is its why, which names its last step.
     @Test func aStalledRowNamesItsLastStep() {
         let row = stalled()
         let facts = SessionFacts(
-            steps: [SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 23 * minute)],
+            lastStep: SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 23 * minute),
             lastEventMs: now - 23 * minute
         )
-        #expect(why(row, facts: facts) == "Nothing new for 23m — last step: Bash · swift test")
-        #expect(why(row, .zh, facts: facts) == String(format: L10n.t(.stepStalled, .zh), L10n.duration(23 * 60, .zh), "Bash · swift test"))
         #expect(face(row, facts).secondLine == TrayRowModel.SecondLine(kind: .warning, text: why(row, facts: facts)))
     }
 
@@ -1232,7 +1185,7 @@ struct RowWordsTests {
     @Test func aRunningRowShowsItsLastStepAndItsTurn() {
         let row = session()
         var facts = SessionFacts(
-            steps: [SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 12 * minute)],
+            lastStep: SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 12 * minute),
             turnStartMs: now - 14 * minute,
             lastEventMs: now - minute
         )
@@ -1245,7 +1198,7 @@ struct RowWordsTests {
         #expect(zh.age == L10n.duration(14 * 60, .zh))
         // Under a minute the turn and the step both say "now".
         facts.turnStartMs = now - 20_000
-        facts.steps = [SessionBook.Step(tool: "Read", target: "", ms: now - 10_000)]
+        facts.lastStep = SessionBook.Step(tool: "Read", target: "", ms: now - 10_000)
         let young = face(row, facts)
         #expect(young.age == "now")
         #expect(young.secondLine?.text == "Read · now")
@@ -1263,7 +1216,7 @@ struct RowWordsTests {
     @Test func noStepWordingSaysRunning() {
         let row = stalled()
         let step = SessionBook.Step(tool: "Edit", target: "a.swift", ms: now - 30 * minute)
-        let facts = SessionFacts(steps: [step], turnStartMs: now - 40 * minute, lastEventMs: now - 30 * minute)
+        let facts = SessionFacts(lastStep: step, turnStartMs: now - 40 * minute, lastEventMs: now - 30 * minute)
         for lang in [ResolvedLanguage.en, .zh] {
             var texts = [why(row, lang, facts: facts), TrayRowModel.stepLine(step, nowMs: now, lang: lang)]
             texts += [L10n.t(.stepStalled, lang), L10n.t(.timelineHeading, lang), L10n.t(.stepThisTurn, lang)]
@@ -1310,35 +1263,11 @@ struct RowWordsTests {
         #expect(zhEvents == enEvents, "event names are the vendor's, in any language")
     }
 
-    @Test func aStalledRowWithNoClockSaysSoRatherThanGuess() {
-        #expect(why(stalled(), facts: SessionFacts()) == L10n.t(.explainStalledUnknown, .en))
-    }
-
-    @Test func aRunningRowSaysItIsWorking() {
-        let text = why(session())
-        #expect(text.hasPrefix("Working"), "\(text)")
-        #expect(why(session(), facts: SessionFacts()) == L10n.t(.explainRunningNoClock, .en))
-    }
-
     /// Orange is only a stall — a turn's error is a fact in the detail page,
     /// not a lamp.
     @Test func anErrorIsNotAnOrangeLamp() {
         let model = face(session(), SessionFacts(lastError: "npm ERR! missing script: test", lastEventMs: now - minute))
         #expect(model.lamp == .running)
-    }
-
-    /// A recent row says which rule made it recent.
-    @Test func aRecentRowSaysWhichRuleMadeItRecent() {
-        var row = session()
-        row.liveProcess = false
-        row.status = .recent(.ended(atMs: now - 5 * minute))
-        #expect(why(row).hasPrefix("Session ended"))
-        row.status = .recent(.atPrompt)
-        #expect(why(row).hasPrefix("At its prompt"))
-        row.status = .recent(.quiet)
-        #expect(why(row).contains("no process to watch"))
-        row.status = .recent(.silent)
-        #expect(why(row).hasPrefix("Nothing heard for"))
     }
 
     @Test func theSameRowAndInstantAlwaysSayTheSameThing() {
@@ -1353,11 +1282,6 @@ struct RowWordsTests {
         let early = TrayRowModel.why(row, facts: said, lang: .en, nowMs: now)
         let later = TrayRowModel.why(row, facts: said, lang: .en, nowMs: now + 60 * minute)
         #expect(early != later)
-    }
-
-    @Test func languageIsAnInput() {
-        let row = blocked()
-        #expect(why(row, .en) != why(row, .zh))
     }
 
     // MARK: - Headline: the tray hero
@@ -1425,10 +1349,10 @@ struct RowWordsTests {
         #expect(!sentence.contains("\n"))
     }
 
-    /// The tooltip names who has waited longest — agent, project, how
-    /// long — then how many more wait and how many run; other rules keep
-    /// their sentence.
-    @Test func theTooltipNamesTheLongestWait() {
+    /// The tooltip is the lamp's rule (`lampSentence`), red included: it
+    /// names no session — the tray does. VoiceOver says the same for a
+    /// coloured lamp.
+    @Test func theTooltipIsTheLampsRule() {
         var old = blocked()
         old.status = .needsYou(Block(kind: .permission, ask: "Bash: ls", sinceMs: now - 8 * minute))
         var young = session(.copilot)
@@ -1437,26 +1361,15 @@ struct RowWordsTests {
         young.status = .needsYou(Block(kind: .question, sinceMs: now - 2 * minute))
         var running = session(.codex)
         running.key = "codex|c"
-        var running2 = session(.pi)
-        running2.key = "pi|d"
-        let rows = [young, old, running, running2]
-        let counts = TrayState.Counts(rows: rows)
-        let en = TrayState.tooltip(.blocked, rows: rows, counts: counts, nowMs: now, lang: .en)
-        #expect(en == "Red: Claude needs you — pulse · 8m. 1 more waiting. 2 running.")
-        let zh = TrayState.tooltip(.blocked, rows: rows, counts: counts, nowMs: now, lang: .zh)
-        #expect(zh == "红：Claude 在等你——pulse · " + L10n.duration(8 * 60, .zh) + "。另有 1 个在等你。2 个运行中。")
-        let alone = TrayState.tooltip(.blocked, rows: [old], counts: TrayState.Counts(rows: [old]), nowMs: now, lang: .en)
-        #expect(alone == "Red: Claude needs you — pulse · 8m.")
-        var fresh = old
-        fresh.cwd = ""
-        fresh.status = .needsYou(Block(kind: .permission, sinceMs: now - 10_000))
-        let bare = TrayState.tooltip(.blocked, rows: [fresh], counts: TrayState.Counts(rows: [fresh]), nowMs: now, lang: .en)
-        #expect(bare == "Red: Claude needs you.", "no place, no time under a minute")
-        let snapshot = TrayState.assemble(rows: rows, context: .init(nowMs: now, lang: .en)).snapshot
-        #expect(snapshot.tooltip == en)
-        #expect(snapshot.accessibilityLabel == en)
-        let green = TrayState.tooltip(.running, rows: [running], counts: TrayState.Counts(rows: [running]), nowMs: now, lang: .en)
-        #expect(green == L10n.t(.lampRuleRunning, .en))
+        let rows = [young, old, running]
+        for lang in [ResolvedLanguage.en, .zh] {
+            let snapshot = TrayState.assemble(rows: rows, context: .init(nowMs: now, lang: lang)).snapshot
+            #expect(snapshot.tooltip == TrayState.lampSentence(.blocked, lang: lang))
+            #expect(snapshot.accessibilityLabel == snapshot.tooltip)
+            #expect(!snapshot.tooltip.contains("Claude") && !snapshot.tooltip.contains("pulse"), "no agent, no project")
+        }
+        let green = TrayState.assemble(rows: [running], context: .init(nowMs: now, lang: .en)).snapshot
+        #expect(green.tooltip == L10n.t(.lampRuleRunning, .en))
     }
 
     /// VoiceOver says a grey lamp's state in a word — your turn, process

@@ -1,0 +1,8 @@
+{
+  "session_id": "fx-claude-1",
+  "transcript_path": "/Users/me/.claude/projects/-Users-me-code-app/fx-claude-1.jsonl",
+  "cwd": "/Users/me/code/app",
+  "hook_event_name": "Notification",
+  "message": "Claude is waiting for your input",
+  "notification_type": "idle_prompt"
+}

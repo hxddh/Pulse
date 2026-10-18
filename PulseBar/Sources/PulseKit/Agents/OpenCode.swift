@@ -16,8 +16,13 @@ extension AgentSpec {
         aliases: [],
         // 1.x `permission.asked` / `question.asked`, 2.x `permission.asked`
         // / `form.created`; answered by their `*.replied` / `*.rejected` /
-        // `form.cancelled`, or the asking tool's step.
+        // `form.cancelled` once the root's last open ask closes (`pending`
+        // 0), a prompt, the turn's end, a stop or the session's end.
         waiting: .hooks,
+        // The plugin sends every reply: a tool's step is not an answer (two
+        // parallel asks of one tool — the first one's step must not clear
+        // the second).
+        stepsAnswerBlocks: false,
         process: AgentProcessRule(
             basenames: ["opencode", "open-code"],
             pathNeedles: ["/bin/opencode", "opencode@", "@opencode"]
@@ -198,6 +203,9 @@ package enum OpenCode {
     ///   `rejected` / `form.cancelled` says how many are still open
     ///   (`pending`), so one answer of two parallel asks keeps the lamp red.
     ///   An ask names the asking tool (by its call id) when it was seen.
+    ///   The root's run ending — 1.x `session.idle` or an abort, 2.x
+    ///   `session.execution.succeeded` / `failed` / `interrupted` — closes
+    ///   every ask it still holds: none outlives its run.
     /// - **Steps.** 1.x: a tool part's first `running` state (what runs now)
     ///   and its `completed` / `error` state, once per call; 2.x:
     ///   `session.tool.called` and `session.tool.success` / `failed`, the
@@ -238,9 +246,8 @@ package enum OpenCode {
         // 1.x: tool call id → tool name; 2.x: tool call id → { name, target, at }.
         const NAMES = new Map()
         const CALLS = new Map()
-        // 1.x: call ids whose start / end was sent.
-        const STARTED = new Set()
-        const DONE = new Set()
+        // 1.x: tool call id → the phase last sent ("running", then "done").
+        const PHASES = new Map()
         // 1.x: user message ids, and those whose prompt was sent; a text part
         // seen before its message.
         const USERS = new Set()
@@ -388,13 +395,13 @@ package enum OpenCode {
             const name = text(part.tool, 64)
             if (state.status === "pending" || state.status === "running") {
               remember(NAMES, part.callID, name, 256)
-              if (state.status !== "running" || STARTED.has(part.callID)) return
-              mark(STARTED, part.callID, 512)
+              if (state.status !== "running" || PHASES.has(part.callID)) return
+              remember(PHASES, part.callID, "running", 512)
               return deliver(type, own, directory, { phase: "running", tool_name: name, target: target(state.input) })
             }
             if (state.status !== "completed" && state.status !== "error") return
-            if (DONE.has(part.callID)) return
-            mark(DONE, part.callID, 512)
+            if (PHASES.get(part.callID) === "done") return
+            remember(PHASES, part.callID, "done", 512)
             NAMES.delete(part.callID)
             // A call an abort cut short is no step: the stop says it.
             if (state.status === "error" && state.metadata && state.metadata.interrupted === true) return
@@ -443,6 +450,8 @@ package enum OpenCode {
           }
           if (type === "session.idle") {
             STATUS.delete(own)
+            // The run is over: no ask of it is still open.
+            OPEN.delete(own)
             if (ABORTED.has(own)) {
               ABORTED.delete(own)
               return
@@ -453,7 +462,10 @@ package enum OpenCode {
             const e = p.error || {}
             const name = text(e.name, 64)
             const words = (e.data && typeof e.data.message === "string" && e.data.message) || (typeof e.message === "string" && e.message) || name
-            if (name === "MessageAbortedError" && own) mark(ABORTED, own, 256)
+            if (name === "MessageAbortedError" && own) {
+              mark(ABORTED, own, 256)
+              OPEN.delete(own)
+            }
             return deliver(type, own, directory, { error: text(words), error_name: name })
           }
           if (type === "session.compacted") return deliver(type, own, directory)
@@ -538,6 +550,10 @@ package enum OpenCode {
               is_error: type === "session.tool.failed",
               duration_ms: call.at > 0 && now >= call.at ? Math.round(now - call.at) : 0,
             })
+          }
+          // The run is over: no ask of it is still open.
+          if (type === "session.execution.succeeded" || type === "session.execution.failed" || type === "session.execution.interrupted") {
+            OPEN.delete(own)
           }
           if (type === "session.execution.failed") {
             const e = d.error || {}

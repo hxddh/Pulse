@@ -47,10 +47,10 @@ package enum Lamp: String, CaseIterable, Equatable, Sendable {
     /// What VoiceOver says for the state.
     package var accessibilityKey: L10n.Key {
         switch self {
-        case .waiting: return .a11yWaiting
-        case .running: return .a11yRunning
-        case .stalled: return .a11yStalled
-        case .processOnly: return .a11yProcessOnly
+        case .waiting: return .needsYou
+        case .running: return .running
+        case .stalled: return .stalled
+        case .processOnly: return .processOnly
         case .idle: return .a11yIdle
         }
     }
@@ -86,78 +86,60 @@ package struct Block: Hashable, Sendable {
     }
 }
 
-/// What a session said lately: its last words and error, its steps, its
-/// clocks, the vendor events behind its state and its timeline — the facts
-/// that move with every line. They are read from the book when a row or the
-/// detail page is drawn (`SessionBook.facts`), never carried by the
-/// projection, so a burst of tool lines lands nothing.
+/// What a session said lately: its last words and error, its last step and
+/// what runs now, its clocks, the vendor events behind its state and its
+/// timeline — the facts that move with every line. The book keeps them on
+/// each session (`SessionBook.Session.facts`, reached through the session's
+/// own members) and hands them out when a row or the detail page is drawn
+/// (`SessionBook.facts`), never through the projection, so a burst of tool
+/// lines lands nothing.
 package struct SessionFacts: Equatable, Sendable {
     /// The first line of the agent's latest message, as its turn carried it.
-    package var lastWords: String
-    /// The text of the latest turn that ended on an error.
-    package var lastError: String
-    /// Up to `SessionBook.maxSteps` recent steps, oldest first.
-    package var steps: [SessionBook.Step]
-    /// The tool said to have started and not yet finished; nil none.
-    package var running: SessionBook.Step?
-    /// When the current turn started (its prompt); 0 unknown.
-    package var turnStartMs: Int64
-    /// The newest event of any kind; 0 none.
-    package var lastEventMs: Int64
-    /// The newest activity (a tool ran, a prompt); 0 none.
-    package var activityMs: Int64
-    /// The vendor event of the line that put the session in its current
-    /// state ("" for a process exit, or unknown) — what the why cites.
-    package var stateEvent: String
-    /// The vendor event of its newest line.
-    package var lastEvent: String
-    /// The last `SessionBook.maxTimeline` lines it heard, oldest first —
-    /// the detail page's timeline.
-    package var timeline: [SessionBook.Heard]
-    /// Steps the current turn took (its subagents' among them), and how
-    /// many failed.
-    package var turnSteps: Int
-    package var turnFailedSteps: Int
-    /// The latest turn ended on an error.
-    package var failedTurn: Bool
-    /// The person stopped the run, and nothing has moved it since.
-    package var stopped: Bool
-
-    package init(
-        lastWords: String = "",
-        lastError: String = "",
-        steps: [SessionBook.Step] = [],
-        running: SessionBook.Step? = nil,
-        turnStartMs: Int64 = 0,
-        lastEventMs: Int64 = 0,
-        activityMs: Int64 = 0,
-        stateEvent: String = "",
-        lastEvent: String = "",
-        timeline: [SessionBook.Heard] = [],
-        turnSteps: Int = 0,
-        turnFailedSteps: Int = 0,
-        failedTurn: Bool = false,
-        stopped: Bool = false
-    ) {
-        self.lastWords = lastWords
-        self.lastError = lastError
-        self.steps = steps
-        self.running = running
-        self.turnStartMs = turnStartMs
-        self.lastEventMs = lastEventMs
-        self.activityMs = activityMs
-        self.stateEvent = stateEvent
-        self.lastEvent = lastEvent
-        self.timeline = timeline
-        self.turnSteps = turnSteps
-        self.turnFailedSteps = turnFailedSteps
-        self.failedTurn = failedTurn
-        self.stopped = stopped
-    }
-
+    package var lastWords = ""
+    /// The text of the latest turn that ended on an error; cleared by the
+    /// next turn.
+    package var lastError = ""
     /// The newest step; nil when the agent's hook names no tool or none
     /// has run.
-    package var lastStep: SessionBook.Step? { steps.last }
+    package var lastStep: SessionBook.Step?
+    /// The tools `status` lines said started and no `tool` line has
+    /// finished yet, oldest first, at most `SessionBook.maxRunning`. Each
+    /// goes with its own step, so a short parallel tool ending leaves the
+    /// long build running; the turn's end clears them all. While any is
+    /// there a silence is not a stall.
+    package var runningSteps: [SessionBook.Step] = []
+    /// The prompt (or, with none seen, the step) that started the current
+    /// turn; 0 unknown.
+    package var turnStartMs: Int64 = 0
+    /// The newest event of any kind; 0 none.
+    package var lastEventMs: Int64 = 0
+    /// The newest activity (a tool ran, a prompt); 0 none.
+    package var activityMs: Int64 = 0
+    /// The vendor event of the line that put the session in its current
+    /// state ("" for a process exit, or unknown) — what the why cites.
+    package var stateEvent = ""
+    /// The vendor event of its newest line.
+    package var lastEvent = ""
+    /// The last `SessionBook.maxTimeline` lines it heard, oldest first —
+    /// the detail page's timeline.
+    package var timeline: [SessionBook.Heard] = []
+    /// Steps the current turn took (its subagents' among them), and how
+    /// many failed — counted as the lines apply, so a replay counts them
+    /// again.
+    package var turnSteps = 0
+    package var turnFailedSteps = 0
+    /// The latest turn ended on an error.
+    package var failedTurn = false
+    /// The person stopped the run, and nothing has moved it since.
+    package var stopped = false
+
+    /// Nothing said: what a key the book does not hold has. (The
+    /// memberwise initializer is the module's; the app takes this.)
+    package static let empty = SessionFacts()
+
+    /// The newest tool still running — what the row says runs now ("Now:
+    /// …"); nil none.
+    package var running: SessionBook.Step? { runningSteps.last }
 
     /// The newest clock, in ms; 0 unknown.
     package var lastActivityMs: Int64 { max(lastEventMs, activityMs) }
@@ -191,8 +173,9 @@ package struct AgentRow: Identifiable, Hashable {
         /// question.
         case needsYou(Block)
         /// It took a prompt or reported work, and nothing since says
-        /// otherwise; `stalled` when an agent that reports every tool call
-        /// has said nothing for `AgentRow.stalledSeconds`.
+        /// otherwise; `stalled` when an agent that reports each tool's
+        /// start and end (`AgentID.silenceCanStall`) has said nothing, with
+        /// no tool running, for `AgentRow.stalledSeconds`.
         case running(stalled: Bool)
         /// It finished its turn and nobody has looked since. Never red.
         case yourTurn(sinceMs: Int64)
@@ -303,7 +286,8 @@ package struct AgentRow: Identifiable, Hashable {
     // MARK: - Stall
 
     /// The stall rule: twenty minutes with no event from a working session
-    /// whose agent reports its work (one that has sent an activity event).
+    /// whose agent reports each tool's start and end (one that has sent an
+    /// activity event, with no tool running).
     /// Not a setting; `TrayState.Context` carries it so a test can move it.
     package static let stalledSeconds: Double = 20 * 60
 

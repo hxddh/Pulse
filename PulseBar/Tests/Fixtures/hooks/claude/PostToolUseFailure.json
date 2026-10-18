@@ -1,0 +1,15 @@
+{
+  "session_id": "fx-claude-1",
+  "transcript_path": "/Users/me/.claude/projects/-Users-me-code-app/fx-claude-1.jsonl",
+  "cwd": "/Users/me/code/app",
+  "hook_event_name": "PostToolUseFailure",
+  "permission_mode": "default",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "npm run lint",
+    "description": "Lint"
+  },
+  "tool_use_id": "toolu_02",
+  "error": "Command failed with exit code 1",
+  "is_interrupt": false
+}

@@ -50,9 +50,10 @@ format's flavor — never by the agent.
   (`ScanQuietTests`). The projection carries state only — a row's
   `AgentRow.Status`, never a step or a clock — so plain equality says "the
   same world" and a burst of tool lines lands nothing. What a session said
-  lately (`SessionFacts`: steps, last words, error, clocks, the vendor
-  events behind its state — `stateEvent`, `lastEvent` — and its timeline)
-  is read from the book when a row or the detail page is drawn
+  lately (`SessionFacts`: its last step and what runs now, last words,
+  error, clocks, the vendor events behind its state — `stateEvent`,
+  `lastEvent` — and its timeline) is kept on each session as one value and
+  handed out when a row or the detail page is drawn
   (`StatusStore.facts(for:)`),
   on the tray's own clock (`TimelineView`, `TrayChrome.clock`). Settings (open at login,
   "don't suggest hooks") go through `StatusStore.set`, which writes
@@ -67,9 +68,9 @@ re-raise inside the grace keeps the first raise's, a held turn lands with
 its own, a process exit has none) and its last `SessionBook.maxTimeline`
 heard lines, each with the `SessionBook.Effect` the reducer decided as it
 applied it — raised, said again, answered, your turn, held, dismissed,
-seen, stopped, named, a step (or a failed one, with its `took`), a run of
-consecutive steps of one speaker merged as it is heard (`StepRun`: each
-tool and its count, how many failed — so the ring covers a turn), a
+seen, stopped, named, steps (`StepRun`: one step with its target and
+`took`, or consecutive steps of one speaker merged as they are heard —
+each tool and its count, how many failed — so the ring covers a turn), a
 subagent's own lifecycle, an `ignored` line's reason — and which subagent
 said it (`Heard.sub`, the v8 `sub` column; the detail page marks it
 "Subagent · …"). The session also counts the current turn's steps and
@@ -79,9 +80,9 @@ rebuilt by the launch replay like every other fact. The why says what
 happened in plain words and cites no event; the event names are the detail
 page's timeline column (`EventName.display` refuses a column that is not a
 name), Settings → Hooks and the report, which carries the last three
-entries, a step by its tool only. Each agent's capability line (waits,
-steps, last words, titles) is `AgentSpec.capabilities`, derived from its
-adapter.
+entries, a step by its tool only. An agent that cannot report a wait
+(`WaitingSource.none`) says so — "doesn't report waits" — on its Settings
+line, its detail page and its report line.
 
 Settings' per-agent line is a `Connection`: the install
 `HooksSupport.inspect` reads from the agent's config — the events that carry
@@ -89,9 +90,15 @@ Pulse's command against the adapter's contract (complete or partial), and
 the launcher paths they name against this Pulse's launcher, which must run,
 as must the app `hook-runner.path` names (else stale) — the last install's
 failure, which wins, and the newest line and `ignored` line per agent, kept
-by `ScanEngine` as it applies the log. `inspect` runs at launch, when
+by `ScanEngine` as it applies the log — with whether the log still held
+every line it was given when it was replayed (`ScanEngine.logWhole`): only
+then can "nothing heard yet" be said. `inspect` runs at launch, when
 Settings opens and after an install; never on the scan path. Install all
-fixes a partial or stale install.
+fixes a partial or stale install. Which agents carry the hook — the
+status line's count, the tray's setup card — is read from the
+connections; `HooksSupport.Status` holds only what they cannot say (not
+read yet, an install running, the last run's per-agent failures, a
+launcher that could not be written).
 
 ## Processes (libproc)
 
@@ -179,3 +186,26 @@ notarization that stapler validates makes it `stable`; an unnotarized build
 is never stable. Pulse makes no network connection: Settings' "Releases…"
 opens the releases page in the browser. It never downloads or replaces
 itself.
+
+## Proof — what runs the real path
+
+The unit tests pin each component; these layers run the parts together, the
+way an agent and a person reach them. None of them ships: the flags live in
+`PulseQA` (`ProofDriver`; `package_check.py`
+fails an app binary that carries one).
+
+| Layer | Where | What it proves |
+| --- | --- | --- |
+| Recorded payloads | `PulseBar/Tests/Fixtures/hooks/<agent>/<event>[@variant].json`, `expected.json` | One payload per installed event at least (`catalog_check` fails an event without one), reconstructed from the contract's pinned source; fields no primary source confirms are `unverified` in `vendor-formats.json` |
+| In process | `RecordedPayloadTests` (`VendorFormatTests.swift`) | Every fixture through `PulseHookReceiver.run`, the way its hook hands it over (stdin, or the modules' last argument), becomes the line `expected.json` names — a state or the `ignored` line that says why, never an unreadable payload |
+| Modules under Node | `scripts/js_adapters_test.mjs` | The Pi extension and the OpenCode plugin (1.x and 2.x) run against a stub of their vendor's API with a stub launcher; recorded sequences (a turn with tools, an ask and its answer, a question, parallel asks, a subagent, shutdown) produce exactly these ordered `pulse-hook` calls. Linux renders the modules with `scripts/render_adapters.py`; macOS CI renders them with the compiled code (`PulseQA --write-adapters`) and fails when the two differ. A case marked `knownBug` states a defect's correct behaviour and reports XFAIL until it is fixed |
+| End to end | `scripts/e2e.sh`, after `package.sh` | In a throwaway home the real installer (`PulseQA --install-hooks`) writes every hook and points the launcher at the packaged app; fixtures go through the installed `pulse-hook` into `PulseBar --hook`; `PulseQA --dump-snapshot` replays that log as `ScanEngine` does (one projection per line, a `WaitLedger` beside it) and the script checks red + one banner, the answer (running, banner withdrawn), the end (no live row) — for Claude on stdin and Pi in argv — then every fixture's line |
+| The owner | `scripts/smoke.sh` | On a real Mac: quarantine, signature, the installed hooks (read-only), then a real Claude permission and a real Pi prompt, their answers and a click, each confirmed against the lines `events.tsv` gains; prints a report in Chinese |
+
+**Home.** Foundation's home directory on macOS honours `CFFIXED_USER_HOME`,
+not `HOME`. Pulse's own folder follows `PULSE_HOME` (`EventLog.directory`,
+read by the hook and the snapshot); the installer's home is
+`HooksInstaller.homeOverride`, which `--install-hooks=<home>` sets, as the
+tests do. `e2e.sh` sets all three (and `HOME`) to the throwaway home, so
+nothing lands in the real one; no app code reads an override it did not
+already read.

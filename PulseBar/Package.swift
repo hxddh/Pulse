@@ -67,9 +67,7 @@ let package = Package(
         ),
         // The session reducer and its projection are the most
         // regression-prone part of the product. Swift 6 mode like the rest,
-        // but not warnings-as-errors: the tests exercise deprecated AppKit on
-        // purpose (`NSAppearance.current`, for the appearance matrix). The
-        // main-actor XCTest suites isolate their test methods (an
+        // but not warnings-as-errors. The main-actor XCTest suites isolate their test methods (an
         // `XCTestCase` subclass cannot be `@MainActor`); new suites are Swift
         // Testing. The QA fixtures are tested too, so the suite links
         // `PulseQA` as a testable executable.

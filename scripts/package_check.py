@@ -37,6 +37,9 @@ QA_ONLY_MARKERS = [
     b"--tray-fixture=",
     b"--capture-tray=",
     b"--appearance=",
+    b"--install-hooks=",
+    b"--dump-snapshot=",
+    b"--write-adapters=",
 ]
 
 # Resources the app asks Bundle.module for by name. Paths are relative to the

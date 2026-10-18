@@ -1,0 +1,25 @@
+{
+  "session_id": "fx-claude-1",
+  "transcript_path": "/Users/me/.claude/projects/-Users-me-code-app/fx-claude-1.jsonl",
+  "cwd": "/Users/me/code/app",
+  "hook_event_name": "PermissionRequest",
+  "permission_mode": "default",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "rm -rf build",
+    "description": "Remove the build folder"
+  },
+  "permission_suggestions": [
+    {
+      "type": "addRules",
+      "rules": [
+        {
+          "toolName": "Bash",
+          "ruleContent": "rm -rf build"
+        }
+      ],
+      "behavior": "allow",
+      "destination": "localSettings"
+    }
+  ]
+}

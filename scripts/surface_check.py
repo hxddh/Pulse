@@ -30,7 +30,7 @@ QA = ROOT / "PulseBar/Sources/PulseQA"
 # The QA driver's files. None of them may live in the app library.
 QA_FILES = [
     "SurfaceFixtures.swift", "SurfaceCapture.swift", "StatusStoreFixture.swift",
-    "TrayPreviewWindowController.swift", "QADriver.swift",
+    "TrayPreviewWindowController.swift", "QADriver.swift", "ProofDriver.swift",
 ]
 
 # (file, struct) pairs that must never see the store.

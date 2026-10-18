@@ -25,14 +25,20 @@ product decision; mechanically it is one `case` in
 `PulseKit/Agents/Agents.swift`, one adapter file beside it (its `AgentSpec`:
 identity, process rule, waiting source, `HookContract` with each event's
 action, and a `read` for payload-dependent events), its icon, README row, a
-truth table in `SessionBookTests` and a `hooks` entry in
-`docs/vendor-formats.json`. Nothing outside `Agents/` switches on an agent
+truth table in `SessionBookTests`, a `hooks` entry in
+`docs/vendor-formats.json` and a recorded payload per installed event
+(`PulseBar/Tests/Fixtures/hooks/<agent>/`, its line in `expected.json`). Nothing outside `Agents/` switches on an agent
 or spells a vendor event (`catalog_check`).
 
 ## Invariants
 
 Product decisions, not preferences. Breaking one is a bug even if it ships.
 
+- **No guessed state.** A row says what the events prove. Only an agent
+  that reports a tool start (`HookContract.silenceCanStall`: Pi, OpenCode)
+  can stall; for the rest a long command and a stuck one look the same, so
+  their rows never turn orange. Settings says nothing a process's start
+  time or a compacted log cannot prove.
 - **No fake Waiting.** Waiting comes only from the vendor's own hook / plugin /
   extension event that reports a block (`waiting: .hooks`). Codex and Cursor
   are `waiting: .none`: the receiver writes an `ignored` line instead of a
@@ -195,7 +201,13 @@ blocks the app, the hooks or `--selftest`.
 bash scripts/gates.sh                 # source gates
 python3 scripts/package_check.py      # the built .app: flat resource bundle, no QA code
 ./scripts/qa_captures.sh              # surface + status fixture PNGs (PulseQA)
+node scripts/js_adapters_test.mjs     # the Pi extension and OpenCode plugin under Node
+./scripts/e2e.sh                      # after package.sh: installer → pulse-hook → PulseBar --hook → snapshot
 ```
+
+The proof layers (recorded payloads, the modules under Node, the end-to-end
+run, the owner's `scripts/smoke.sh`) are in `docs/architecture.md` → Proof;
+their flags live in `PulseQA` and `package_check.py` fails an app carrying one.
 
 `gates.sh` runs `version_check` (one semver), `catalog_check` (roster, one
 adapter file per agent and no vendor event spelled outside `Agents/`, hook

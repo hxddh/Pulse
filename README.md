@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`31.0.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v31.0.0) · macOS 14+
+**版本：`32.0.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v32.0.0) · macOS 14+
 
 开着 Claude Code 写代码，切去开会，回来发现它二十分钟前就停在一个授权提示上。Pulse 把这件事变成余光可见：
 
@@ -10,7 +10,7 @@ macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还�
 | --- | --- |
 | 🔴 实心红 | **需要你** —— 阻塞在授权或提问上。点一下：能落到确切的终端就落过去，否则打开这一行的详情 |
 | 🟢 绿环 | 运行中 |
-| 🟠 橙环 | 停滞 —— 报告过自己在干活的会话久无新事件 |
+| 🟠 橙环 | 停滞 —— 会报告工具开始的 agent（Pi、OpenCode）没有工具在跑，却久无新事件 |
 | ⚪️ 灰 | 空闲、轮到你、最近，或只看到进程（虚线圈） |
 
 回合做完是「轮到你」：托盘头部安静地计数，不变红、不发通知。每个真正的「需要你」只发一条横幅，直接说出被请求
@@ -66,8 +66,7 @@ macOS 拦下而丢失。把 Pulse 换到别的位置时，打开一次新位置�
 | Codex | `PostToolUse` | 有 | 有 | **不会** —— 它的 PermissionRequest 在自己的自动审查之前触发，装了就是假等待 |
 | Cursor（编辑器与 `cursor-agent`） | `afterShellExecution` / `afterFileEdit` / `afterMCPExecution` | 有 | — | **不会** —— 没有不拦截的等待事件 |
 
-设置 → Hooks 的每个 Agent 下面有一行同样的能力（「报告等待、步骤、最后一句话和标题」），由适配器的契约得出。
-不会报告的两个只显示「运行中」与「轮到你」，Pulse 如实这样写（「报告回合、步骤……——不报告等待」），不伪造红灯。每个事件装在哪、变成什么、出处在哪，
+不会报告等待的两个只显示「运行中」与「轮到你」，Pulse 在设置 → Hooks 和详情页如实这样写（「这个 Agent 不报告等待」），不伪造红灯。每个事件装在哪、变成什么、出处在哪，
 见 [`docs/vendor-formats.md`](docs/vendor-formats.md)。
 
 Pi 的扩展装在 `~/.pi/agent/extensions/`。如果你用 `PI_CODING_AGENT_DIR` 让 Pi 读别的文件夹，Pulse 看不到这个

@@ -72,8 +72,6 @@ extension AgentSpec {
         // Inside a subagent (the Task tool) every event carries the
         // subagent's `agent_id`; the main agent's carry none.
         subagentKeys: ["agent_id"],
-        // A turn says its last words: `Stop` carries `last_assistant_message`.
-        lastWords: true,
         read: { Claude.read($0, $1) }
     )
 }

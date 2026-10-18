@@ -1,0 +1,11 @@
+{
+  "session_id": "fx-pi-1",
+  "cwd": "/Users/me/code/app",
+  "pid": 4242,
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "npm test"
+  },
+  "is_error": false,
+  "duration_ms": 1834
+}

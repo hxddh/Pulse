@@ -31,10 +31,10 @@ enum SurfaceFixtures {
     }
 
     static let names = [
-        "row-blocked", "row-blocked-front", "row-running", "row-running-selected",
+        "row-blocked", "row-running", "row-running-selected",
         "row-stalled", "row-your-turn", "row-process-only",
         "row-running-step", "row-stalled-step",
-        "row-live-tool", "row-failed-step", "row-failed-turn", "row-stopped", "row-process-unconnected",
+        "row-live-tool", "row-failed-step", "row-failed-turn", "row-stopped",
         "header", "notice-setup", "notice-setup-done", "notice-setup-failed", "row-app-only",
         "detail-blocked", "detail-your-turn", "detail-timeline", "detail-stalled", "detail-app-only",
         "detail-subagent", "detail-failed-turn",
@@ -44,7 +44,6 @@ enum SurfaceFixtures {
     static func all(lang: ResolvedLanguage) -> [Fixture] {
         [
             Fixture(name: "row-blocked", width: 448, value: .row(rowModel(rowPermission(), lang: lang))),
-            Fixture(name: "row-blocked-front", width: 448, value: .row(rowModel(rowQuestionFront(), lang: lang))),
             Fixture(name: "row-running", width: 448, value: .row(rowModel(rowRunning(), lang: lang))),
             // The common row, selected (the pointer entered it): the one
             // highlight, and its "›" column — always there, clearer now —
@@ -68,8 +67,6 @@ enum SurfaceFixtures {
             Fixture(name: "row-failed-turn", width: 448, value: .row(rowModel(rowFailedTurn(), lang: lang))),
             // The person stopped the run at the agent's prompt.
             Fixture(name: "row-stopped", width: 448, value: .row(rowModel(rowStopped(), lang: lang))),
-            // A process of an agent Pulse is not connected to.
-            Fixture(name: "row-process-unconnected", width: 448, value: .row(rowModel(rowProcessOnly(), lang: lang, connected: false))),
             Fixture(name: "header", width: 448, value: .header(header(lang: lang))),
             Fixture(name: "notice-setup", width: 432, value: .notice(noticeSetup(lang: lang))),
             Fixture(name: "notice-setup-done", width: 432, value: .notice(noticeSetupDone(lang: lang))),
@@ -99,9 +96,9 @@ enum SurfaceFixtures {
             // every state: installed, needs update (events, launcher),
             // failed, not installed — and the agent not on this Mac.
             Fixture(name: "settings", width: 500, value: .settings(settings(lang: lang))),
-            // Whole installs that may not run: turned off, untrusted,
-            // nothing heard yet, a config folder that is missing — under
-            // each agent's capability line.
+            // Whole installs that may not run: turned off,
+            // nothing heard yet, a config folder that is missing — and
+            // that Codex and Cursor do not report waits.
             Fixture(name: "settings-caveats", width: 500, value: .settings(settingsCaveats(lang: lang))),
             // Open at login registered, and macOS waiting for approval.
             Fixture(name: "settings-login-approval", width: 500, value: .settings(settingsLoginApproval(lang: lang))),
@@ -183,7 +180,7 @@ enum SurfaceFixtures {
     }
 
     static func rowStalled() -> Sample {
-        var sample = base(.copilot, id: "fx-stalled", task: "Port the parser to Swift")
+        var sample = base(.opencode, id: "fx-stalled", task: "Port the parser to Swift")
         sample.row.status = .running(stalled: true)
         sample.facts.lastEventMs = nowMs - 25 * minute
         sample.facts.activityMs = nowMs - 25 * minute
@@ -205,21 +202,15 @@ enum SurfaceFixtures {
         return sample
     }
 
-    /// Five steps, as a hook reports them: the tool, its target, when.
-    static func steps(endingAt last: Int64) -> [SessionBook.Step] {
-        [
-            SessionBook.Step(tool: "Read", target: "Sources/Upload/Queue.swift", ms: last - 9 * minute),
-            SessionBook.Step(tool: "Edit", target: "Sources/Upload/Queue.swift", ms: last - 7 * minute),
-            SessionBook.Step(tool: "Grep", target: "retryDelay", ms: last - 5 * minute),
-            SessionBook.Step(tool: "Edit", target: "Sources/Upload/Backoff.swift", ms: last - 3 * minute),
-            SessionBook.Step(tool: "Bash", target: "swift test", ms: last),
-        ]
+    /// The last step, as a hook reports it: the tool, its target, when.
+    static func step(at ms: Int64) -> SessionBook.Step {
+        SessionBook.Step(tool: "Bash", target: "swift test", ms: ms)
     }
 
     static func rowRunningStep() -> Sample {
         var sample = base(.claude, id: "fx-running-step", task: "Add retry with jitter to the upload queue")
         sample.facts = SessionFacts(
-            steps: steps(endingAt: nowMs - 2 * minute),
+            lastStep: step(at: nowMs - 2 * minute),
             turnStartMs: nowMs - 14 * minute,
             lastEventMs: nowMs - 2 * minute,
             activityMs: nowMs - 2 * minute,
@@ -272,7 +263,7 @@ enum SurfaceFixtures {
 
     static func rowStalledStep() -> Sample {
         var sample = rowStalled()
-        sample.facts.steps = steps(endingAt: nowMs - 25 * minute)
+        sample.facts.lastStep = step(at: nowMs - 25 * minute)
         sample.facts.turnStartMs = nowMs - 40 * minute
         return sample
     }
@@ -282,8 +273,8 @@ enum SurfaceFixtures {
     static func rowLiveTool() -> Sample {
         var sample = base(.pi, id: "fx-live", task: "Make the test suite pass on CI")
         sample.facts = SessionFacts(
-            steps: steps(endingAt: nowMs - 4 * minute),
-            running: SessionBook.Step(tool: "bash", target: "npm test", ms: nowMs - 3 * minute),
+            lastStep: step(at: nowMs - 4 * minute),
+            runningSteps: [SessionBook.Step(tool: "bash", target: "npm test", ms: nowMs - 3 * minute)],
             turnStartMs: nowMs - 9 * minute,
             lastEventMs: nowMs - 3 * minute,
             activityMs: nowMs - 3 * minute,
@@ -297,7 +288,7 @@ enum SurfaceFixtures {
         var sample = base(.claude, id: "fx-failed-step", task: "Audit the auth flows")
         let last = SessionBook.Step(tool: "Bash", target: "swift test", ms: nowMs - minute, failed: true, tookMs: 2_300, sub: "a1")
         sample.facts = SessionFacts(
-            steps: Array(steps(endingAt: nowMs - 2 * minute).dropLast()) + [last],
+            lastStep: last,
             turnStartMs: nowMs - 11 * minute,
             lastEventMs: nowMs - minute,
             activityMs: nowMs - minute,
@@ -400,7 +391,7 @@ enum SurfaceFixtures {
     static func noticeSetupFailed(lang: ResolvedLanguage) -> TrayNoticeModel {
         TrayNoticeModel.pick(TrayNoticeModel.Input(
             lang: lang, notifyAuthorized: true, bannerFailed: false,
-            installFailure: HooksSupport.Status.failureText([.cursor: .invalidJSON], lang: lang)
+            installFailure: HooksSupport.failureText([.cursor: .invalidJSON], lang: lang)
         )) ?? TrayNoticeModel(
             kind: .setupFailed, text: "", actionTitle: "", action: .openHooksSettings,
             systemImage: "exclamationmark.triangle", tone: .stalled
@@ -465,7 +456,7 @@ enum SurfaceFixtures {
             lang: lang,
             launchAtLogin: true,
             notifications: .allowed,
-            hooksStatus: HooksSupport.Status.installed([.claude, .codex, .copilot], failed: [.cursor: .invalidJSON]).label(lang: lang),
+            hooksStatus: HooksSupport.Status.ready(failed: [.cursor: .invalidJSON]).label(installed: 3, lang: lang),
             hooksInstalled: true,
             hookAgents: SettingsModel.hookAgents(connections: connections(), present: present, nowMs: nowMs, lang: lang),
             absentAgents: SettingsModel.absentAgents(connections: connections(), present: present),
@@ -475,15 +466,14 @@ enum SurfaceFixtures {
         )
     }
 
-    /// Whole installs that may not run, each with its capability line:
-    /// Claude's hooks turned off in its settings, Codex changed since it
-    /// last ran them (untrusted), Copilot nothing heard yet, Pi's config
-    /// folder missing; Cursor whole and heard.
+    /// Whole installs that may not run: Claude's hooks turned off in its settings, Copilot nothing heard
+    /// yet, Pi's config folder missing; Codex and Cursor whole and heard,
+    /// and saying they do not report waits.
     static func settingsCaveats(lang: ResolvedLanguage) -> SettingsModel {
         let present: Set<AgentID> = [.claude, .codex, .cursor, .copilot, .pi]
         let caveats = [
             Connection(agent: .claude, install: .complete, lastHeard: Connection.Heard(event: event(.claude, .turn), ms: nowMs - 26 * 60 * minute), caveat: .turnedOff),
-            Connection(agent: .codex, install: .complete, caveat: .untrusted),
+            Connection(agent: .codex, install: .complete, lastHeard: Connection.Heard(event: event(.codex, .turn), ms: nowMs - 12 * minute)),
             Connection(
                 agent: .cursor, install: .complete,
                 lastHeard: Connection.Heard(event: event(.cursor, .turn), ms: nowMs - 5 * minute),
@@ -494,7 +484,7 @@ enum SurfaceFixtures {
             Connection(agent: .pi, install: .notInstalled, configDirMissing: true),
         ]
         var model = settings(lang: lang)
-        model.hooksStatus = HooksSupport.Status.installed([.claude, .codex, .cursor, .copilot]).label(lang: lang)
+        model.hooksStatus = HooksSupport.Status.ready().label(installed: 4, lang: lang)
         model.hookAgents = SettingsModel.hookAgents(connections: caveats, present: present, nowMs: nowMs, lang: lang)
         model.absentAgents = SettingsModel.absentAgents(connections: caveats, present: present)
         return model

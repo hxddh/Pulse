@@ -3,9 +3,7 @@ import Foundation
 /// One agent's hook connection, as Settings → Hooks says it on the agent's
 /// line and "Copy report" says it in English: whether Pulse's hook is
 /// installed and whole, which vendor event was heard last and when, the
-/// last event it heard and did not use (and why), and what the agent's
-/// adapter reports at all (`AgentCapabilities`: waits, steps, last words,
-/// titles).
+/// last event it heard and did not use (and why).
 ///
 /// Pure: built from what the installer read (`HooksSupport.inspect`), the
 /// last install's failure and the event log's newest lines (kept by
@@ -96,8 +94,8 @@ package struct Connection: Equatable, Sendable {
     }
 
     /// Why an installed hook may not be running, though the config carries
-    /// it whole: a vendor setting silences it, or the vendor has not run it
-    /// since the file changed and needs the person to trust it.
+    /// it whole: a vendor setting silences it, or nothing was ever heard
+    /// through it.
     package enum Caveat: String, Equatable, Sendable {
         /// The person's own settings turn every hook off (Claude's
         /// `disableAllHooks` in `~/.claude/settings.json`).
@@ -105,16 +103,14 @@ package struct Connection: Equatable, Sendable {
         /// A managed policy runs only managed hooks, or none
         /// (`allowManagedHooksOnly`, a managed `disableAllHooks`).
         case managedOnly
-        /// A trust-bound vendor (Codex: `NestedFlavor.trustBound`) has run
-        /// since the file last changed and nothing was heard: the changed
-        /// entries wait to be trusted (`/hooks`).
-        case untrusted
         /// The install is whole and nothing was ever heard from the agent
         /// through it: no line in the log — or, for a file Pulse owns
         /// whole (whose last change is Pulse's install), none since it was
-        /// written. Not a fault (the agent may not have run yet), but the
-        /// first thing to check when it has: a sandbox that keeps the hook
-        /// from Pulse's folder, a config folder moved by the environment.
+        /// written — and the log still holds every line it was given, so
+        /// it can say so. Not a fault (the agent may not have run yet), but
+        /// the first thing to check when it has: a sandbox that keeps the
+        /// hook from Pulse's folder, a config folder moved by the
+        /// environment.
         case neverHeard
     }
 
@@ -157,13 +153,13 @@ package struct Connection: Equatable, Sendable {
         ignored: Ignored?,
         configDirMissing: Bool = false,
         config: Config = Config(),
-        runningSince: [Int64] = []
+        logWhole: Bool = true
     ) -> Connection {
         let install = failure.map(Install.failed) ?? probed ?? .notInstalled
         return Connection(
             agent: agent, install: install, lastHeard: heard, lastIgnored: ignored,
             configDirMissing: configDirMissing && agent.spec.hooks.relocation != nil,
-            caveat: caveat(agent: agent, install: install, config: config, heardMs: heard?.ms, runningSince: runningSince)
+            caveat: caveat(agent: agent, install: install, config: config, heardMs: heard?.ms, logWhole: logWhole)
         )
     }
 
@@ -181,23 +177,18 @@ package struct Connection: Equatable, Sendable {
     }
 
     /// Why a whole install may still say nothing: a setting that silences
-    /// it; else, for a trust-bound vendor, a process of the agent that
-    /// started after the file last changed (`runningSince`: start times of
-    /// its running processes, 0 unknown) while nothing was heard since that
-    /// change; else nothing heard through it at all (`neverHeard`: no line
-    /// from the agent — or, in a file Pulse owns whole, none since it was
-    /// written). Nil for an install that is not whole. Pure.
+    /// it; else nothing heard through it at all (`neverHeard`: no line from
+    /// the agent — or, in a file Pulse owns whole, none since it was
+    /// written) — said only while the log holds every line it was given
+    /// (`logWhole`, `EventLog.keepsEveryLine`): once a compaction dropped
+    /// old lines, their absence proves nothing. Nil for an install that is
+    /// not whole. Pure.
     package static func caveat(
-        agent: AgentID, install: Install, config: Config, heardMs: Int64?, runningSince: [Int64]
+        agent: AgentID, install: Install, config: Config, heardMs: Int64?, logWhole: Bool
     ) -> Caveat? {
         guard install.carriesHook else { return nil }
         if let off = config.offBy { return off }
-        guard install == .complete else { return nil }
-        if agent.spec.hooks.trustBound, config.changedMs > 0,
-           (heardMs ?? 0) < config.changedMs,
-           runningSince.contains(where: { $0 == 0 || $0 >= config.changedMs }) {
-            return .untrusted
-        }
+        guard install == .complete, logWhole else { return nil }
         // A file the person edits too (Claude's settings) changes for
         // reasons of its own: only no line at all says nothing was heard.
         // A file Pulse owns changes only when Pulse writes it.
@@ -261,19 +252,18 @@ package struct Connection: Equatable, Sendable {
         case .complete: return t(.settingsHookInstalled)
         case .partial(let found, let of): return String(format: t(.settingsHookPartial), found, of)
         case .staleLauncher: return t(.settingsHookStale)
-        case .failed(let failure): return t(.hooksFailed) + " · " + HooksSupport.Status.reason(failure, lang: lang)
+        case .failed(let failure): return t(.hooksFailed) + " · " + failure.text(lang)
         case .notInstalled: return t(.hooksMissing)
         }
     }
 
     /// An installed hook that may not run, and why: "Installed — but
-    /// `disableAllHooks` turns every Claude hook off", "Installed — Codex
-    /// hasn't run it yet: trust it in Codex (/hooks)".
+    /// `disableAllHooks` turns every Claude hook off", "Installed — nothing
+    /// heard yet".
     package func caveatText(_ caveat: Caveat, lang: ResolvedLanguage) -> String {
         switch caveat {
         case .turnedOff: return String(format: L10n.t(.settingsHookTurnedOff, lang), agent.displayName)
         case .managedOnly: return String(format: L10n.t(.settingsHookManagedOnly, lang), agent.displayName)
-        case .untrusted: return String(format: L10n.t(.settingsHookUntrusted, lang), agent.displayName, agent.displayName)
         case .neverHeard: return L10n.t(.settingsHookNeverHeard, lang)
         }
     }
@@ -302,24 +292,6 @@ package struct Connection: Equatable, Sendable {
             Self.reasonText(ignored.reason, lang: lang),
             L10n.ago(min(ignored.ms, nowMs), nowMs: nowMs, lang)
         )
-    }
-
-    /// What the agent reports, from its adapter (`AgentCapabilities`):
-    /// "Reports waits, steps, last words, titles"; an agent that cannot
-    /// report a wait says so and names its turns — "Reports turns, steps,
-    /// last words — not waits".
-    package func capabilityText(lang: ResolvedLanguage) -> String {
-        Self.capabilityText(agent.spec.capabilities, lang: lang)
-    }
-
-    /// `capabilityText`, for a set of capabilities. Pure.
-    package static func capabilityText(_ can: AgentCapabilities, lang: ResolvedLanguage) -> String {
-        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-        var words: [String] = [t(can.waits ? .capWaits : .capTurns)]
-        if can.steps { words.append(t(.capSteps)) }
-        if can.lastWords { words.append(t(.capWords)) }
-        if can.titles { words.append(t(.capTitles)) }
-        return String(format: t(can.waits ? .capReports : .capReportsNoWaits), L10n.list(words, lang))
     }
 
     /// The receiver's reason for an `ignored` line, in the person's
@@ -356,8 +328,8 @@ package struct Connection: Equatable, Sendable {
     }
 
     /// One agent's line: "  claude: installed, heard Stop 42s ago, last not
-    /// used PreCompact (not an installed event) 3s ago, capabilities: waits
-    /// steps words titles".
+    /// used PreCompact (not an installed event) 3s ago"; "doesn't report
+    /// waits" for an agent that cannot (`WaitingSource.none`).
     package func reportLine(present: Bool, nowMs: Int64) -> String {
         func age(_ ms: Int64) -> String { "\(max(0, (nowMs - ms) / 1000))s ago" }
         var parts: [String] = []
@@ -371,7 +343,6 @@ package struct Connection: Equatable, Sendable {
         switch caveat {
         case .turnedOff?: parts.append("hooks turned off by its settings (disableAllHooks)")
         case .managedOnly?: parts.append("blocked by managed policy (allowManagedHooksOnly / disableAllHooks)")
-        case .untrusted?: parts.append("not run since its file changed while it ran (untrusted?)")
         case .neverHeard?: parts.append("nothing heard through it since it was installed")
         case nil: break
         }
@@ -383,8 +354,8 @@ package struct Connection: Equatable, Sendable {
         if let ignored = lastIgnored, ignored.ms > 0 {
             parts.append("last not used \(Self.reportEvent(ignored.event)) (\(Self.reportReason(ignored.reason))) \(age(ignored.ms))")
         }
-        if install.carriesHook || present {
-            parts.append("capabilities: " + agent.spec.capabilities.reportWords.joined(separator: " "))
+        if agent.waitingSource == .none, install.carriesHook || present {
+            parts.append("doesn't report waits")
         }
         if configDirMissing, let relocation = agent.spec.hooks.relocation {
             parts.append("installs to ~/\(relocation.dir), not there (\(relocation.variable) is not followed)")

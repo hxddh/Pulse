@@ -49,8 +49,6 @@ extension AgentSpec {
         // some (forum reports: `sessionStart` has both, the tool events only
         // the conversation) — the conversation is the session.
         sessionKeys: ["conversation_id", "conversationId"] + HookContext.sessionKeys,
-        // A turn says its last words: `afterAgentResponse` carries the reply's `text`.
-        lastWords: true,
         read: { Cursor.read($0, $1) }
     )
 }

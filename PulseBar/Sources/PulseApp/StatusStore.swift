@@ -151,13 +151,13 @@ final class StatusStore {
     /// clocks — read from the book when a row or the detail page is drawn.
     /// Not observed: the views redraw it on their clock (`TimelineView`).
     func facts(for key: SessionKey) -> SessionFacts {
-        previewFixtureActive ? fixtureFacts[key] ?? SessionFacts() : engine.book.facts(for: key)
+        previewFixtureActive ? fixtureFacts[key] ?? .empty : engine.book.facts(for: key)
     }
 
     /// What the agents' configs carry now: the status line and each
     /// agent's install.
     func probeHooks() {
-        land(\.hooksStatus, HooksSupport.probeStatus())
+        if !hooksStatus.isWorking { land(\.hooksStatus, .ready()) }
         land(\.hookInstalls, HooksSupport.inspectAll())
         land(\.hookConfigs, HooksSupport.configAll())
     }
@@ -168,18 +168,16 @@ final class StatusStore {
     /// redraw reads no file.
     var connections: [Connection] {
         let failures = hooksStatus.failures
-        let processes = engine.processes
         return AgentID.priority.map { agent in
             Connection.make(
                 agent: agent,
-                // Not read yet: the status set says whether it is wired.
-                probed: hookInstalls[agent] ?? (hooksStatus.isInstalled(for: agent) ? .complete : nil),
+                probed: hookInstalls[agent],
                 failure: failures[agent],
                 heard: engine.latestHeard[agent],
                 ignored: engine.latestIgnored[agent],
                 configDirMissing: configDirMissing.contains(agent),
                 config: hookConfigs[agent] ?? Connection.Config(),
-                runningSince: processes.filter { $0.agent == agent }.map(\.startedMs)
+                logWhole: engine.logWhole
             )
         }
     }
@@ -318,10 +316,12 @@ final class StatusStore {
     /// read yet counts as connected, so nothing is claimed missing).
     private func connected(_ agent: AgentID) -> Bool {
         if let install = hookInstalls[agent] { return install.carriesHook }
-        switch hooksStatus {
-        case .unknown, .working: return true
-        case .missing, .installed, .failed: return hooksStatus.isInstalled(for: agent)
-        }
+        return hooksStatus == .unknown || hooksStatus.isWorking
+    }
+
+    /// The agents whose config carries Pulse's hook, as last read.
+    var hookedAgents: Set<AgentID> {
+        Set(hookInstalls.filter { $0.value.carriesHook }.keys)
     }
 
     private static func ms(_ date: Date) -> Int64 { Int64(date.timeIntervalSince1970 * 1000) }
@@ -333,15 +333,16 @@ final class StatusStore {
 
     /// What the tray's one notice is chosen from.
     var trayNoticeInput: TrayNoticeModel.Input {
-        TrayNoticeModel.Input(
+        let connections = self.connections
+        return TrayNoticeModel.Input(
             lang: lang,
             notifyAuthorized: notifyAuthorized,
             bannerFailed: waitingBannerFailed && rows.contains(where: \.isBlocked),
             unconnected: TrayNoticeModel.unconnected(
-                present: presentAgents, hooks: hooksStatus, nudgeOff: settings.hooksNudgeOff
+                present: presentAgents, connections: connections, hooks: hooksStatus, nudgeOff: settings.hooksNudgeOff
             ),
             installFailure: TrayNoticeModel.installFailure(
-                hooks: hooksStatus, nudgeOff: settings.hooksNudgeOff, lang: lang
+                connections: connections, nudgeOff: settings.hooksNudgeOff, lang: lang
             ),
             justConnected: setupConnected.map { connected in AgentID.priority.filter(connected.contains) }
         )
@@ -492,11 +493,12 @@ final class StatusStore {
     /// then show what is left — Codex's trust step, and that sessions
     /// already running appear after their next step.
     func connectFromSetup() {
-        let before = hooksStatus.installedAgents
-        runHooks(.install) { [weak self] status in
+        let before = hookedAgents
+        runHooks(.install) { [weak self] _ in
             PulseNotify.requestAuthorizationAfterUserAction()
-            let connected = status.installedAgents.subtracting(before)
-            if !connected.isEmpty { self?.land(\.setupConnected, connected) }
+            guard let self else { return }
+            let connected = self.hookedAgents.subtracting(before)
+            if !connected.isEmpty { self.land(\.setupConnected, connected) }
         }
     }
 }

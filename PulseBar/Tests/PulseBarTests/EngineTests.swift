@@ -452,13 +452,13 @@ struct EventFeedTests {
         let key = SessionKey(.claude, "s1")
         let first = tool("Read", t0 - 3_000, seq: 1)
         store.engine.landLog(chunk([first]), nowMs: t0)
-        let steps = store.engine.book.sessions[key]?.steps.count
+        let steps = store.engine.book.sessions[key]?.turnSteps
         #expect(steps == 1)
         // A compaction kept the line and the same text was appended again.
         var again = first
         again.seq = 2
         store.engine.landLog(chunk([first, again], next: 3), nowMs: t0 + 1_000)
-        let after = store.engine.book.sessions[key]?.steps.count
+        let after = store.engine.book.sessions[key]?.turnSteps
         #expect(after == 2)
     }
 
@@ -505,7 +505,7 @@ struct EventFeedTests {
         store.engine.readEvents()
         store.engine.readEvents()
         try await settle(store)
-        let steps = store.engine.book.sessions[SessionKey(.claude, "s1")]?.steps.count
+        let steps = store.engine.book.sessions[SessionKey(.claude, "s1")]?.turnSteps
         #expect(steps == 3, "each tool line is one step")
     }
 
@@ -528,8 +528,10 @@ struct EventFeedTests {
         #expect(late.records.count == 3)
         store.engine.landLog(early, nowMs: now)
         store.engine.landLog(late, nowMs: now)
-        let tools = store.engine.book.sessions[SessionKey(.claude, "s1")]?.steps.map(\.tool)
-        #expect(tools == ["Read", "Grep", "Edit"])
+        let last = store.engine.book.facts(for: SessionKey(.claude, "s1")).timeline.last?.effect
+        var tools: [String] = []
+        if case .steps(let run)? = last { tools = run.tools.map(\.tool) }
+        #expect(tools == ["Read", "Grep", "Edit"], "one run of the three steps, in order")
     }
 }
 

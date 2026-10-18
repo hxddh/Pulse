@@ -4,9 +4,8 @@ import Foundation
 ///
 /// General (open at login) · Notifications (whether macOS allows banners) ·
 /// Hooks — the diagnostics: Install all / Remove all, one line per agent on
-/// this Mac (its `Connection`: installed, needing an update or failed; what
-/// its adapter reports — waits, steps, last words, titles; the vendor event
-/// heard last and when; why a whole install may not run; the last event not
+/// this Mac (its `Connection`: installed, needing an update or failed;
+/// whether it can report a wait; the vendor event heard last and when; why a whole install may not run; the last event not
 /// used and why), the agents that are not here collapsed into one line,
 /// and "Copy report". The
 /// version, the kind of build and "Releases…" are the footer. The language
@@ -100,10 +99,10 @@ package struct SettingsModel: Equatable {
     }
 
     /// One agent's connection, as the Hooks section says it, in one order:
-    /// its name and state on one line; under it, quietly, what it reports
-    /// (`capability`), what was heard and when with any caveat the state
-    /// line does not already say (`detail`), and the last event not used
-    /// (`notUsed`).
+    /// its name and state on one line; under it, quietly, that it does not
+    /// report waits (`noWaits`), what was heard and when with any caveat
+    /// the state line does not already say (`detail`), and the last event
+    /// not used (`notUsed`).
     package struct HookAgent: Equatable, Identifiable {
         package enum Tone: Equatable {
             /// Installed and whole.
@@ -119,9 +118,10 @@ package struct SettingsModel: Equatable {
         /// "Not installed".
         package var state: String
         package var tone: Tone
-        /// "Reports waits, steps, last words, titles" — from the adapter,
-        /// whatever the install.
-        package var capability: String
+        /// "This agent doesn't report waits" — only for an agent whose
+        /// hook cannot (`WaitingSource.none`), whatever the install; nil
+        /// otherwise.
+        package var noWaits: String?
         /// "Heard PermissionRequest · 4m ago" (only when a hook is there to
         /// hear), a caveat the state line does not say, a config folder
         /// that is missing; "" when none.
@@ -152,7 +152,7 @@ package struct SettingsModel: Equatable {
             if let reason = connection.caveat, connection.install != .complete {
                 caveat = connection.caveatText(reason, lang: lang)
             }
-            capability = connection.capabilityText(lang: lang)
+            noWaits = connection.agent.waitingSource == .none ? L10n.t(.detailNoWaits, lang) : nil
             detail = [heard, caveat, connection.configDirText(lang: lang) ?? ""]
                 .filter { !$0.isEmpty }.joined(separator: " · ")
             notUsed = connection.ignoredText(nowMs: nowMs, lang: lang)
@@ -207,7 +207,7 @@ package struct SettingsModel: Equatable {
     /// What "Copy report" puts on the clipboard: plain text, English, no
     /// path, prompt, session id or project — the version, each agent's
     /// connection (its install, the event heard last, the last one not
-    /// used and why, what it reports), whether macOS allows
+    /// used and why, whether it reports waits), whether macOS allows
     /// banners, the login item as macOS sees it, and how Pulse reads each
     /// listed session with its last few heard lines (the detail page does
     /// not say it).
@@ -303,42 +303,9 @@ package struct SettingsModel: Equatable {
             }
             for heard in timeline {
                 let by = heard.sub.isEmpty ? "" : "subagent "
-                text += "\n    \(max(0, (nowMs - heard.ms) / 1000))s ago · \(Connection.reportEvent(heard.event)) · \(by)\(Self.word(heard.effect))"
+                text += "\n    \(max(0, (nowMs - heard.ms) / 1000))s ago · \(Connection.reportEvent(heard.event)) · \(by)\(heard.effect.reportWord)"
             }
             return text
-        }
-
-        /// What a heard line did, in the report's words — a step by its tool
-        /// alone (its target can be a path or a command), an ignored line by
-        /// a reason the receiver writes.
-        package static func word(_ effect: SessionBook.Effect) -> String {
-            switch effect {
-            case .started: return "started"
-            case .prompt: return "prompt"
-            case .step(let tool, _): return "step \(Connection.reportEvent(tool))"
-            case .failedStep(let tool, _): return "failed step \(Connection.reportEvent(tool))"
-            case .steps(let run):
-                let tools = run.tools.map { "\(Connection.reportEvent($0.tool))×\($0.count)" }.joined(separator: " ")
-                return "steps \(tools)" + (run.failed > 0 ? " (\(run.failed) failed)" : "")
-            case .working: return "working"
-            case .status: return "status"
-            case .raised(let kind): return "raised \(kind.rawValue)"
-            case .again: return "same ask again"
-            case .answered: return "answered"
-            case .yourTurn: return "your turn"
-            case .turnEnded: return "turn ended in front"
-            case .failed: return "turn failed"
-            case .held: return "turn held"
-            case .atPrompt: return "at prompt"
-            case .resolved: return "resolved"
-            case .dismissed: return "dismissed"
-            case .seen: return "seen"
-            case .stopped: return "stopped"
-            case .named: return "named"
-            case .subagent: return "subagent lifecycle"
-            case .ended: return "ended"
-            case .skipped(let reason): return "not used (\(Connection.reportReason(reason)))"
-            }
         }
     }
 

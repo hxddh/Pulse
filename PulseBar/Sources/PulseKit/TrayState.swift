@@ -20,7 +20,9 @@ import Foundation
 ///   is shown as recent — Pulse cannot tell it is still there;
 /// - a working session that has said nothing for `silentBoundMs` is recent
 ///   even while its process lives (an interrupted turn sends no Stop —
-///   it is stalled for a while, never orange for ever);
+///   it is stalled for a while, never orange for ever); only an agent that
+///   reports each tool's start and end can be stalled
+///   (`AgentID.silenceCanStall`) — any other states facts only;
 /// - a turn is owed for `idleBoundMs`, then it is recent;
 /// - a recent session (idle, ended, or past a bound) stays listed for
 ///   `recentWindowMs` after its last event, then it leaves the list. A live
@@ -180,11 +182,13 @@ package struct TrayState: Equatable {
             if unknownPid, quiet { return .recent(.quiet) }
             if nowMs - session.lastEventMs > silentBoundMs { return .recent(.silent) }
             // Silence is evidence only from an agent whose hook reports
-            // every tool call; the others are silent through every long turn.
-            // A tool said to be running is silent until it ends.
-            let stalled = session.agent.reportsToolActivity
+            // each tool's start and its end (`silenceCanStall`): from any
+            // other a long tool is silent until it ends, so its row states
+            // facts only — never orange. A tool said to be running is
+            // silent until it ends.
+            let stalled = session.agent.silenceCanStall
                 && session.toolMs > 0
-                && session.running == nil
+                && session.runningSteps.isEmpty
                 && AgentRow.stalled(lastActivityMs: session.lastEventMs, nowMs: nowMs, threshold: stalledSeconds)
             return .running(stalled: stalled)
         case .yourTurn(let since):
@@ -290,44 +294,15 @@ package struct TrayState: Equatable {
             snap.title = seconds < 60 ? count : GlanceTitle.fit("\(count) · \(age)", "\(count)·\(age)", count)
         }
 
-        // The lamp, and one sentence for the tooltip: the rule that set it —
-        // red names who has waited longest. VoiceOver says the same for a
-        // coloured lamp and the state in a word for a grey one.
+        // The lamp, and one sentence for the tooltip: the rule that set it
+        // (`lampSentence`) — the tray names the sessions. VoiceOver says
+        // the same for a coloured lamp and the state in a word for a grey
+        // one.
         let rule = lampRule(counts: counts)
         snap.lamp = Lamp(rule)
-        snap.tooltip = tooltip(rule, rows: all, counts: counts, nowMs: context.nowMs, lang: lang)
+        snap.tooltip = lampSentence(rule, lang: lang)
         snap.accessibilityLabel = snap.lamp.isGrey ? L10n.t(rule.accessibilityKey, lang) : snap.tooltip
         return snap
-    }
-
-    /// The status item's tooltip. Red names the wait that has gone on
-    /// longest — "Red: Claude needs you — app · 8m. 1 more waiting. 2
-    /// running." — the agent, its project and how long; every other rule is
-    /// its sentence (`lampSentence`). A wait with no clock sorts last, as
-    /// in the tray. Pure.
-    package static func tooltip(_ rule: LampRule, rows: [AgentRow], counts: Counts, nowMs: Int64, lang: ResolvedLanguage) -> String {
-        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-        guard rule == .blocked else { return lampSentence(rule, lang: lang) }
-        let waits = rows.filter(\.isBlocked)
-        guard let longest = waits.min(by: { a, b in
-            let x = a.wait?.sinceMs ?? 0, y = b.wait?.sinceMs ?? 0
-            if x <= 0 { return false }
-            if y <= 0 { return true }
-            return x < y
-        }) else { return lampSentence(rule, lang: lang) }
-        var place: [String] = []
-        if !longest.project.isEmpty { place.append(longest.project) }
-        // Like the title: a wait younger than a minute says no time.
-        if let since = longest.wait?.sinceMs, since > 0, nowMs - since >= 60_000 {
-            place.append(L10n.duration(Double(nowMs - since) / 1000, lang))
-        }
-        let name = longest.agent.displayName
-        var sentences = [place.isEmpty
-            ? String(format: t(.lampTipBlockedBare), name)
-            : String(format: t(.lampTipBlocked), name, place.joined(separator: " · "))]
-        if counts.blocked > 1 { sentences.append(String(format: t(.lampTipMoreWaiting), counts.blocked - 1)) }
-        if counts.running > 0 { sentences.append(String(format: t(.lampTipRunning), counts.running)) }
-        return sentences.joined(separator: lang == .zh ? "" : " ")
     }
 
     // MARK: - The lamp's rule
@@ -341,11 +316,11 @@ package struct TrayState: Equatable {
         /// turn, process only, idle — and a coloured one.
         package var accessibilityKey: L10n.Key {
             switch self {
-            case .blocked: return .a11yWaiting
-            case .stalled: return .a11yStalled
-            case .running: return .a11yRunning
-            case .yourTurn: return .a11yYourTurn
-            case .processOnly: return .a11yProcessOnly
+            case .blocked: return .needsYou
+            case .stalled: return .stalled
+            case .running: return .running
+            case .yourTurn: return .yourTurn
+            case .processOnly: return .processOnly
             case .recent, .idle: return .a11yIdle
             }
         }

@@ -1,0 +1,8 @@
+{
+  "sessionID": "ses_fx1",
+  "directory": "/Users/me/code/app",
+  "tool_name": "bash",
+  "target": "redis-cli ping",
+  "is_error": true,
+  "duration_ms": 900
+}

@@ -1,0 +1,10 @@
+{
+  "conversation_id": "fx-cursor-conv-1",
+  "generation_id": "gen-1",
+  "workspace_roots": [
+    "/Users/me/code/app"
+  ],
+  "cursor_version": "2.0.0",
+  "hook_event_name": "afterAgentResponse",
+  "text": "The login test passes now."
+}

@@ -1,74 +1,53 @@
 import Foundation
 
 package enum HooksSupport {
-    /// Which agents carry Pulse's hook (all six, each by its own
-    /// contract).
+    /// Where the hook work stands: what no agent's `Connection` can say.
+    /// Which agents carry Pulse's hook is each one's install
+    /// (`inspect`); an agent the last run could not do carries its failure
+    /// there too (`Connection.make`).
     package enum Status: Equatable {
+        /// Not read yet.
         case unknown
         /// An install or removal is running; the buttons wait for it.
         case working
-        /// The launcher is missing, or no agent carries Pulse's hook.
-        case missing
-        /// `failed`: agents whose last install or removal did not happen,
-        /// and why — the others were done all the same.
-        case installed(Set<AgentID>, failed: [AgentID: HooksInstaller.Failure] = [:])
+        /// Read. `failed`: agents whose last install or removal did not
+        /// happen, and why — the others were done all the same.
+        case ready(failed: [AgentID: HooksInstaller.Failure] = [:])
         /// Nothing could be done (the launcher itself could not be written).
-        case failed(HooksInstaller.Failure)
+        case launcherFailed(HooksInstaller.Failure)
 
-        /// Every supported agent — the fixtures' and tests' "all wired".
-        package static var all: Status { .installed(Set(AgentID.allCases)) }
-
-        package func label(lang: ResolvedLanguage) -> String {
+        /// The status line, with how many agents carry the hook.
+        package func label(installed: Int, lang: ResolvedLanguage) -> String {
             switch self {
             case .unknown: return L10n.t(.hooksUnknown, lang)
             case .working: return L10n.t(.hooksWorking, lang)
-            case .missing: return L10n.t(.hooksMissing, lang)
-            case .installed(let agents, let failed):
-                var text = agents.isEmpty
+            case .ready(let failed):
+                var text = installed == 0
                     ? L10n.t(.hooksMissing, lang)
-                    : String(format: L10n.t(.hooksInstalledCount, lang), agents.count, AgentID.allCases.count)
-                if !failed.isEmpty { text += " · " + Self.failureText(failed, lang: lang) }
+                    : String(format: L10n.t(.hooksInstalledCount, lang), installed, AgentID.allCases.count)
+                if !failed.isEmpty { text += " · " + HooksSupport.failureText(failed, lang: lang) }
                 return text
-            case .failed(let failure):
-                return "\(L10n.t(.hooksFailed, lang)) · \(Self.reason(failure, lang: lang))"
+            case .launcherFailed(let failure):
+                return "\(L10n.t(.hooksFailed, lang)) · \(failure.text(lang))"
             }
-        }
-
-        /// "Cursor: its hooks file is not valid JSON…", one per agent, in
-        /// roster order — words from `L10n`, never an installer's message
-        /// (it names paths, and it is English).
-        package static func failureText(_ failed: [AgentID: HooksInstaller.Failure], lang: ResolvedLanguage) -> String {
-            AgentID.priority.compactMap { agent in
-                failed[agent].map { String(format: L10n.t(.hooksAgentFailed, lang), agent.displayName, reason($0, lang: lang)) }
-            }.joined(separator: " · ")
-        }
-
-        package static func reason(_ failure: HooksInstaller.Failure, lang: ResolvedLanguage) -> String {
-            switch failure {
-            case .invalidJSON: return L10n.t(.hooksFailureInvalidJSON, lang)
-            case .notOurs: return L10n.t(.hooksFailureNotOurs, lang)
-            case .unwritable: return L10n.t(.hooksFailureUnwritable, lang)
-            case .hasComments: return L10n.t(.hooksFailureHasComments, lang)
-            case .unexpectedShape: return L10n.t(.hooksFailureShape, lang)
-            }
-        }
-
-        package func isInstalled(for agent: AgentID) -> Bool {
-            installedAgents.contains(agent)
-        }
-
-        package var installedAgents: Set<AgentID> {
-            if case .installed(let agents, _) = self { return agents }
-            return []
         }
 
         /// The agents the last install or removal could not do.
         package var failures: [AgentID: HooksInstaller.Failure] {
-            if case .installed(_, let failed) = self { return failed }
+            if case .ready(let failed) = self { return failed }
             return [:]
         }
 
         package var isWorking: Bool { self == .working }
+    }
+
+    /// "Cursor: its hooks file is not valid JSON…", one per agent, in
+    /// roster order — words from `L10n`, never an installer's message (it
+    /// names paths, and it is English).
+    package static func failureText(_ failed: [AgentID: HooksInstaller.Failure], lang: ResolvedLanguage) -> String {
+        AgentID.priority.compactMap { agent in
+            failed[agent].map { String(format: L10n.t(.hooksAgentFailed, lang), agent.displayName, $0.text(lang)) }
+        }.joined(separator: " · ")
     }
 
     package static func supportDir() -> URL {
@@ -84,22 +63,6 @@ package enum HooksSupport {
         try? FileManager.default.createDirectory(at: supportDir(), withIntermediateDirectories: true)
         try? HooksInstaller.ensureLauncher()
         HooksInstaller.refreshRunnerPath()
-    }
-
-    package static func probeStatus() -> Status {
-        let launcher = HooksInstaller.launcherURL
-        guard FileManager.default.isExecutableFile(atPath: launcher.path) else { return .missing }
-        let wired = Set(AgentID.allCases.filter(isWired))
-        return wired.isEmpty ? .missing : .installed(wired)
-    }
-
-    /// Whether an agent's config carries Pulse's hook (for Codex, its
-    /// `hooks.json` — Pulse never touches `config.toml`).
-    package static func isWired(_ agent: AgentID) -> Bool {
-        guard let text = try? String(contentsOf: HooksInstaller.configURL(for: agent), encoding: .utf8),
-              let events = HooksInstaller.installedEvents(agent, text: text)
-        else { return false }
-        return !events.isEmpty
     }
 
     /// How one agent's config carries Pulse's hook, read now: whole, partly
@@ -205,21 +168,18 @@ package enum HooksSupport {
             } catch {
                 let failure = HooksInstaller.failure(of: error)
                 DebugLog.write("hooks install failed \(failure.rawValue): \(error.localizedDescription)")
-                return .failed(failure)
+                return .launcherFailed(failure)
             }
         }
     }
 
-    /// What is wired now, and which agents could not be done: this run's
-    /// failures, plus `keeping`'s for the agents this run did not touch.
+    /// Which agents could not be done: this run's failures, plus
+    /// `keeping`'s for the agents this run did not touch.
     package static func status(
         after results: [HooksInstaller.AgentResult],
         keeping previous: [AgentID: HooksInstaller.Failure] = [:]
     ) -> Status {
-        let failed = failures(after: results, keeping: previous)
-        let probed = probeStatus()
-        guard !failed.isEmpty else { return probed }
-        return .installed(probed.installedAgents, failed: failed)
+        .ready(failed: failures(after: results, keeping: previous))
     }
 
     /// This run's failures, plus the earlier ones of agents it did not
@@ -234,5 +194,19 @@ package enum HooksSupport {
             if let failure = result.failure { failed[result.agent] = failure }
         }
         return failed
+    }
+}
+
+extension HooksInstaller.Failure {
+    /// Why, in the person's language — the one wording Settings' state, its
+    /// status line and the tray's notice all use.
+    package func text(_ lang: ResolvedLanguage) -> String {
+        switch self {
+        case .invalidJSON: return L10n.t(.hooksFailureInvalidJSON, lang)
+        case .notOurs: return L10n.t(.hooksFailureNotOurs, lang)
+        case .unwritable: return L10n.t(.hooksFailureUnwritable, lang)
+        case .hasComments: return L10n.t(.hooksFailureHasComments, lang)
+        case .unexpectedShape: return L10n.t(.hooksFailureShape, lang)
+        }
     }
 }

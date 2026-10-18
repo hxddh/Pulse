@@ -19,6 +19,10 @@ import SwiftUI
 //
 //   --appearance=light|dark     this run's appearance
 //
+// and, before AppKit starts, the proof commands (`ProofDriver`):
+// `--install-hooks=<home>`, `--dump-snapshot=<json>`,
+// `--write-adapters=<dir>` (`scripts/e2e.sh`, `scripts/js_adapters_test.mjs`).
+//
 // The language is the system's, as in the app; a run picks one the macOS
 // way, with `-AppleLanguages "(zh-Hans)"` (`scripts/qa_captures.sh`).
 //
@@ -29,6 +33,9 @@ import SwiftUI
 enum PulseQAMain {
     @MainActor
     static func main() {
+        if let code = ProofDriver.run(ProcessInfo.processInfo.arguments) {
+            exit(code)
+        }
         QADriver.prepare(ProcessInfo.processInfo.arguments)
         PulseBarMain.main(launchHook: QADriver.launch)
     }

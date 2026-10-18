@@ -46,7 +46,8 @@ extension StatusStore {
             // for that lamp state.
             var fixtureRow = row(
                 "status-fixture",
-                .cursor,
+                // Only an agent that says a tool started can stall.
+                name == "status-stalled" ? .pi : .cursor,
                 task: name == "status-waiting"
                     ? "Approve the packaging step"
                     : "Ship Signal Quality",
@@ -65,7 +66,7 @@ extension StatusStore {
             case "status-running":
                 facts[fixtureRow.key] = SessionFacts(
                     lastWords: "The fixtures pass.",
-                    steps: [SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 60 * 1000)],
+                    lastStep: SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 60 * 1000),
                     turnStartMs: now - 14 * 60 * 1000,
                     lastEventMs: now - 60 * 1000
                 )
@@ -84,7 +85,8 @@ extension StatusStore {
             let codex = row("coverage-codex", .codex, task: "Ship runtime observability", cwd: "/Users/me/code/Pulse")
             let pi = process(.pi, pid: 4101)
             let cursor = row("coverage-cursor", .cursor, task: "Refine adapter coverage", cwd: "/Users/me/code/Client", live: false)
-            hooksStatus = .all
+            hooksStatus = .ready()
+            hookInstalls = Dictionary(uniqueKeysWithValues: AgentID.allCases.map { ($0, Connection.Install.complete) })
             landFixture([codex, pi, cursor], facts: facts, title: "")
             return
         }
@@ -103,10 +105,7 @@ extension StatusStore {
         )
         facts[active.key] = SessionFacts(
             lastWords: "Corners now follow the panel radius.",
-            steps: [
-                SessionBook.Step(tool: "Edit", target: "Sources/PulseApp/PulseTheme.swift", ms: now - 3 * 60 * 1000),
-                SessionBook.Step(tool: "Bash", target: "swift test --filter Snapshot", ms: now - 15_000),
-            ],
+            lastStep: SessionBook.Step(tool: "Bash", target: "swift test --filter Snapshot", ms: now - 15_000),
             turnStartMs: now - 9 * 60 * 1000,
             lastEventMs: now - 60 * 1000,
             activityMs: now - 15_000
@@ -151,7 +150,7 @@ extension StatusStore {
         var snap = PulseSnapshot(counts: counts, projected: true)
         snap.lamp = Lamp(rule)
         snap.title = title
-        snap.tooltip = TrayState.tooltip(rule, rows: rows, counts: counts, nowMs: Int64(Date().timeIntervalSince1970 * 1000), lang: lang)
+        snap.tooltip = TrayState.lampSentence(rule, lang: lang)
         snap.accessibilityLabel = snap.lamp.isGrey ? tr(rule.accessibilityKey) : snap.tooltip
         snapshot = snap
     }

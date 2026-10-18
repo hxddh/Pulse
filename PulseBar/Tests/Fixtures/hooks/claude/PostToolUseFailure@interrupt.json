@@ -1,0 +1,14 @@
+{
+  "session_id": "fx-claude-1",
+  "transcript_path": "/Users/me/.claude/projects/-Users-me-code-app/fx-claude-1.jsonl",
+  "cwd": "/Users/me/code/app",
+  "hook_event_name": "PostToolUseFailure",
+  "permission_mode": "default",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "sleep 600"
+  },
+  "tool_use_id": "toolu_03",
+  "error": "Interrupted by user",
+  "is_interrupt": true
+}

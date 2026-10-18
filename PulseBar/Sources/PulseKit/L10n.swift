@@ -35,13 +35,6 @@ package enum L10n {
         }
     }
 
-    /// A list of a few words as a sentence says it: "waits, steps, last
-    /// words" / "等待、步骤和最后一句话".
-    package static func list(_ words: [String], _ lang: ResolvedLanguage) -> String {
-        guard lang == .zh, words.count > 1 else { return words.joined(separator: lang == .zh ? "、" : ", ") }
-        return words.dropLast().joined(separator: "、") + "和" + (words.last ?? "")
-    }
-
     /// Joins a list of agent display names the way the language does it.
     package static func joinNames(_ names: [String], _ lang: ResolvedLanguage) -> String {
         names.joined(separator: lang == .zh ? "、" : ", ")
@@ -122,9 +115,6 @@ package enum L10n {
         case uninstallHooks
         case emptyHint
         case a11yIdle
-        case a11yRunning
-        case a11yStalled
-        case a11yWaiting
         case moreActions
         case agoFormat
         case now
@@ -158,7 +148,6 @@ package enum L10n {
         case settingsHookConfigDir
         case settingsHookTurnedOff
         case settingsHookManagedOnly
-        case settingsHookUntrusted
         case settingsHookNeverHeard
         case waitingBannerFailed
         case lampRuleBlocked
@@ -175,7 +164,6 @@ package enum L10n {
         case explainProcessOnly
         case explainStalled
         case explainStalledUnknown
-        case explainRunning
         case explainRunningNoClock
         case detailFolder
         case processOnly
@@ -190,7 +178,6 @@ package enum L10n {
         case settingsHooksSection
         case detailLastMessage
         case detailErrorHeading
-        case explainIdle
         case explainEnded
         case explainQuiet
         case explainSilent
@@ -242,8 +229,6 @@ package enum L10n {
         case openLoginItems
         case a11yNewWait
         case a11yNewWaitNoAsk
-        case a11yYourTurn
-        case a11yProcessOnly
         case explainProcessOnlyUnconnected
         case sessionNoTitle
         case stepFailedMark
@@ -255,17 +240,6 @@ package enum L10n {
         case turnStepsN
         case turnStepsFailed
         case detailNoWaits
-        case lampTipBlocked
-        case lampTipBlockedBare
-        case lampTipMoreWaiting
-        case lampTipRunning
-        case capWaits
-        case capTurns
-        case capSteps
-        case capWords
-        case capTitles
-        case capReports
-        case capReportsNoWaits
     }
 }
 
@@ -321,9 +295,6 @@ extension L10n.Key {
         case .uninstallHooks: return ("Remove all", "全部移除")
         case .emptyHint: return ("When a connected agent starts working, its session appears here.", "已连接的 Agent 开始工作时，会话会出现在这里。")
         case .a11yIdle: return ("Idle", "空闲")
-        case .a11yRunning: return ("Running", "运行中")
-        case .a11yStalled: return ("Stalled", "停滞")
-        case .a11yWaiting: return ("Needs you", "需要你")
         case .moreActions: return ("More actions", "更多操作")
         case .agoFormat: return ("%@ ago", "%@前")
         case .now: return ("now", "刚刚")
@@ -356,7 +327,6 @@ extension L10n.Key {
         case .ignoredOther: return ("unknown reason", "原因不明")
         case .settingsHookTurnedOff: return ("Installed — but hooks are turned off in %@'s settings (disableAllHooks)", "已安装——但 %@ 的设置关掉了所有 hooks（disableAllHooks）")
         case .settingsHookManagedOnly: return ("Installed — but a managed policy keeps %@ from running it", "已安装——但管理策略不让 %@ 运行它")
-        case .settingsHookUntrusted: return ("Installed — %@ hasn't run it since it changed: trust it in %@ (/hooks)", "已安装——改动后 %@ 还没运行过它：请在 %@ 里信任它（/hooks）")
         case .settingsHookNeverHeard: return ("Installed — nothing heard yet", "已安装——还没有听到事件")
         case .settingsHookConfigDir: return ("Pulse installs to ~/%@, which isn't there yet — a %@ set to another folder (%@) won't load it", "Pulse 装在 ~/%@，这个文件夹还不存在——若 %@ 用了别的文件夹（%@），就不会加载它")
         case .waitingBannerFailed: return ("macOS did not show the last “needs you” banner — check Notifications", "macOS 没有显示上一条「需要你」通知——请检查通知设置")
@@ -374,7 +344,6 @@ extension L10n.Key {
         case .explainProcessOnly: return ("Started before Pulse — details after its next step", "在 Pulse 之前启动——下一步之后显示详情")
         case .explainStalled: return ("Nothing new for %@", "已经%@没有新动静")
         case .explainStalledUnknown: return ("Running, but its last step has no time", "在运行，但不知道它上一步的时间")
-        case .explainRunning: return ("Working", "在工作")
         case .explainRunningNoClock: return ("Working — no step reported yet", "在工作——还没有报告任何一步")
         case .detailFolder: return ("Folder", "目录")
         case .processOnly: return ("Process only", "仅进程")
@@ -389,7 +358,6 @@ extension L10n.Key {
         case .settingsHooksSection: return ("Hooks", "Hooks")
         case .detailLastMessage: return ("Last message", "最后的消息")
         case .detailErrorHeading: return ("Error", "错误")
-        case .explainIdle: return ("At its prompt", "停在提示符")
         case .explainEnded: return ("Session ended", "会话已结束")
         case .explainQuiet: return ("Nothing heard for %@ and no process to watch — moved to recent", "已经%@没有消息，也看不到进程——移到最近")
         case .explainSilent: return ("Nothing heard for %@ — moved to recent", "已经%@没有消息——移到最近")
@@ -441,8 +409,6 @@ extension L10n.Key {
         case .openLoginItems: return ("Open Login Items", "打开登录项")
         case .a11yNewWait: return ("%@ needs you: %@", "%@ 需要你：%@")
         case .a11yNewWaitNoAsk: return ("%@ needs you", "%@ 需要你")
-        case .a11yYourTurn: return ("Your turn", "轮到你")
-        case .a11yProcessOnly: return ("Process only", "仅进程")
         case .explainProcessOnlyUnconnected: return ("Seen as a process only — Pulse isn't connected to it yet", "只看到进程——Pulse 还没有连接它")
         case .sessionNoTitle: return ("Session · no title yet", "会话 · 暂无标题")
         case .stepFailedMark: return ("failed", "失败")
@@ -454,17 +420,6 @@ extension L10n.Key {
         case .turnStepsN: return ("%d steps", "%d 步")
         case .turnStepsFailed: return ("%@ (%d failed)", "%@（%d 步失败）")
         case .detailNoWaits: return ("This agent doesn't report waits", "这个 Agent 不报告等待")
-        case .lampTipBlocked: return ("Red: %@ needs you — %@.", "红：%@ 在等你——%@。")
-        case .lampTipBlockedBare: return ("Red: %@ needs you.", "红：%@ 在等你。")
-        case .lampTipMoreWaiting: return ("%d more waiting.", "另有 %d 个在等你。")
-        case .lampTipRunning: return ("%d running.", "%d 个运行中。")
-        case .capWaits: return ("waits", "等待")
-        case .capTurns: return ("turns", "回合")
-        case .capSteps: return ("steps", "步骤")
-        case .capWords: return ("last words", "最后一句话")
-        case .capTitles: return ("titles", "标题")
-        case .capReports: return ("Reports %@", "报告%@")
-        case .capReportsNoWaits: return ("Reports %@ — not waits", "报告%@——不报告等待")
         }
     }
 }

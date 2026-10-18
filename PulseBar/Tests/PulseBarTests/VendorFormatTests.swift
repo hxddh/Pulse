@@ -100,7 +100,7 @@ struct VendorDriftTests {
         #expect(flavor.async)
         #expect(flavor.timeoutCaps["Interrupt"] == 3)
         #expect(flavor.synchronous["Interrupt"] == nil, "Interrupt honours async")
-        #expect(flavor.trustBound)
+        #expect(flavor.installNote?.contains("/hooks") == true, "trust is the install report's note")
         #expect(PulseHookReceiver.interpret(agent: .codex, event: "Interrupt", payload: [:])?.action == .stopped)
     }
 
@@ -176,6 +176,60 @@ struct VendorDriftTests {
             for event in agent.spec.hooks.events {
                 #expect(PulseHookReceiver.interpret(agent: agent, event: event.name, payload: [:]) != nil, "\(agent.rawValue) \(event.name)")
             }
+        }
+    }
+}
+
+/// Every recorded payload (`PulseBar/Tests/Fixtures/hooks`, one per
+/// installed event at least — `catalog_check` holds the folder to the
+/// contracts) through the receiver, in process, the way its installed hook
+/// hands it over: each becomes the line `expected.json` says — a state, or
+/// the ignored line that says why — and never an unreadable payload.
+/// `scripts/e2e.sh` sends the same files through the packaged app.
+@Suite("Recorded payloads")
+struct RecordedPayloadTests {
+    static let folder = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appendingPathComponent("Fixtures/hooks", isDirectory: true)
+
+    @Test func everyRecordedPayloadBecomesItsLine() throws {
+        let data = try Data(contentsOf: Self.folder.appendingPathComponent("expected.json"))
+        let root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let expected = try #require(root?["expected"] as? [String: String])
+        for agent in AgentID.allCases {
+            for event in agent.spec.hooks.events {
+                #expect(expected["\(agent.rawValue)/\(event.name)"] != nil, "\(agent.rawValue) \(event.name) has no fixture")
+            }
+        }
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulse-fixtures-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        for (name, want) in expected.sorted(by: { $0.key < $1.key }) {
+            let parts = name.split(separator: "/", maxSplits: 1).map(String.init)
+            let agent = try #require(AgentID(rawValue: parts.first ?? ""), "\(name)")
+            let file = parts.count > 1 ? parts[1] : ""
+            let event = String(file.split(separator: "@", maxSplits: 1).first ?? "")
+            let payload = try String(contentsOf: Self.folder.appendingPathComponent("\(name).json"), encoding: .utf8)
+            // The two modules pass their payload as the last argument; every
+            // other hook pipes it on stdin.
+            var module = false
+            if case .module = agent.spec.hooks.format { module = true }
+            var arguments = ["PulseBar", "--hook", agent.rawValue, event]
+            if module { arguments.append(payload) }
+            let log = home.appendingPathComponent("\(agent.rawValue)-\(file).tsv")
+            PulseHookReceiver.run(
+                arguments: arguments, stdin: module ? "" : payload, environment: [:], logURL: log,
+                nowMs: 1_800_000_000_000, locate: { _, _ in (0, "") }, parent: 0, argumentsOf: { _, _ in nil }
+            )
+            let lines = EventLog.read(at: log, after: nil)?.records ?? []
+            #expect(lines.count == 1, "\(name): one heard event is one line")
+            guard let line = lines.first else { continue }
+            let got = line.kind == .ignored ? "ignored:\(line.message)" : line.kind.rawValue
+            #expect(got == want, "\(name)")
+            #expect(line.message != PulseHookReceiver.Ignored.unparsable.rawValue, "\(name)")
+            #expect(line.event == event, "\(name)")
         }
     }
 }

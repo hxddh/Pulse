@@ -29,10 +29,17 @@ package enum AgentID: String, CaseIterable, Identifiable, Hashable, Sendable {
     package var displayName: String { spec.displayName }
 
     /// Whether this agent's installed hook reports every tool call (see
-    /// `HookContract.toolActivityEvents`). Only then does silence mean a
-    /// stall: an agent that speaks only at a prompt and at the end of a turn
-    /// is silent through every long turn.
+    /// `HookContract.toolActivityEvents`).
     package var reportsToolActivity: Bool { spec.hooks.reportsToolActivity }
+
+    /// Whether a silence from this agent can be a stall: its hook reports a
+    /// tool's start and its end (`HookContract.silenceCanStall`). Any other
+    /// agent's rows state facts only — never orange.
+    package var silenceCanStall: Bool { spec.hooks.silenceCanStall }
+
+    /// Whether a tool's step can answer this agent's block
+    /// (`AgentSpec.stepsAnswerBlocks`).
+    package var stepsAnswerBlocks: Bool { spec.stepsAnswerBlocks }
 
     /// Whether the vendor's hook says when a session is blocked on the user.
     /// Agents with `.none` still show running and your turn from their hooks.
@@ -188,23 +195,16 @@ package struct NestedFlavor: Sendable {
     /// `Interrupt`, 3 s): written at the cap, so the vendor has nothing to
     /// clamp or warn about.
     package var timeoutCaps: [String: Int]
-    /// The vendor runs an entry only once the person has trusted it, and
-    /// the trust is bound to the entry's exact text (Codex's `/hooks`,
-    /// `engine/discovery.rs`): any change Pulse makes leaves it "modified"
-    /// and silent until trusted again. Settings says so when nothing was
-    /// heard since the file changed (`Connection.Caveat.untrusted`).
-    package var trustBound: Bool
     /// A word the install report adds (a step the person takes once).
     package var installNote: String?
 
     package init(
         async: Bool, synchronous: [String: Int] = [:], timeoutCaps: [String: Int] = [:],
-        trustBound: Bool = false, installNote: String? = nil
+        installNote: String? = nil
     ) {
         self.async = async
         self.synchronous = synchronous
         self.timeoutCaps = timeoutCaps
-        self.trustBound = trustBound
         self.installNote = installNote
     }
 }
@@ -325,13 +325,6 @@ package struct HookContract: Sendable {
         self.offSwitches = offSwitches
     }
 
-    /// The vendor runs an entry only once it is trusted, bound to its exact
-    /// text (`NestedFlavor.trustBound`).
-    package var trustBound: Bool {
-        if case .nested(let flavor) = format { return flavor.trustBound }
-        return false
-    }
-
     /// The installed event of this name; nil for one Pulse does not install
     /// (it is not read).
     package func event(named name: String) -> HookEvent? {
@@ -362,9 +355,9 @@ package struct HookContract: Sendable {
     /// `message.part.updated`, 2.x `session.tool.success` / `failed` —
     /// and Cursor's `afterShellExecution` / `afterFileEdit` /
     /// `afterMCPExecution`). An agent whose contract installs one reports
-    /// its work as it goes: silence from it means something, so only such an
-    /// agent can be stalled — and its tool name is what answers a block
-    /// raised for that tool.
+    /// its work as it goes — its steps — and its tool name is what answers
+    /// a block raised for that tool. Its silence is a stall only when it
+    /// also reports a tool's start (`toolStartEvents`).
     package static let toolActivityEvents: Set<String> = [
         "PostToolUse", "PostToolUseFailure", "postToolUse", "postToolUseFailure",
         "tool_execution_end",
@@ -381,10 +374,34 @@ package struct HookContract: Sendable {
         "form.replied", "form.cancelled",
     ])
 
+    /// Observe-only events that say a tool started and has not finished
+    /// yet (Pi `tool_execution_start`, OpenCode's running tool part — 1.x
+    /// `message.part.updated`, 2.x `session.tool.called`): a `status` line
+    /// that names its tool, what runs now. Only an agent that reports a
+    /// tool's start as well as its end can be said to have stalled: from
+    /// any other, a long tool is a silence just like a stall (a 25-minute
+    /// build says nothing until it ends).
+    package static let toolStartEvents: Set<String> = [
+        "tool_execution_start", "message.part.updated", "session.tool.called",
+    ]
+
     /// This contract installs a per-tool activity event (`toolActivityEvents`).
     package var reportsToolActivity: Bool {
         events.contains { Self.toolActivityEvents.contains($0.name) }
     }
+
+    /// This contract installs an event that says a tool started
+    /// (`toolStartEvents`).
+    package var reportsToolStart: Bool {
+        events.contains { Self.toolStartEvents.contains($0.name) }
+    }
+
+    /// A silence from this agent can be a stall: it reports each tool's
+    /// start and its end, so a tool that runs long is said to run
+    /// (`SessionBook.Session.runningSteps`) and only a silence with nothing
+    /// running is news. Every other agent's rows state facts only — never
+    /// orange.
+    package var silenceCanStall: Bool { reportsToolActivity && reportsToolStart }
 }
 
 /// Which processes are this agent, by executable path and argv. See
@@ -451,6 +468,13 @@ package struct AgentSpec: Sendable {
     package let aliases: [String]
     /// Whether the vendor's own hook reports a blocked session.
     package let waiting: WaitingSource
+    /// A tool's step can answer a block (the person said yes in the
+    /// vendor's prompt and the tool ran) — `SessionBook.answers`. False for
+    /// an adapter whose own module sends every ask's reply, with how many
+    /// asks are still open (OpenCode's `pending`): there a tool's step
+    /// answers nothing — two parallel asks of one tool are answered one
+    /// reply at a time, never by the first one's step.
+    package let stepsAnswerBlocks: Bool
     package let process: AgentProcessRule
     /// The vendor's documented, non-blocking hook Pulse installs.
     package let hooks: HookContract
@@ -471,11 +495,6 @@ package struct AgentSpec: Sendable {
     /// Cursor's `conversation_id` is the one every event carries, its
     /// `session_id` only some).
     package let sessionKeys: [String]
-    /// A turn line carries the agent's last words (Claude's and Codex's
-    /// `last_assistant_message`, Cursor's reply text, Pi's last assistant
-    /// message) — declared, since it is in the payload, not in the event
-    /// list. `capabilities` says it in Settings.
-    package let lastWords: Bool
     /// The reading of an event whose meaning is in its payload; nil leaves
     /// the event's own action (`HookEvent.action`). Called only for an
     /// installed event.
@@ -486,26 +505,26 @@ package struct AgentSpec: Sendable {
         displayName: String,
         aliases: [String] = [],
         waiting: WaitingSource,
+        stepsAnswerBlocks: Bool = true,
         process: AgentProcessRule,
         hooks: HookContract,
         foreignCallers: [String] = [],
         subagentKeys: [String] = [],
         reportsOwnPID: Bool = false,
         sessionKeys: [String] = HookContext.sessionKeys,
-        lastWords: Bool = false,
         read: @escaping @Sendable (_ event: String, _ payload: [String: Any]) -> HookReading? = { _, _ in nil }
     ) {
         self.id = id
         self.displayName = displayName
         self.aliases = aliases
         self.waiting = waiting
+        self.stepsAnswerBlocks = stepsAnswerBlocks
         self.process = process
         self.hooks = hooks
         self.foreignCallers = foreignCallers
         self.subagentKeys = subagentKeys
         self.reportsOwnPID = reportsOwnPID
         self.sessionKeys = sessionKeys
-        self.lastWords = lastWords
         self.read = read
     }
 
@@ -519,53 +538,6 @@ package struct AgentSpec: Sendable {
             reading.sub = PulseHookReceiver.string(payload, keys: subagentKeys)
         }
         return reading
-    }
-}
-
-/// What an agent's adapter lets Pulse say about its sessions, derived from
-/// the contract once: whether it reports a wait (`waiting`), its steps (a
-/// per-tool event — `HookContract.reportsToolActivity`), its last words
-/// (`AgentSpec.lastWords`) and a title (an event that is a prompt or the
-/// vendor's own name for the session). Every agent reports its turns.
-/// Settings → Hooks and the report say it; nothing is guessed. Pure.
-package struct AgentCapabilities: Equatable, Sendable {
-    package var waits: Bool
-    package var steps: Bool
-    package var lastWords: Bool
-    package var titles: Bool
-
-    package init(waits: Bool, steps: Bool, lastWords: Bool, titles: Bool) {
-        self.waits = waits
-        self.steps = steps
-        self.lastWords = lastWords
-        self.titles = titles
-    }
-
-    /// The report's words, in a fixed order: "waits steps words titles".
-    package var reportWords: [String] {
-        var words: [String] = []
-        if waits { words.append("waits") }
-        if steps { words.append("steps") }
-        if lastWords { words.append("words") }
-        if titles { words.append("titles") }
-        return words
-    }
-}
-
-extension AgentSpec {
-    /// What this adapter reports (`AgentCapabilities`), from its contract.
-    package var capabilities: AgentCapabilities {
-        AgentCapabilities(
-            waits: waiting == .hooks,
-            steps: hooks.reportsToolActivity,
-            lastWords: lastWords,
-            titles: hooks.events.contains { event in
-                switch event.action {
-                case .prompt, .title: return true
-                default: return false
-                }
-            }
-        )
     }
 }
 
