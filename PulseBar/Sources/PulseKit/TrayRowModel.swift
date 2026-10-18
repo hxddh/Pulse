@@ -305,11 +305,11 @@ extension TrayRowModel {
             }
             return String(format: t(.explainStalled), quiet)
         case .running(stalled: false):
-            guard last > 0 else { return t(.explainRunningNoClock) }
-            return said(t(.explainRunning), at: last)
+            guard last > 0 else { return t(.timelineWorkingNoClock) }
+            return said(t(.timelineWorking), at: last)
         // Which rule made it recent — never a guess that it runs.
         case .recent(.atPrompt):
-            return said(t(facts.stopped ? .timelineStopped : .explainIdle), at: last)
+            return said(t(facts.stopped ? .timelineStopped : .timelineAtPrompt), at: last)
         case .recent(.ended(let atMs)):
             return said(t(.explainEnded), at: atMs > 0 ? atMs : last)
         case .recent(.quiet):

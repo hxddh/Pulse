@@ -47,10 +47,10 @@ package enum Lamp: String, CaseIterable, Equatable, Sendable {
     /// What VoiceOver says for the state.
     package var accessibilityKey: L10n.Key {
         switch self {
-        case .waiting: return .a11yWaiting
-        case .running: return .a11yRunning
-        case .stalled: return .a11yStalled
-        case .processOnly: return .a11yProcessOnly
+        case .waiting: return .needsYou
+        case .running: return .running
+        case .stalled: return .stalled
+        case .processOnly: return .processOnly
         case .idle: return .a11yIdle
         }
     }

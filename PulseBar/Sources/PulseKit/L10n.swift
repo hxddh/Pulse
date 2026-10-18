@@ -115,9 +115,6 @@ package enum L10n {
         case uninstallHooks
         case emptyHint
         case a11yIdle
-        case a11yRunning
-        case a11yStalled
-        case a11yWaiting
         case moreActions
         case agoFormat
         case now
@@ -167,7 +164,6 @@ package enum L10n {
         case explainProcessOnly
         case explainStalled
         case explainStalledUnknown
-        case explainRunning
         case explainRunningNoClock
         case detailFolder
         case processOnly
@@ -182,7 +178,6 @@ package enum L10n {
         case settingsHooksSection
         case detailLastMessage
         case detailErrorHeading
-        case explainIdle
         case explainEnded
         case explainQuiet
         case explainSilent
@@ -234,8 +229,6 @@ package enum L10n {
         case openLoginItems
         case a11yNewWait
         case a11yNewWaitNoAsk
-        case a11yYourTurn
-        case a11yProcessOnly
         case explainProcessOnlyUnconnected
         case sessionNoTitle
         case stepFailedMark
@@ -302,9 +295,6 @@ extension L10n.Key {
         case .uninstallHooks: return ("Remove all", "全部移除")
         case .emptyHint: return ("When a connected agent starts working, its session appears here.", "已连接的 Agent 开始工作时，会话会出现在这里。")
         case .a11yIdle: return ("Idle", "空闲")
-        case .a11yRunning: return ("Running", "运行中")
-        case .a11yStalled: return ("Stalled", "停滞")
-        case .a11yWaiting: return ("Needs you", "需要你")
         case .moreActions: return ("More actions", "更多操作")
         case .agoFormat: return ("%@ ago", "%@前")
         case .now: return ("now", "刚刚")
@@ -354,7 +344,6 @@ extension L10n.Key {
         case .explainProcessOnly: return ("Started before Pulse — details after its next step", "在 Pulse 之前启动——下一步之后显示详情")
         case .explainStalled: return ("Nothing new for %@", "已经%@没有新动静")
         case .explainStalledUnknown: return ("Running, but its last step has no time", "在运行，但不知道它上一步的时间")
-        case .explainRunning: return ("Working", "在工作")
         case .explainRunningNoClock: return ("Working — no step reported yet", "在工作——还没有报告任何一步")
         case .detailFolder: return ("Folder", "目录")
         case .processOnly: return ("Process only", "仅进程")
@@ -369,7 +358,6 @@ extension L10n.Key {
         case .settingsHooksSection: return ("Hooks", "Hooks")
         case .detailLastMessage: return ("Last message", "最后的消息")
         case .detailErrorHeading: return ("Error", "错误")
-        case .explainIdle: return ("At its prompt", "停在提示符")
         case .explainEnded: return ("Session ended", "会话已结束")
         case .explainQuiet: return ("Nothing heard for %@ and no process to watch — moved to recent", "已经%@没有消息，也看不到进程——移到最近")
         case .explainSilent: return ("Nothing heard for %@ — moved to recent", "已经%@没有消息——移到最近")
@@ -421,8 +409,6 @@ extension L10n.Key {
         case .openLoginItems: return ("Open Login Items", "打开登录项")
         case .a11yNewWait: return ("%@ needs you: %@", "%@ 需要你：%@")
         case .a11yNewWaitNoAsk: return ("%@ needs you", "%@ 需要你")
-        case .a11yYourTurn: return ("Your turn", "轮到你")
-        case .a11yProcessOnly: return ("Process only", "仅进程")
         case .explainProcessOnlyUnconnected: return ("Seen as a process only — Pulse isn't connected to it yet", "只看到进程——Pulse 还没有连接它")
         case .sessionNoTitle: return ("Session · no title yet", "会话 · 暂无标题")
         case .stepFailedMark: return ("failed", "失败")

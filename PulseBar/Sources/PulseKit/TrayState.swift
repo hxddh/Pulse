@@ -316,11 +316,11 @@ package struct TrayState: Equatable {
         /// turn, process only, idle — and a coloured one.
         package var accessibilityKey: L10n.Key {
             switch self {
-            case .blocked: return .a11yWaiting
-            case .stalled: return .a11yStalled
-            case .running: return .a11yRunning
-            case .yourTurn: return .a11yYourTurn
-            case .processOnly: return .a11yProcessOnly
+            case .blocked: return .needsYou
+            case .stalled: return .stalled
+            case .running: return .running
+            case .yourTurn: return .yourTurn
+            case .processOnly: return .processOnly
             case .recent, .idle: return .a11yIdle
             }
         }
