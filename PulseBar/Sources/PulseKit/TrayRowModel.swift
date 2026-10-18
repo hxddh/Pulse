@@ -305,7 +305,7 @@ extension TrayRowModel {
             }
             return String(format: t(.explainStalled), quiet)
         case .running(stalled: false):
-            guard last > 0 else { return t(.timelineWorkingNoClock) }
+            guard last > 0 else { return t(.explainRunningNoClock) }
             return said(t(.timelineWorking), at: last)
         // Which rule made it recent — never a guess that it runs.
         case .recent(.atPrompt):
