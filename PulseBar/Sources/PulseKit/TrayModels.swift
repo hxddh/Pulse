@@ -87,7 +87,7 @@ package struct TrayNoticeModel: Equatable {
         /// removed the hooks on purpose.
         package var unconnected: [AgentID] = []
         /// Why the last install failed for some agents
-        /// (`HooksSupport.Status.failureText`); "" when none did.
+        /// (`HooksSupport.failureText`); "" when none did.
         package var installFailure: String = ""
         /// The agents the setup card just connected (never empty); nil when
         /// it has no follow-up to show.
@@ -110,28 +110,32 @@ package struct TrayNoticeModel: Equatable {
         }
     }
 
-    /// Agents on this Mac whose hook is not wired, in roster order: the
-    /// setup card's "Found …". Only agents whose vendor folder is here —
-    /// exactly the ones "Connect" installs — and never one whose last
+    /// Agents on this Mac whose hook is not installed, in roster order:
+    /// the setup card's "Found …". Only agents whose vendor folder is here
+    /// — exactly the ones "Connect" installs — and never one whose last
     /// install failed (the card says why instead: `installFailure`). Empty
     /// once the person removed the hooks on purpose, while an install runs,
     /// or when the last one could not write anything (Settings says why).
-    package static func unconnected(present: Set<AgentID>, hooks: HooksSupport.Status, nudgeOff: Bool) -> [AgentID] {
+    package static func unconnected(
+        present: Set<AgentID>, connections: [Connection], hooks: HooksSupport.Status, nudgeOff: Bool
+    ) -> [AgentID] {
         if nudgeOff || hooks.isWorking { return [] }
-        if case .failed = hooks { return [] }
-        let failed = hooks.failures
-        return AgentID.priority.filter {
-            present.contains($0) && !hooks.isInstalled(for: $0) && failed[$0] == nil
+        if case .launcherFailed = hooks { return [] }
+        return AgentID.priority.filter { agent in
+            present.contains(agent) && (connections.first { $0.agent == agent }?.install ?? .notInstalled) == .notInstalled
         }
     }
 
     /// Why the last install failed for some agents, in the failure copy
     /// Settings uses; "" when none did or the person removed the hooks on
     /// purpose.
-    package static func installFailure(hooks: HooksSupport.Status, nudgeOff: Bool, lang: ResolvedLanguage) -> String {
+    package static func installFailure(connections: [Connection], nudgeOff: Bool, lang: ResolvedLanguage) -> String {
         if nudgeOff { return "" }
-        let failed = hooks.failures.filter { !hooks.isInstalled(for: $0.key) }
-        return failed.isEmpty ? "" : HooksSupport.Status.failureText(failed, lang: lang)
+        var failed: [AgentID: HooksInstaller.Failure] = [:]
+        for connection in connections {
+            if case .failed(let failure) = connection.install { failed[connection.agent] = failure }
+        }
+        return HooksSupport.failureText(failed, lang: lang)
     }
 
     package static func pick(_ input: Input) -> TrayNoticeModel? {

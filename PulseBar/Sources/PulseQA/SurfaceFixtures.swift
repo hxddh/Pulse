@@ -394,7 +394,7 @@ enum SurfaceFixtures {
     static func noticeSetupFailed(lang: ResolvedLanguage) -> TrayNoticeModel {
         TrayNoticeModel.pick(TrayNoticeModel.Input(
             lang: lang, notifyAuthorized: true, bannerFailed: false,
-            installFailure: HooksSupport.Status.failureText([.cursor: .invalidJSON], lang: lang)
+            installFailure: HooksSupport.failureText([.cursor: .invalidJSON], lang: lang)
         )) ?? TrayNoticeModel(
             kind: .setupFailed, text: "", actionTitle: "", action: .openHooksSettings,
             systemImage: "exclamationmark.triangle", tone: .stalled
@@ -459,7 +459,7 @@ enum SurfaceFixtures {
             lang: lang,
             launchAtLogin: true,
             notifications: .allowed,
-            hooksStatus: HooksSupport.Status.installed([.claude, .codex, .copilot], failed: [.cursor: .invalidJSON]).label(lang: lang),
+            hooksStatus: HooksSupport.Status.ready(failed: [.cursor: .invalidJSON]).label(installed: 3, lang: lang),
             hooksInstalled: true,
             hookAgents: SettingsModel.hookAgents(connections: connections(), present: present, nowMs: nowMs, lang: lang),
             absentAgents: SettingsModel.absentAgents(connections: connections(), present: present),
@@ -487,7 +487,7 @@ enum SurfaceFixtures {
             Connection(agent: .pi, install: .notInstalled, configDirMissing: true),
         ]
         var model = settings(lang: lang)
-        model.hooksStatus = HooksSupport.Status.installed([.claude, .codex, .cursor, .copilot]).label(lang: lang)
+        model.hooksStatus = HooksSupport.Status.ready().label(installed: 4, lang: lang)
         model.hookAgents = SettingsModel.hookAgents(connections: caveats, present: present, nowMs: nowMs, lang: lang)
         model.absentAgents = SettingsModel.absentAgents(connections: caveats, present: present)
         return model

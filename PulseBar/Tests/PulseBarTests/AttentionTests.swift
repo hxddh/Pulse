@@ -1344,15 +1344,15 @@ final class HooksInstallerTests: XCTestCase {
             let text = try XCTUnwrap(read(agent.spec.hooks.path), agent.rawValue)
             let events = try XCTUnwrap(HooksInstaller.installedEvents(agent, text: text), agent.rawValue)
             XCTAssertEqual(events, Set(agent.spec.hooks.events.map(\.name)), agent.rawValue)
-            XCTAssertTrue(HooksSupport.isWired(agent), agent.rawValue)
+            XCTAssertEqual(HooksSupport.inspect(agent), .complete, agent.rawValue)
         }
-        XCTAssertEqual(HooksSupport.probeStatus(), .all)
         XCTAssertNotEqual(snapshot(), before)
         XCTAssertEqual(read(".codex/config.toml"), "model = \"gpt-5\"\n\n[profiles.fast]\nmodel = \"o4-mini\"\n", "Pulse never touches config.toml")
 
         HooksInstaller.uninstall()
         XCTAssertEqual(snapshot(), before, "every file and directory is back exactly as it was")
-        XCTAssertEqual(HooksSupport.probeStatus(), .missing)
+        let wired = AgentID.allCases.filter { HooksSupport.inspect($0).carriesHook }
+        XCTAssertEqual(wired, [])
     }
 
     func testAReinstallIsStillReversibleByteForByte() throws {
@@ -1417,7 +1417,8 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertEqual(report.count, 1)
         XCTAssertNil(read(".codex/hooks.json"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: tempHome.appendingPathComponent(".copilot").path))
-        XCTAssertEqual(HooksSupport.probeStatus(), .installed([.claude]))
+        let wired = AgentID.allCases.filter { HooksSupport.inspect($0).carriesHook }
+        XCTAssertEqual(wired, [.claude])
     }
 
     /// A file the user changed after the install keeps their change: only
@@ -1541,7 +1542,7 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertTrue(HooksInstaller.containsPulseMarker(read(".codex/hooks.json") ?? ""))
         HooksInstaller.uninstall(agents: [.codex])
         XCTAssertEqual(read(".codex/config.toml"), config, "uninstall leaves config.toml alone too")
-        XCTAssertFalse(HooksSupport.isWired(.codex), "a notify line in config.toml is not a Pulse hook")
+        XCTAssertFalse(HooksSupport.inspect(.codex).carriesHook, "a notify line in config.toml is not a Pulse hook")
     }
 
     func testInstallWritesThroughASymlinkedSettingsFile() throws {
@@ -1577,14 +1578,13 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertEqual(results.filter { $0.failure != nil }.map(\.agent), [.codex])
         XCTAssertEqual(results.first { $0.agent == .codex }?.failure, .invalidJSON)
         for agent in AgentID.priority where agent != .codex {
-            XCTAssertTrue(HooksSupport.isWired(agent), "\(agent.rawValue) is installed although Codex failed early in line")
+            XCTAssertTrue(HooksSupport.inspect(agent).carriesHook, "\(agent.rawValue) is installed although Codex failed early in line")
         }
         XCTAssertEqual(read(".codex/hooks.json"), "{ \"theme\": ")
 
         let status = HooksSupport.status(after: results)
         XCTAssertEqual(status.failures, [.codex: .invalidJSON])
-        XCTAssertTrue(status.isInstalled(for: .claude))
-        let label = status.label(lang: .zh)
+        let label = status.label(installed: AgentID.allCases.count - 1, lang: .zh)
         XCTAssertTrue(label.contains("Codex"), label)
         XCTAssertTrue(label.contains(L10n.t(.hooksFailureInvalidJSON, .zh)), label)
         XCTAssertFalse(label.contains(tempHome.path) || label.contains(".json"), "no path in the UI: \(label)")
@@ -1593,7 +1593,7 @@ final class HooksInstallerTests: XCTestCase {
         try write(".cursor/hooks.json", "[\"pulse-hook\"]")
         let removed = HooksInstaller.uninstall()
         XCTAssertEqual(removed.filter { $0.failure != nil }.map(\.agent), [.cursor], "\(removed.map(\.line))")
-        XCTAssertFalse(HooksSupport.isWired(.claude), "Claude is removed although Cursor failed")
+        XCTAssertFalse(HooksSupport.inspect(.claude).carriesHook, "Claude is removed although Cursor failed")
     }
 
     /// An install rewrites only `hooks` — every other key, its order
@@ -1740,7 +1740,7 @@ final class HooksInstallerTests: XCTestCase {
         let results = try HooksInstaller.install(agents: [.claude])
         XCTAssertEqual(results.map(\.failure), [.hasComments])
         XCTAssertEqual(read(".claude/settings.json"), jsonc)
-        XCTAssertEqual(HooksSupport.Status.reason(.hasComments, lang: .en), L10n.t(.hooksFailureHasComments, .en))
+        XCTAssertEqual(HooksInstaller.Failure.hasComments.text(.en), L10n.t(.hooksFailureHasComments, .en))
         XCTAssertNotEqual(L10n.t(.hooksFailureHasComments, .zh), L10n.t(.hooksFailureHasComments, .en))
         try write(".codex/hooks.json", #"{"hooks": {"Stop": {"command": "x"}}}"#)
         let shape = try HooksInstaller.install(agents: [.codex])
@@ -1749,7 +1749,7 @@ final class HooksInstallerTests: XCTestCase {
         try write(".cursor/hooks.json", "\u{FEFF}{\"version\": 1}\n")
         let cursor = try HooksInstaller.install(agents: [.cursor])
         XCTAssertEqual(cursor.map(\.failure), [nil])
-        XCTAssertTrue(HooksSupport.isWired(.cursor))
+        XCTAssertTrue(HooksSupport.inspect(.cursor).carriesHook)
     }
 
     /// The Settings lines say each agent's connection — installed, needing
@@ -1830,7 +1830,7 @@ final class HooksInstallerTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: root).write(to: url)
         let events = Set(AgentID.claude.spec.hooks.events.map(\.name))
         XCTAssertEqual(HooksSupport.inspect(.claude), .partial(found: events.count - 1, of: events.count))
-        XCTAssertEqual(HooksSupport.probeStatus().isInstalled(for: .claude), true, "partial still carries the hook")
+        XCTAssertTrue(HooksSupport.inspect(.claude).carriesHook, "partial still carries the hook")
 
         try FileManager.default.removeItem(at: HooksInstaller.launcherURL)
         XCTAssertEqual(HooksSupport.inspect(.codex), .staleLauncher, "the launcher its hooks run is gone")

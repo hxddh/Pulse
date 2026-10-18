@@ -627,7 +627,8 @@ final class TrayNoticeTests: XCTestCase {
         store.presentAgents = [.codex, .claude]
         XCTAssertEqual(store.trayNoticeInput.unconnected, [.claude, .codex], "roster order")
         XCTAssertEqual(store.trayNotice?.text, String(format: store.tr(.setupFound), "Claude, Codex"))
-        store.hooksStatus = .installed([.claude, .codex])
+        store.hooksStatus = .ready()
+        store.hookInstalls = [.claude: .complete, .codex: .partial(found: 3, of: 5)]
         XCTAssertNil(store.trayNotice, "connected: nothing to set up")
     }
 
@@ -654,15 +655,16 @@ final class TrayNoticeTests: XCTestCase {
         let store = StatusStore()
         store.notifyAuthorized = true
         store.presentAgents = [.claude, .codex, .opencode]
-        store.hooksStatus = .installed([.claude], failed: [.opencode: .invalidJSON])
+        store.hooksStatus = .ready(failed: [.opencode: .invalidJSON])
+        store.hookInstalls = [.claude: .complete]
         XCTAssertEqual(store.trayNoticeInput.unconnected, [.codex], "OpenCode failed: not offered again")
         XCTAssertEqual(store.trayNotice?.kind, .setup)
-        store.hooksStatus = .installed([.claude, .codex], failed: [.opencode: .invalidJSON])
+        store.hookInstalls = [.claude: .complete, .codex: .complete]
         XCTAssertTrue(store.trayNoticeInput.unconnected.isEmpty)
         let card = store.trayNotice
         XCTAssertEqual(card?.kind, .setupFailed)
         XCTAssertEqual(card?.action, .openHooksSettings)
-        XCTAssertEqual(card?.text, HooksSupport.Status.failureText([.opencode: .invalidJSON], lang: store.lang))
+        XCTAssertEqual(card?.text, HooksSupport.failureText([.opencode: .invalidJSON], lang: store.lang))
         store.settings.hooksNudgeOff = true
         XCTAssertNil(store.trayNotice, "hooks removed on purpose: nothing to say")
     }
@@ -672,7 +674,7 @@ final class TrayNoticeTests: XCTestCase {
     func testTheCardShowsTheRemainingStepsUntilDismissed() {
         let store = StatusStore()
         store.notifyAuthorized = true
-        store.hooksStatus = .installed([.claude, .codex])
+        store.hookInstalls = [.claude: .complete, .codex: .complete]
         store.setupConnected = [.codex, .claude]
         let card = store.trayNotice
         XCTAssertEqual(card?.kind, .setupDone)
@@ -688,7 +690,8 @@ final class TrayNoticeTests: XCTestCase {
     func testAnOpaqueLiveAgentIsNotATrayNotice() {
         let store = StatusStore()
         store.installPreviewFixture("waiting")
-        store.hooksStatus = .all
+        store.hooksStatus = .ready()
+        store.hookInstalls = Dictionary(uniqueKeysWithValues: AgentID.allCases.map { ($0, Connection.Install.complete) })
         store.notifyAuthorized = true
 
         XCTAssertTrue(store.trayNoticeInput.unconnected.isEmpty)
@@ -728,15 +731,16 @@ final class PulseVersionTests: XCTestCase {
         XCTAssertFalse(L10n.t(.buildPreview, .zh).contains("未签名"))
     }
 
-    func testHookStatusIsPerAgentNotGlobal() {
-        XCTAssertTrue(HooksSupport.Status.all.isInstalled(for: .claude))
-        XCTAssertTrue(HooksSupport.Status.all.isInstalled(for: .pi))
-        XCTAssertTrue(HooksSupport.Status.installed([.claude]).isInstalled(for: .claude))
-        XCTAssertFalse(HooksSupport.Status.installed([.claude]).isInstalled(for: .codex))
-        XCTAssertFalse(HooksSupport.Status.missing.isInstalled(for: .claude))
+    func testTheHookStatusLineCountsTheConnectedAgents() {
         XCTAssertEqual(
-            HooksSupport.Status.installed([.claude, .opencode]).label(lang: .en),
+            HooksSupport.Status.ready().label(installed: 2, lang: .en),
             String(format: L10n.t(.hooksInstalledCount, .en), 2, AgentID.allCases.count)
         )
+        XCTAssertEqual(HooksSupport.Status.ready().label(installed: 0, lang: .en), L10n.t(.hooksMissing, .en))
+        XCTAssertEqual(
+            HooksSupport.Status.launcherFailed(.unwritable).label(installed: 3, lang: .en),
+            L10n.t(.hooksFailed, .en) + " · " + L10n.t(.hooksFailureUnwritable, .en)
+        )
     }
+
 }

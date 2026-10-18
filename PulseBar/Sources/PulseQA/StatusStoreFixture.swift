@@ -85,7 +85,8 @@ extension StatusStore {
             let codex = row("coverage-codex", .codex, task: "Ship runtime observability", cwd: "/Users/me/code/Pulse")
             let pi = process(.pi, pid: 4101)
             let cursor = row("coverage-cursor", .cursor, task: "Refine adapter coverage", cwd: "/Users/me/code/Client", live: false)
-            hooksStatus = .all
+            hooksStatus = .ready()
+            hookInstalls = Dictionary(uniqueKeysWithValues: AgentID.allCases.map { ($0, Connection.Install.complete) })
             landFixture([codex, pi, cursor], facts: facts, title: "")
             return
         }

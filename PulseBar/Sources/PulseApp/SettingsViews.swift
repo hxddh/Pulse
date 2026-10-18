@@ -52,8 +52,8 @@ extension StatusStore {
             launchAtLogin: login.isOn,
             loginNote: login.note,
             notifications: SettingsModel.notifications(notifyAuthorized),
-            hooksStatus: hooksStatus.label(lang: lang),
-            hooksInstalled: !hooksStatus.installedAgents.isEmpty || connections.contains { $0.install.carriesHook },
+            hooksStatus: hooksStatus.label(installed: connections.filter { $0.install.carriesHook }.count, lang: lang),
+            hooksInstalled: connections.contains { $0.install.carriesHook },
             hooksBusy: hooksStatus.isWorking,
             hookAgents: SettingsModel.hookAgents(
                 connections: connections,

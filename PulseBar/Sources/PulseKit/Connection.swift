@@ -252,7 +252,7 @@ package struct Connection: Equatable, Sendable {
         case .complete: return t(.settingsHookInstalled)
         case .partial(let found, let of): return String(format: t(.settingsHookPartial), found, of)
         case .staleLauncher: return t(.settingsHookStale)
-        case .failed(let failure): return t(.hooksFailed) + " · " + HooksSupport.Status.reason(failure, lang: lang)
+        case .failed(let failure): return t(.hooksFailed) + " · " + failure.text(lang)
         case .notInstalled: return t(.hooksMissing)
         }
     }
