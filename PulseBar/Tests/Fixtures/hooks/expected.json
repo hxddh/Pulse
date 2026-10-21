@@ -12,20 +12,33 @@
     "claude/PostCompact": "status",
     "claude/PostCompact@manual": "ignored:says nothing Pulse shows",
     "claude/PostToolUse": "tool",
+    "claude/PostToolUse@Skill": "tool",
+    "claude/PostToolUse@TodoWrite": "tool",
+    "claude/PostToolUse@cursor": "ignored:another host ran Claude's hook",
+    "claude/PostToolUse@mcp": "tool",
     "claude/PostToolUseFailure": "tool",
     "claude/PostToolUseFailure@interrupt": "stopped",
     "claude/SessionEnd": "end",
     "claude/SessionStart": "start",
+    "claude/SessionStart@cursor-cli": "ignored:another host ran Claude's hook",
+    "claude/SessionStart@named": "start",
     "claude/Stop": "turn",
+    "claude/Stop@vscode": "ignored:another host ran Claude's hook",
     "claude/StopFailure": "failed",
     "claude/SubagentStart": "start",
     "claude/SubagentStop": "turn",
     "claude/UserPromptSubmit": "working",
+    "claude/UserPromptSubmit@named": "working",
     "codex/Interrupt": "stopped",
+    "codex/PostCompact": "status",
+    "codex/PostCompact@manual": "ignored:says nothing Pulse shows",
     "codex/PostToolUse": "tool",
+    "codex/PostToolUse@apply_patch": "tool",
+    "codex/PostToolUse@update_plan": "tool",
     "codex/SessionEnd": "end",
     "codex/SessionStart": "start",
     "codex/Stop": "turn",
+    "codex/SubagentStart": "start",
     "codex/SubagentStop": "turn",
     "codex/UserPromptSubmit": "working",
     "copilot/agentStop": "turn",
@@ -45,7 +58,10 @@
     "cursor/afterFileEdit": "tool",
     "cursor/afterMCPExecution": "tool",
     "cursor/afterShellExecution": "tool",
+    "cursor/postToolUseFailure": "tool",
+    "cursor/postToolUseFailure@interrupt": "stopped",
     "cursor/sessionEnd": "end",
+    "cursor/sessionEnd@error": "end",
     "cursor/sessionStart": "start",
     "cursor/stop": "turn",
     "cursor/stop@aborted": "stopped",
@@ -56,6 +72,8 @@
     "opencode/message.part.updated": "working",
     "opencode/message.part.updated@done": "tool",
     "opencode/message.part.updated@running": "status",
+    "opencode/message.part.updated@skill": "status",
+    "opencode/message.part.updated@subagent": "tool",
     "opencode/permission.asked": "permission",
     "opencode/permission.replied": "done",
     "opencode/permission.replied@pending": "ignored:says nothing Pulse shows",
@@ -66,6 +84,7 @@
     "opencode/session.compaction.ended": "status",
     "opencode/session.created": "start",
     "opencode/session.deleted": "end",
+    "opencode/session.diff": "status",
     "opencode/session.error": "failed",
     "opencode/session.error@aborted": "stopped",
     "opencode/session.execution.failed": "failed",
@@ -82,6 +101,8 @@
     "opencode/session.tool.failed": "tool",
     "opencode/session.tool.success": "tool",
     "opencode/session.updated": "title",
+    "opencode/session.updated@archived": "end",
+    "opencode/todo.updated": "status",
     "pi/agent_settled": "turn",
     "pi/agent_settled@aborted": "stopped",
     "pi/agent_settled@error": "failed",
@@ -96,5 +117,171 @@
     "pi/ui_prompt_start": "permission",
     "pi/ui_prompt_start@custom": "ignored:a prompt that does not block",
     "pi/ui_prompt_start@select": "question"
+  },
+  "fields": {
+    "claude/PostToolUse": {
+      "tool": "Bash",
+      "cat": "shell",
+      "took": "4187",
+      "message": "swift test --filter LoginTests"
+    },
+    "claude/PostToolUse@Skill": {
+      "tool": "Skill",
+      "cat": "skill",
+      "message": "review"
+    },
+    "claude/PostToolUse@TodoWrite": {
+      "tool": "TodoWrite",
+      "cat": "plan",
+      "meta": "plan=1/3;planNow=Fix the token refresh"
+    },
+    "claude/PostToolUse@mcp": {
+      "tool": "github · create_issue",
+      "cat": "mcp"
+    },
+    "claude/PostToolUseFailure": {
+      "tool": "Bash",
+      "cat": "shell",
+      "err": "1",
+      "took": "2210",
+      "meta": "err=Exit code 1"
+    },
+    "claude/SessionEnd": {
+      "meta": "why=prompt_input_exit"
+    },
+    "claude/SessionStart": {
+      "meta": "src=startup",
+      "message": ""
+    },
+    "claude/SessionStart@named": {
+      "meta": "src=resume",
+      "message": "Login rewrite"
+    },
+    "claude/SubagentStart": {
+      "sub": "agent_7f3a",
+      "meta": "type=Explore"
+    },
+    "claude/SubagentStop": {
+      "sub": "agent_7f3a",
+      "meta": "type=Explore"
+    },
+    "claude/UserPromptSubmit@named": {
+      "meta": "name=Login rewrite",
+      "message": "Now the refresh path"
+    },
+    "codex/PostCompact": {
+      "message": "compacted"
+    },
+    "codex/PostToolUse": {
+      "tool": "Bash",
+      "cat": "shell"
+    },
+    "codex/PostToolUse@apply_patch": {
+      "tool": "apply_patch",
+      "cat": "edit",
+      "message": "src/upload.rs (+2)",
+      "meta": "files=src/upload.rs|src/retry.rs|src/legacy.rs"
+    },
+    "codex/PostToolUse@update_plan": {
+      "tool": "update_plan",
+      "cat": "plan",
+      "message": "",
+      "meta": "plan=1/3;planNow=Add a retry with backoff"
+    },
+    "codex/SessionEnd": {
+      "meta": "why=exit"
+    },
+    "codex/SessionStart": {
+      "meta": "src=startup"
+    },
+    "codex/SubagentStart": {
+      "sub": "thread-2",
+      "meta": "type=worker"
+    },
+    "codex/SubagentStop": {
+      "sub": "thread-2",
+      "meta": "type=worker"
+    },
+    "copilot/errorOccurred": {
+      "meta": "err=RateLimitError",
+      "message": "recoverable error"
+    },
+    "copilot/postToolUseFailure": {
+      "tool": "bash",
+      "cat": "shell",
+      "err": "1",
+      "meta": "err=exit 1"
+    },
+    "copilot/sessionEnd": {
+      "meta": "why=complete"
+    },
+    "copilot/sessionStart": {
+      "meta": "src=new"
+    },
+    "cursor/afterFileEdit": {
+      "tool": "Edit",
+      "cat": "edit"
+    },
+    "cursor/afterMCPExecution": {
+      "tool": "search_issues",
+      "cat": "mcp",
+      "took": "830"
+    },
+    "cursor/afterShellExecution": {
+      "tool": "Shell",
+      "cat": "shell"
+    },
+    "cursor/postToolUseFailure": {
+      "tool": "shell",
+      "cat": "shell",
+      "err": "1",
+      "took": "30000",
+      "meta": "err=timeout",
+      "message": "npm run e2e"
+    },
+    "cursor/sessionEnd": {
+      "meta": "why=user_close"
+    },
+    "cursor/sessionEnd@error": {
+      "meta": "err=Model provider unavailable;why=error"
+    },
+    "opencode/message.part.updated@done": {
+      "tool": "bash",
+      "cat": "shell",
+      "took": "1500"
+    },
+    "opencode/message.part.updated@skill": {
+      "tool": "skill",
+      "cat": "skill",
+      "message": "review"
+    },
+    "opencode/message.part.updated@subagent": {
+      "tool": "read",
+      "cat": "read",
+      "sub": "ses_child",
+      "took": "20"
+    },
+    "opencode/session.diff": {
+      "meta": "files=src/cache.ts|src/redis.ts",
+      "message": "2 files changed"
+    },
+    "opencode/session.updated@archived": {
+      "meta": "why=archived"
+    },
+    "opencode/todo.updated": {
+      "meta": "plan=1/3;planNow=Move reads to Redis",
+      "message": "plan updated"
+    },
+    "pi/session_shutdown": {
+      "meta": "why=quit"
+    },
+    "pi/session_start": {
+      "meta": "src=startup"
+    },
+    "pi/tool_execution_end": {
+      "tool": "bash",
+      "cat": "shell",
+      "took": "1834"
+    }
   }
 }

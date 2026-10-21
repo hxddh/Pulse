@@ -34,10 +34,10 @@ enum SurfaceFixtures {
         "row-blocked", "row-running", "row-running-selected",
         "row-stalled", "row-your-turn", "row-process-only",
         "row-running-step", "row-stalled-step",
-        "row-live-tool", "row-failed-step", "row-failed-turn", "row-stopped",
+        "row-live-tool", "row-parallel-plan", "row-failed-step", "row-failed-turn", "row-stopped",
         "header", "notice-setup", "notice-setup-done", "notice-setup-failed", "row-app-only",
         "detail-blocked", "detail-your-turn", "detail-timeline", "detail-stalled", "detail-app-only",
-        "detail-subagent", "detail-failed-turn",
+        "detail-subagent", "detail-failed-turn", "detail-turn", "detail-timeline-open",
         "settings", "settings-caveats", "settings-login-approval",
     ]
 
@@ -60,6 +60,9 @@ enum SurfaceFixtures {
             // The tool the agent said started and has not finished: "Now:
             // Bash · npm test · 3m" — never a finished step's words.
             Fixture(name: "row-live-tool", width: 448, value: .row(rowModel(rowLiveTool(), lang: lang))),
+            // Three tools going at once — the newest, "+2" — and the plan
+            // the agent reported this turn, "3/7", quietly beside the time.
+            Fixture(name: "row-parallel-plan", width: 448, value: .row(rowModel(rowParallelPlan(), lang: lang))),
             // A last step that failed, taken by a subagent.
             Fixture(name: "row-failed-step", width: 448, value: .row(rowModel(rowFailedStep(), lang: lang))),
             // A turn that ended on an error: "Turn failed · 2m ago", and its
@@ -92,6 +95,14 @@ enum SurfaceFixtures {
             // A Codex turn that failed: the why, the error, and that Codex
             // does not report waits.
             Fixture(name: "detail-failed-turn", width: 448, value: .detail(detail(rowFailedTurn(), lang: lang))),
+            // A live turn in full: Now (two tools going, a live subagent)
+            // and This turn — its clock and steps, the prompt, the tools,
+            // the files changed, a skill, an MCP server, the subagent, the
+            // plan and how the session started.
+            Fixture(name: "detail-turn", width: 448, value: .detail(detail(rowTurnDigest(), lang: lang))),
+            // The timeline with each run's steps disclosed (→, or a click
+            // on a run): each step's target and how long it ran.
+            Fixture(name: "detail-timeline-open", width: 448, value: .detail(detail(rowTimeline(), lang: lang, disclosed: true))),
             // Install all / Remove all, and one connection line per agent in
             // every state: installed, needs update (events, launcher),
             // failed, not installed — and the agent not on this Mac.
@@ -138,8 +149,8 @@ enum SurfaceFixtures {
         ))
     }
 
-    static func detail(_ sample: Sample, lang: ResolvedLanguage, notice: RowNotice? = nil) -> DetailModel {
-        DetailModel.make(row: sample.row, facts: sample.facts, lang: lang, nowMs: nowMs, notice: notice)
+    static func detail(_ sample: Sample, lang: ResolvedLanguage, notice: RowNotice? = nil, disclosed: Bool = false) -> DetailModel {
+        DetailModel.make(row: sample.row, facts: sample.facts, lang: lang, nowMs: nowMs, notice: notice, disclosed: disclosed)
     }
 
     static func base(_ agent: AgentID, id: String, task: String = "Fix the flaky login test") -> Sample {
@@ -280,6 +291,78 @@ enum SurfaceFixtures {
             activityMs: nowMs - 3 * minute,
             turnSteps: 6
         )
+        return sample
+    }
+
+    /// A Pi session with three tools going at once (the newest is what the
+    /// row says, "+2" the others) and a plan it reported this turn.
+    static func rowParallelPlan() -> Sample {
+        var sample = base(.pi, id: "fx-parallel", task: "Make the test suite pass on CI")
+        sample.facts = SessionFacts(
+            lastStep: step(at: nowMs - 6 * minute),
+            runningSteps: [
+                SessionBook.Step(tool: "bash", target: "npm run lint", ms: nowMs - 5 * minute),
+                SessionBook.Step(tool: "bash", target: "npm run build", ms: nowMs - 4 * minute),
+                SessionBook.Step(tool: "bash", target: "npm test", ms: nowMs - 3 * minute),
+            ],
+            turnStartMs: nowMs - 9 * minute,
+            lastEventMs: nowMs - 3 * minute,
+            activityMs: nowMs - 3 * minute,
+            turnSteps: 6,
+            plan: SessionBook.PlanProgress(done: 3, total: 7, now: "Fix the flaky upload test", ms: nowMs - 7 * minute)
+        )
+        return sample
+    }
+
+    /// A Claude turn in full, replayed through the real book: a resumed
+    /// session, an earlier turn, a prompt, a plan, edits, a skill, an MCP
+    /// tool, a subagent that started and has not finished (its own steps),
+    /// a failed test run and two tools said to have started and not
+    /// finished.
+    static func rowTurnDigest() -> Sample {
+        var sample = base(.claude, id: "fx-turn-digest", task: "Add retry with jitter to the upload queue")
+        let cwd = "/Users/me/code/app"
+        func line(
+            _ kind: AttentionKind, _ ago: Int64, _ event: String, tool: String = "", message: String = "",
+            sub: String = "", failed: Bool = false, tookMs: Int64 = 0, category: StepCategory? = nil,
+            meta: LineMeta = LineMeta()
+        ) -> AttentionRecord {
+            AttentionRecord(
+                agent: .claude, kind: kind, ms: nowMs - ago, message: message,
+                session: "fx-turn-digest", cwd: cwd, pid: 4312, tool: tool, event: event, sub: sub,
+                failed: failed, tookMs: tookMs, category: category, meta: meta
+            )
+        }
+        let begun = event(.claude, .start)
+        let prompt = event(.claude, .prompt)
+        let tool = event(.claude, .activity)
+        let status = event(.claude, .status)
+        let subagentStart = lastEvent(.claude, .start)
+        let plan = LineMeta(plan: LineMeta.Plan(done: 3, total: 7), planNow: "Write the backoff tests")
+        let lines = [
+            line(.start, 40 * minute, begun, meta: LineMeta(src: "resume")),
+            line(.working, 30 * minute, prompt, message: "Add retry with jitter to the upload queue"),
+            line(.turn, 20 * minute, event(.claude, .turn), message: "Retry is in."),
+            line(.working, 14 * minute, prompt, message: "Make the jitter configurable and test it"),
+            line(.tool, 13 * minute, tool, tool: "Read", message: "\(cwd)/Sources/Upload/Queue.swift", category: .read),
+            line(.tool, 12 * minute + 30_000, tool, tool: "TodoWrite", category: .plan, meta: plan),
+            line(.tool, 12 * minute, tool, tool: "Edit", message: "\(cwd)/Sources/Upload/Queue.swift", tookMs: 1_200, category: .edit),
+            line(.tool, 11 * minute, tool, tool: "Edit", message: "\(cwd)/Sources/Upload/Backoff.swift", tookMs: 900, category: .edit),
+            line(.tool, 10 * minute, tool, tool: "Edit", message: "\(cwd)/Sources/Upload/Queue.swift", tookMs: 1_100, category: .edit),
+            line(.tool, 9 * minute, tool, tool: "Skill", message: "swift-testing", category: .skill),
+            line(.tool, 8 * minute, tool, tool: "github · search_issues", message: "upload retry", category: .mcp),
+            line(.start, 7 * minute, subagentStart, sub: "a1", meta: LineMeta(agentType: "Explore")),
+            line(.tool, 6 * minute + 30_000, tool, tool: "Grep", message: "jitter", sub: "a1", category: .search),
+            line(.tool, 6 * minute, tool, tool: "Read", message: "\(cwd)/Sources/Upload/Client.swift", sub: "a1", category: .read),
+            line(.tool, 5 * minute + 30_000, tool, tool: "Read", message: "\(cwd)/Sources/Upload/API.swift", sub: "a1", category: .read),
+            line(.tool, 5 * minute, tool, tool: "Bash", message: "swift test", failed: true, tookMs: 2_300, category: .shell),
+            line(.tool, 4 * minute, tool, tool: "Edit", message: "\(cwd)/Tests/UploadTests/BackoffTests.swift", tookMs: 800, category: .edit),
+            line(.status, 3 * minute, status, tool: "Bash", message: "swift test", category: .shell),
+            line(.status, 90_000, status, tool: "Bash", message: "swift build -c release", category: .shell),
+        ]
+        var book = SessionBook()
+        for record in lines { book.apply(record, nowMs: nowMs) }
+        sample.facts = book.facts(for: sample.row.key)
         return sample
     }
 

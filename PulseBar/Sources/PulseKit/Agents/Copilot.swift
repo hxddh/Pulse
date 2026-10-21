@@ -49,16 +49,37 @@ extension AgentSpec {
             // `COPILOT_HOME` moves the folder hooks load from
             // (`$COPILOT_HOME/hooks/`); a GUI app cannot see it, so Pulse
             // installs to the default and says so.
-            relocation: HookContract.Relocation(dir: ".copilot", variable: "COPILOT_HOME")
+            relocation: HookContract.Relocation(dir: ".copilot", variable: "COPILOT_HOME"),
+            // The person's own `disableAllHooks` (cli-config-dir-reference,
+            // user settings: "Disable all hooks (both repository-level and
+            // user-level)"). Copilot documents no managed-only switch.
+            offSwitches: [
+                HookSwitch(path: ".copilot/settings.json", key: "disableAllHooks", caveat: .turnedOff),
+            ]
         ),
         // A subagent's events carry its `agentId`; the main agent's none.
         subagentKeys: ["agentId"],
+        // The runtime's tool names (hooks-reference, "Claude-format
+        // matchers").
+        toolCategories: Copilot.toolCategories,
         read: { Copilot.read($0, $1) }
     )
 }
 
 /// Copilot's events whose meaning is in the payload.
 package enum Copilot {
+    /// Copilot's tools by category, lowercased.
+    package static let toolCategories: [String: StepCategory] = [
+        "bash": .shell, "powershell": .shell,
+        "view": .read,
+        "create": .edit, "edit": .edit, "str_replace_editor": .edit, "apply_patch": .edit,
+        "grep": .search, "rg": .search, "glob": .search,
+        "web_fetch": .web, "web_search": .web,
+        "task": .agent,
+        "update_todo": .plan,
+        "skill": .skill,
+    ]
+
     package static func read(_ event: String, _ payload: [String: Any]) -> HookReading? {
         switch event {
         case "sessionStart":
@@ -67,15 +88,21 @@ package enum Copilot {
             let initial = PulseHookReceiver.string(payload, keys: ["initialPrompt", "initial_prompt"])
             return initial.isEmpty ? nil : HookReading(action: .start, name: TitleHeuristics.promptTitle(initial, limit: 200))
         case "postToolUseFailure":
-            // The tool ran and failed: a step marked failed.
-            return HookReading(action: .activity, failed: true)
+            // The tool ran and failed: a step marked failed, with its
+            // error's first line.
+            let error = LineMeta.firstLine(PulseHookReceiver.string(payload, keys: ["error"]), limit: LineMeta.errLimit)
+            return HookReading(action: .activity, failed: true, meta: LineMeta(err: error))
         case "errorOccurred":
             // An unrecoverable error ends the turn; a recoverable one is work
             // going on — not a tool that ran, so never an answer, and after
             // the turn ended it moves nothing (a `status` that names no tool
-            // never starts a turn).
+            // never starts a turn). Its `error.name` is the line's error.
             let recoverable = payload["recoverable"] as? Bool ?? true
-            return HookReading(action: recoverable ? .status : .failedTurn)
+            let name = (payload["error"] as? [String: Any]).map { PulseHookReceiver.string($0, keys: ["name"]) } ?? ""
+            let meta = LineMeta(err: LineMeta.firstLine(name, limit: LineMeta.errLimit))
+            return recoverable
+                ? HookReading(action: .status, note: "recoverable error", meta: meta)
+                : HookReading(action: .failedTurn, meta: meta)
         case "subagentStart":
             // Its payload names the agent, not the `agentId` its own events
             // will carry: the name marks the line as the subagent's.

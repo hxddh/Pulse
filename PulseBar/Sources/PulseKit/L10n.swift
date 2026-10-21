@@ -144,6 +144,7 @@ package enum L10n {
         case ignoredNotABlock
         case ignoredNoPrompt
         case ignoredOtherSession
+        case ignoredOtherHost
         case ignoredOther
         case settingsHookConfigDir
         case settingsHookTurnedOff
@@ -240,6 +241,34 @@ package enum L10n {
         case turnStepsN
         case turnStepsFailed
         case detailNoWaits
+        case rowPlanSpoken
+        case detailNowHeading
+        case detailLastTurn
+        case detailPrompt
+        case detailTools
+        case detailFiles
+        case detailSkills
+        case detailMCP
+        case detailSubagents
+        case detailSubagentCount
+        case detailPlan
+        case detailStarted
+        case detailEnded
+        case sourceResume
+        case sourceClear
+        case sourceCompact
+        case sourceFork
+        case endClear
+        case endLogout
+        case endPromptExit
+        case endQuit
+        case endUserClose
+        case endArchived
+        case endError
+        case timelineEarlierSteps
+        case timelineShowSteps
+        case timelineHideSteps
+        case copyTurnSummary
     }
 }
 
@@ -324,6 +353,7 @@ extension L10n.Key {
         case .ignoredNotABlock: return ("a prompt that does not block", "不阻塞的提示")
         case .ignoredNoPrompt: return ("no prompt can be shown", "没有可显示的提示")
         case .ignoredOtherSession: return ("may be about another session", "可能属于另一个会话")
+        case .ignoredOtherHost: return ("another app ran Claude's hook", "另一个应用运行了 Claude 的 hook")
         case .ignoredOther: return ("unknown reason", "原因不明")
         case .settingsHookTurnedOff: return ("Installed — but hooks are turned off in %@'s settings (disableAllHooks)", "已安装——但 %@ 的设置关掉了所有 hooks（disableAllHooks）")
         case .settingsHookManagedOnly: return ("Installed — but a managed policy keeps %@ from running it", "已安装——但管理策略不让 %@ 运行它")
@@ -420,6 +450,34 @@ extension L10n.Key {
         case .turnStepsN: return ("%d steps", "%d 步")
         case .turnStepsFailed: return ("%@ (%d failed)", "%@（%d 步失败）")
         case .detailNoWaits: return ("This agent doesn't report waits", "这个 Agent 不报告等待")
+        case .rowPlanSpoken: return ("plan %@", "计划 %@")
+        case .detailNowHeading: return ("Now", "正在进行")
+        case .detailLastTurn: return ("Last turn", "上一轮")
+        case .detailPrompt: return ("Prompt", "提示")
+        case .detailTools: return ("Tools", "工具")
+        case .detailFiles: return ("Files", "文件")
+        case .detailSkills: return ("Skills", "技能")
+        case .detailMCP: return ("MCP", "MCP")
+        case .detailSubagents: return ("Subagents", "子代理")
+        case .detailSubagentCount: return ("%d", "%d 个")
+        case .detailPlan: return ("Plan", "计划")
+        case .detailStarted: return ("Started", "开始")
+        case .detailEnded: return ("Ended", "结束")
+        case .sourceResume: return ("Resumed session", "恢复的会话")
+        case .sourceClear: return ("After /clear", "/clear 之后")
+        case .sourceCompact: return ("After compaction", "压缩之后")
+        case .sourceFork: return ("Forked session", "分叉的会话")
+        case .endClear: return ("/clear", "/clear")
+        case .endLogout: return ("Logged out", "退出登录")
+        case .endPromptExit: return ("Exited at its prompt", "在提示符退出")
+        case .endQuit: return ("Quit", "退出")
+        case .endUserClose: return ("Closed by you", "你关闭了它")
+        case .endArchived: return ("Archived", "已归档")
+        case .endError: return ("Ended on an error", "因出错结束")
+        case .timelineEarlierSteps: return ("%d earlier", "更早的 %d 步")
+        case .timelineShowSteps: return ("Show each step", "展开每一步")
+        case .timelineHideSteps: return ("Hide the steps", "收起每一步")
+        case .copyTurnSummary: return ("Copy this turn's summary", "复制本轮摘要")
         }
     }
 }

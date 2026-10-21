@@ -7,7 +7,7 @@ import Foundation
 /// for the two modules, as the last argument). Each agent's adapter
 /// (`Agents/`) maps its own event names and payload onto a `HookAction`;
 /// nothing else is read — not the protocol's kind words, not plain text.
-/// Every event it hears is one v8 line in the event log (`EventLog` — the
+/// Every event it hears is one v9 line in the event log (`EventLog` — the
 /// only file it writes), and it exits 0 at once. An event it does not turn
 /// into state — one Pulse does not install, a payload that is not a JSON
 /// object, a blocked event from an agent whose hooks cannot report one
@@ -40,6 +40,10 @@ package enum PulseHookReceiver {
         /// hook heard it (Claude's `agent_needs_input`, raised in the agent
         /// view's terminal for a background session): not this one's wait.
         case otherSession = "may be about another session"
+        /// Another tool ran this agent's hook as its own, with its own
+        /// payload (Cursor and VS Code run Claude's settings hooks): not
+        /// this agent speaking — no row of this agent's.
+        case otherHost = "another host ran Claude's hook"
     }
 
     /// Always returns 0 — vendor hooks must never be broken by Pulse.
@@ -126,7 +130,7 @@ package enum PulseHookReceiver {
         return claimed == parent ? claimed : 0
     }
 
-    /// The v8 line one vendor event becomes, before the hook's own facts
+    /// The v9 line one vendor event becomes, before the hook's own facts
     /// (front, pid, landing) and its `seq` are added — a state, or an
     /// `ignored` line saying why not. Pure.
     package static func record(agent: AgentID, event rawEvent: String, payload: [String: Any], nowMs: Int64) -> AttentionRecord {
@@ -148,6 +152,9 @@ package enum PulseHookReceiver {
         var toolColumn = ""
         var failed = false
         var tookMs: Int64 = 0
+        /// The adapter's raw name for the tool — what its category is read
+        /// from (`AgentSpec.category(ofTool:)`).
+        let rawTool = reading.tool ?? string(payload, keys: ["tool_name", "toolName"])
         /// The tool's target, as a step says it: the adapter's own reading
         /// when it has one, else `Tool: target` without the tool.
         func target() -> String {
@@ -230,6 +237,12 @@ package enum PulseHookReceiver {
         case .end:
             kind = .end
         }
+        // A line that names a tool says what kind of step it is, as the
+        // adapter names its tools; any other line has no category.
+        var category: StepCategory?
+        if kind == .tool || kind == .status, !toolColumn.isEmpty {
+            category = reading.cat ?? agent.spec.category(ofTool: rawTool)
+        }
         return AttentionRecord(
             agent: agent,
             kind: kind,
@@ -241,8 +254,27 @@ package enum PulseHookReceiver {
             event: cleanField(event, limit: 64),
             sub: cleanField(reading.sub, limit: 80),
             failed: failed,
-            tookMs: tookMs
+            tookMs: tookMs,
+            category: category,
+            meta: cleanMeta(reading.meta)
         )
+    }
+
+    /// The facts an adapter read, as a line may carry them: every text
+    /// redacted, one line, bounded (`LineMeta.field` bounds and escapes
+    /// again as it writes). Pure.
+    package static func cleanMeta(_ meta: LineMeta) -> LineMeta {
+        var clean = meta
+        clean.planNow = LineMeta.firstLine(meta.planNow, limit: LineMeta.planNowLimit)
+        clean.err = LineMeta.firstLine(meta.err, limit: LineMeta.errLimit)
+        clean.src = LineMeta.token(meta.src)
+        clean.why = LineMeta.token(meta.why)
+        clean.agentType = cleanField(meta.agentType, limit: LineMeta.tokenLimit)
+        clean.files = meta.files.prefix(LineMeta.maxFiles)
+            .map { cleanField($0, limit: LineMeta.fileLimit) }
+            .filter { !$0.isEmpty }
+        clean.name = LineMeta.firstLine(meta.name, limit: LineMeta.nameLimit)
+        return clean
     }
 
     /// An `ignored` line: who, which event, where — and why, never the
@@ -447,7 +479,7 @@ package enum PulseHookReceiver {
         return ""
     }
 
-    /// One field of a v8 line: credentials redacted, every tab and line
+    /// One field of a v9 line: credentials redacted, every tab and line
     /// break — `\n`, `\r`, VT, FF, NEL, U+2028, U+2029 — a space
     /// (`AttentionProtocol.flatten`), bounded.
     package static func cleanField(_ value: String, limit: Int) -> String {

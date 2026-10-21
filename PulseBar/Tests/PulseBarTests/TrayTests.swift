@@ -702,6 +702,198 @@ struct LandingPlanTests {
         }
     }
 
+    /// WezTerm's pane through its own CLI, from the running app's bundle,
+    /// with the GUI's socket; then the app. A pane id that is not digits,
+    /// or one another terminal's shell inherited, is no handle.
+    @Test func aWezTermPaneLandsExactlyThroughItsCLI() {
+        let socket = "/Users/me/.local/share/wezterm/gui-sock-4412"
+        let handle = LandingHandle("wezterm:3;weztermsock:\(socket);tty:/dev/ttys004;term:WezTerm")
+        #expect(handle.weztermPane == "3")
+        #expect(handle.weztermSocket == socket)
+        let plan = LandingPlan.make(handle: handle, cwd: "/Users/me/app", pid: 812)
+        #expect(plan.steps == [
+            .weztermPane(pane: "3", socket: socket),
+            .activateApp(bundleIDs: [LandingPlan.weztermBundleID]),
+            .activateOwner(pid: 812),
+        ], "no tab search: WezTerm is not Terminal or iTerm")
+        #expect(plan.precision == .exact)
+
+        let relative = LandingPlan.make(handle: LandingHandle("wezterm:3;weztermsock:gui-sock;term:WezTerm"), cwd: "")
+        #expect(relative.steps.first == .weztermPane(pane: "3", socket: ""), "a socket that is not a path is left to the CLI")
+        for bad in ["wezterm:3x;term:WezTerm", "wezterm:-1;term:WezTerm", "wezterm:3;term:iTerm.app"] {
+            let steps = LandingPlan.make(handle: LandingHandle(bad), cwd: "").steps
+            let tried = steps.contains { if case .weztermPane = $0 { return true } else { return false } }
+            #expect(!tried, "\(bad)")
+        }
+        let untitled = LandingPlan.make(handle: LandingHandle("wezterm:7"), cwd: "")
+        #expect(untitled.steps == [.weztermPane(pane: "7", socket: ""), .activateApp(bundleIDs: [LandingPlan.weztermBundleID])])
+    }
+
+    @Test func theWezTermCommandComesFromTheAppBundle() {
+        let bundle = "/Applications/WezTerm.app"
+        let command = LandingPlan.weztermCommand(bundlePath: bundle, pane: "3", socket: "/s/gui-sock-1")
+        #expect(command?.executable == "/Applications/WezTerm.app/Contents/MacOS/wezterm")
+        #expect(command?.arguments == ["cli", "--no-auto-start", "activate-pane", "--pane-id", "3"])
+        let base = ["HOME": "/Users/me", "WEZTERM_PANE": "9", "WEZTERM_UNIX_SOCKET": "/old"]
+        let environment = command?.environment(over: base) ?? [:]
+        #expect(environment == ["HOME": "/Users/me", "WEZTERM_UNIX_SOCKET": "/s/gui-sock-1"])
+        let bare = LandingPlan.weztermCommand(bundlePath: bundle, pane: "3", socket: "")
+        #expect(bare?.environment(over: base) == ["HOME": "/Users/me"], "Pulse's own pane or socket is never inherited")
+        #expect(LandingPlan.weztermCommand(bundlePath: bundle, pane: "3 --x", socket: "") == nil)
+        #expect(LandingPlan.weztermCommand(bundlePath: "WezTerm.app", pane: "3", socket: "") == nil)
+    }
+
+    /// kitty's window through its remote control — only when it listens on
+    /// a unix socket (`listen_on`): without one, or on `tcp:`, the app.
+    @Test func aKittyWindowLandsExactlyOnlyWithRemoteControl() {
+        let handle = LandingHandle("kitty:5;kittysock:unix:/tmp/kitty-501;tty:/dev/ttys003;app:net.kovidgoyal.kitty")
+        #expect(handle.kittyWindow == "5")
+        #expect(handle.kittyListenOn == "unix:/tmp/kitty-501")
+        let plan = LandingPlan.make(handle: handle, cwd: "")
+        #expect(plan.steps == [
+            .kittyWindow(window: "5", listenOn: "unix:/tmp/kitty-501"),
+            .activateApp(bundleIDs: [LandingPlan.kittyBundleID]),
+        ])
+        #expect(plan.precision == .exact)
+
+        let noRemote = LandingPlan.make(handle: LandingHandle("kitty:5;tty:/dev/ttys003"), cwd: "")
+        #expect(noRemote.steps == [.activateApp(bundleIDs: [LandingPlan.kittyBundleID])], "kitty sets no TERM_PROGRAM: its window id names it")
+        #expect(noRemote.precision == .app)
+        for listen in ["tcp:localhost:12488", "unix:@kitty", "fd:3", "unix:relative"] {
+            let steps = LandingPlan.make(handle: LandingHandle("kitty:5;kittysock:\(listen)"), cwd: "").steps
+            #expect(steps == [.activateApp(bundleIDs: [LandingPlan.kittyBundleID])], "\(listen)")
+        }
+        #expect(LandingPlan.make(handle: LandingHandle("kitty:5;kittysock:unix:/tmp/k;term:ghostty"), cwd: "").steps
+            == [.activateApp(bundleIDs: ["com.mitchellh.ghostty"])], "a kitty id inherited into Ghostty is not Ghostty's")
+    }
+
+    @Test func theKittyCommandsPreferKittenInTheAppBundle() {
+        let commands = LandingPlan.kittyCommands(bundlePath: "/Applications/kitty.app", window: "5", listenOn: "unix:/tmp/kitty-501")
+        let programs = commands.map { $0.executable }
+        #expect(programs == ["/Applications/kitty.app/Contents/MacOS/kitten", "/Applications/kitty.app/Contents/MacOS/kitty"])
+        let arguments = commands.first?.arguments ?? []
+        #expect(arguments == ["@", "--to", "unix:/tmp/kitty-501", "focus-window", "--match", "id:5"])
+        let environment = commands.first?.environment(over: ["KITTY_WINDOW_ID": "1", "KITTY_LISTEN_ON": "unix:/x", "HOME": "/h"]) ?? [:]
+        #expect(environment == ["HOME": "/h"])
+        #expect(LandingPlan.kittyCommands(bundlePath: "/Applications/kitty.app", window: "5", listenOn: "tcp:h:1").isEmpty)
+        #expect(LandingPlan.kittyCommands(bundlePath: "/Applications/kitty.app", window: "id:5", listenOn: "unix:/k").isEmpty)
+    }
+
+    /// Zellij's pane in its session, then the terminal its environment
+    /// names; inside Zellij the tty and iTerm id are the session's, not the
+    /// pane's. With no terminal to bring forward the pane is no landing.
+    @Test func aZellijPaneLandsExactlyThenItsTerminal() {
+        let handle = LandingHandle("zellij:2;zellijsession:pretentious-cat;iterm:w0t1p0:AB;tty:/dev/ttys009;term:iTerm.app")
+        #expect(handle.zellijPane == "2")
+        #expect(handle.zellijSession == "pretentious-cat")
+        let plan = LandingPlan.make(handle: handle, cwd: "")
+        #expect(plan.steps == [
+            .zellijPane(session: "pretentious-cat", pane: "2", hostBundleIDs: [LandingPlan.iTermBundleID]),
+            .activateApp(bundleIDs: [LandingPlan.iTermBundleID]),
+        ])
+        #expect(plan.precision == .exact)
+        #expect(LandingPlan.zellijArguments(session: "pretentious-cat", pane: "2")
+            == ["--session", "pretentious-cat", "action", "focus-pane-id", "2"])
+        #expect(LandingPlan.make(handle: LandingHandle("zellij:2;zellijsession:s;tty:/dev/ttys009"), cwd: "").isEmpty,
+                "no terminal app known: nothing a click could bring forward")
+        for bad in ["zellij:2;zellijsession:--help;term:iTerm.app", "zellij:2;zellijsession:a b;term:iTerm.app", "zellij:x;zellijsession:s;term:iTerm.app"] {
+            let steps = LandingPlan.make(handle: LandingHandle(bad), cwd: "").steps
+            let tried = steps.contains { if case .zellijPane = $0 { return true } else { return false } }
+            #expect(!tried, "\(bad)")
+        }
+    }
+
+    /// Inside tmux the pane is the handle, whatever terminal hosts it.
+    @Test func tmuxStillWinsOverATerminalsOwnPane() {
+        let plan = LandingPlan.make(handle: LandingHandle("tmux:%1;wezterm:3;kitty:5;kittysock:unix:/k;term:tmux"), cwd: "")
+        #expect(plan.steps.first == .tmuxPane(pane: "%1", socket: "", hostBundleIDs: [LandingPlan.weztermBundleID]))
+        let terminalSteps = plan.steps.filter { step in
+            switch step {
+            case .weztermPane, .kittyWindow: return true
+            default: return false
+            }
+        }
+        #expect(terminalSteps.isEmpty)
+    }
+
+    /// A session with no terminal — a service, a daemon, an app — lands on
+    /// the app its chain runs in, or nowhere: never on a terminal its
+    /// environment remembered from whoever started it.
+    @Test func aDetachedSessionLandsOnItsHostOrOpensTheDetail() {
+        let codex = LandingPlan.make(handle: LandingHandle("detached:1;app:com.openai.codex;host:codexApp"), cwd: "/Users/me/app")
+        #expect(codex.steps == [.activateApp(bundleIDs: HostAppKind.codexApp.bundleIDs)], "an agent's own app opens no folder")
+        #expect(codex.precision == .app)
+
+        let vscode = LandingPlan.make(handle: LandingHandle("detached:1;app:com.microsoft.VSCode;host:vsCode"), cwd: "/Users/me/app", pid: 900)
+        #expect(vscode.steps == [
+            .openFolder(bundleIDs: HostAppKind.vsCode.bundleIDs, path: "/Users/me/app"),
+            .activateApp(bundleIDs: HostAppKind.vsCode.bundleIDs),
+            .activateOwner(pid: 900),
+        ])
+
+        let apps: [(String, HostAppKind)] = [
+            ("detached:1;host:claudeApp", .claudeApp),
+            ("detached:1;host:openCodeApp", .openCodeApp),
+            ("detached:1;host:copilotApp", .copilotApp),
+        ]
+        for (raw, kind) in apps {
+            #expect(LandingPlan.make(handle: LandingHandle(raw), cwd: "/Users/me/app").steps == [.activateApp(bundleIDs: kind.bundleIDs)], "\(raw)")
+        }
+
+        // A daemon: launchd on its chain and no app. Its environment's
+        // terminal is whoever started it.
+        let daemon = LandingHandle("detached:1;tmux:%2;iterm:w0t1p0:AB;tty:/dev/ttys004;term:iTerm.app;app:com.googlecode.iterm2")
+        #expect(daemon.detached)
+        #expect(LandingPlan.make(handle: daemon, cwd: "/Users/me/app", pid: 4312).isEmpty, "no Go: the detail page opens")
+        #expect(LandingPlan.make(handle: LandingHandle("detached:1"), cwd: "/Users/me/app").isEmpty)
+
+        // An app no host names: its process's owner, when it has one.
+        #expect(LandingPlan.make(handle: LandingHandle("detached:1;host:other"), cwd: "", pid: 812).steps == [.activateOwner(pid: 812)])
+        #expect(LandingPlan.make(handle: LandingHandle("detached:1;host:other"), cwd: "").isEmpty)
+
+        // The process table's host, when the hook said none.
+        #expect(LandingPlan.make(handle: LandingHandle("detached:1"), cwd: "", hostApp: .cursor).steps
+            == [.activateApp(bundleIDs: HostAppKind.cursor.bundleIDs)])
+    }
+
+    /// An agent's own app is a host, not an editor: a terminal session
+    /// whose chain passes through one still searches its tab.
+    @Test func anAgentAppIsNeverAnEditor() {
+        #expect(LandingPlan.editor(handle: LandingHandle(), hostApp: .codexApp) == nil)
+        #expect(LandingPlan.editor(handle: LandingHandle("host:claudeApp"), hostApp: nil) == nil)
+        #expect(LandingPlan.editor(handle: LandingHandle("host:vsCode"), hostApp: nil) == .vsCode)
+        let tab = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys001;host:codexApp"), cwd: "/Users/me/app", hostApp: .codexApp)
+        #expect(tab.steps == [.ttyTab(tty: "ttys001")])
+    }
+
+    /// Bundle ids as each app's cask quits it; paths as each app runs.
+    @Test func hostsAreKnownByBundleAndByPath() {
+        #expect(HostAppKind(bundleID: "com.google.antigravity") == .antigravity)
+        #expect(HostAppKind(bundleID: "com.google.antigravity-ide") == .antigravity)
+        #expect(HostAppKind(bundleID: "com.openai.codex") == .codexApp)
+        #expect(HostAppKind(bundleID: "com.anthropic.claudefordesktop") == .claudeApp)
+        #expect(HostAppKind(bundleID: "ai.opencode.desktop") == .openCodeApp)
+        #expect(HostAppKind(bundleID: "com.github.githubapp") == .copilotApp)
+        #expect(HostAppKind(bundleID: "com.trae.app") == .trae)
+        #expect(HostAppKind(bundleID: "com.googlecode.iterm2") == nil)
+        #expect(HostAppKind(bundleID: "") == nil)
+        let paths: [(String, HostAppKind)] = [
+            ("/Applications/Codex.app/Contents/Resources/codex app-server", .codexApp),
+            ("/Applications/ChatGPT.app/Contents/Resources/codex app-server", .codexApp),
+            ("/Applications/Claude.app/Contents/MacOS/Claude", .claudeApp),
+            ("/Applications/OpenCode.app/Contents/MacOS/OpenCode", .openCodeApp),
+            ("/Applications/GitHub Copilot.app/Contents/MacOS/GitHub Copilot", .copilotApp),
+            ("/Applications/Antigravity IDE.app/Contents/MacOS/Electron", .antigravity),
+            ("/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper (Plugin).app/Contents/MacOS/Code Helper (Plugin)", .vsCode),
+        ]
+        for (path, kind) in paths {
+            #expect(HostAppKind(path: path) == kind, "\(path)")
+        }
+        #expect(HostAppKind(path: "/Applications/iTerm.app/Contents/MacOS/iTerm2") == nil)
+        let folders = HostAppKind.allCases.filter { $0.opensFolders }
+        #expect(folders == [.cursor, .vsCode, .windsurf, .zed, .trae, .antigravity, .zcode])
+    }
+
     @Test func theLabelFollowsThePrecision() {
         var row = AgentRow(key: "claude|s1")
         #expect(!row.canFocusTerminal)
@@ -1250,10 +1442,10 @@ struct RowWordsTests {
         #expect(alerts == 1, "only the raise is red")
         let failures = detail.timeline.filter { $0.tone == .failure }.count
         #expect(failures == 1, "the run with a failed step")
-        let turn = detail.facts.first { $0.label == L10n.t(.stepThisTurn, .en) }
+        let turn = detail.turn.first { $0.label == L10n.t(.stepThisTurn, .en) }
         #expect(turn?.value == "14m · 8 steps (1 failed)")
         let zh = SurfaceFixtures.detailTimeline(lang: .zh)
-        let zhTurn = zh.facts.first { $0.label == "本轮" }
+        let zhTurn = zh.turn.first { $0.label == "本轮" }
         #expect(zhTurn?.value == L10n.duration(14 * 60, .zh) + " · 8 步（1 步失败）")
         let zhEffects = zh.timeline.map { $0.effect }
         #expect(zhEffects.contains(L10n.waitKind(.permission, .zh)))
@@ -1566,7 +1758,9 @@ struct RowWordsTests {
     @Test func theDetailSaysEachThingOnce() {
         let steps = SurfaceFixtures.detailTimeline(lang: .en)
         let labels = steps.facts.map { $0.label }
-        #expect(labels == [L10n.t(.stepThisTurn, .en), L10n.t(.detailFolder, .en)], "one clock, then the folder")
+        #expect(labels == [L10n.t(.detailFolder, .en)], "the folder")
+        let turnLabels = steps.turn.map { $0.label }
+        #expect(turnLabels == [L10n.t(.stepThisTurn, .en), L10n.t(.detailTools, .en)], "one clock, no prompt that is the title")
         let running = SurfaceFixtures.rowTimeline()
         let headline = TrayRowModel.headline(running.row, facts: running.facts, lang: .en, nowMs: SurfaceFixtures.nowMs)
         #expect(steps.headline == headline)
@@ -1706,5 +1900,201 @@ struct MainMenuTests {
         #expect(keys[",|\(command)"] == #selector(MainMenuActions.settings(_:)))
         let zh = MainMenu.make(lang: .zh).items.map { $0.title }
         #expect(zh.contains(L10n.t(.menuEdit, .zh)))
+    }
+}
+
+/// This turn's words: the row's "+2" and quiet plan, the detail page's Now
+/// and This turn, the disclosed steps, the keys that disclose them and the
+/// summary a person can copy.
+@Suite("This turn")
+struct TurnWordsTests {
+    private func press(_ state: TrayKeys.State, _ keys: [TrayKeys.Key], rows: [TrayKeys.Row]) -> TrayKeys.Outcome {
+        var outcome = TrayKeys.Outcome(state: state, effect: nil, handled: true)
+        for key in keys { outcome = TrayKeys.reduce(outcome.state, key, rows: rows) }
+        return outcome
+    }
+
+    /// Several tools going at once: the row says the newest and how many
+    /// others; the plan the agent reported this turn is a quiet "3/7".
+    @Test func theRowSaysParallelToolsAndThePlan() {
+        let row = SurfaceFixtures.rowModel(SurfaceFixtures.rowParallelPlan(), lang: .en)
+        #expect(row.secondLine?.kind == .now)
+        #expect(row.secondLine?.text == "Now: bash · npm test · 3m +2")
+        #expect(row.planProgress == "3/7")
+        #expect(row.accessibilityLabel.contains("plan 3/7"))
+        let zh = SurfaceFixtures.rowModel(SurfaceFixtures.rowParallelPlan(), lang: .zh)
+        #expect(zh.secondLine?.text == "当前：bash · npm test · " + L10n.duration(3 * 60, .zh) + " +2")
+    }
+
+    /// The plan is said only on a live row, only when it was reported this
+    /// turn.
+    @Test func thePlanIsOnlyThisTurnsOnALiveRow() {
+        var sample = SurfaceFixtures.rowParallelPlan()
+        sample.row.status = .yourTurn(sinceMs: SurfaceFixtures.nowMs - 60_000)
+        #expect(SurfaceFixtures.rowModel(sample, lang: .en).planProgress == nil, "a finished turn's row says no plan")
+        var older = SurfaceFixtures.rowParallelPlan()
+        older.facts.turnStartMs = SurfaceFixtures.nowMs - 60_000
+        #expect(SurfaceFixtures.rowModel(older, lang: .en).planProgress == nil, "an earlier turn's plan is not this turn's")
+        let one = SurfaceFixtures.rowModel(SurfaceFixtures.rowLiveTool(), lang: .en)
+        #expect(one.secondLine?.text == "Now: bash · npm test · 3m", "one tool: no count")
+        #expect(one.planProgress == nil)
+    }
+
+    /// Now: every tool still going with its own clock, newest first, and
+    /// the subagent whose start was heard and whose end was not.
+    @Test func theDetailSaysWhatGoesOnNow() {
+        let detail = SurfaceFixtures.detail(SurfaceFixtures.rowTurnDigest(), lang: .en)
+        #expect(detail.now == [
+            "Bash · swift build -c release · 1m",
+            "Bash · swift test · 3m",
+            "Subagent · Explore · 3 steps",
+        ])
+        for item in detail.now {
+            #expect(!item.lowercased().contains("running"), "\(item)")
+        }
+        let ended = SurfaceFixtures.detail(SurfaceFixtures.rowFailedTurn(), lang: .en)
+        #expect(ended.now.isEmpty, "only while the turn is live")
+    }
+
+    /// This turn: each fact only when known — the clock and steps, the
+    /// prompt that is not the title, the main agent's tools, the files
+    /// relative to the folder, the skill, the MCP server, the subagent, the
+    /// plan, how the session started.
+    @Test func theDetailSaysThisTurn() {
+        let detail = SurfaceFixtures.detail(SurfaceFixtures.rowTurnDigest(), lang: .en)
+        #expect(detail.turnHeading == "This turn")
+        let pairs = detail.turn.map { "\($0.label): \($0.value)" }
+        #expect(pairs == [
+            "This turn: 14m · 12 steps (1 failed)",
+            "Prompt: Make the jitter configurable and test it",
+            "Tools: Edit 4 · Read 1 · TodoWrite 1 · Skill 1 · …",
+            "Files: Sources/Upload/Queue.swift\nSources/Upload/Backoff.swift\nTests/UploadTests/BackoffTests.swift",
+            "Skills: swift-testing",
+            "MCP: github",
+            "Subagents: 1 · Explore",
+            "Plan: 3/7 · Write the backoff tests",
+            "Started: Resumed session",
+        ])
+        let files = detail.turn.first { $0.label == "Files" }
+        #expect(files?.multiline == true)
+        #expect(detail.canCopySummary)
+        let zh = SurfaceFixtures.detail(SurfaceFixtures.rowTurnDigest(), lang: .zh)
+        let zhPairs = zh.turn.map { "\($0.label)：\($0.value)" }
+        #expect(zhPairs.first == "本轮：" + L10n.duration(14 * 60, .zh) + " · 12 步（1 步失败）")
+        #expect(zhPairs.contains("子代理：1 个 · Explore"))
+        #expect(zhPairs.contains("开始：恢复的会话"))
+        #expect(zh.turnHeading == "本轮")
+        #expect(L10n.t(.detailNowHeading, .zh) == "正在进行")
+    }
+
+    /// More than five files: five, then "+N"; a finished turn says its
+    /// steps without a clock, under "Last turn", and an ended session why.
+    @Test func aFinishedTurnAndManyFiles() {
+        var sample = SurfaceFixtures.rowTurnDigest()
+        sample.row.status = .recent(.ended(atMs: SurfaceFixtures.nowMs - 60_000))
+        sample.facts.endReason = "prompt_input_exit"
+        for index in 0..<4 { sample.facts.digest.addFiles(["/Users/me/code/app/Sources/F\(index).swift"]) }
+        let detail = SurfaceFixtures.detail(sample, lang: .en)
+        #expect(detail.turnHeading == "Last turn")
+        #expect(detail.now.isEmpty)
+        let clock = detail.turn.first { $0.label == "This turn" }
+        #expect(clock?.value == "12 steps (1 failed)", "no clock against now for a turn that is over")
+        let files = detail.turn.first { $0.label == "Files" }
+        #expect(files?.value.split(separator: "\n").last == "+2")
+        let ended = detail.turn.first { $0.label == "Ended" }
+        #expect(ended?.value == "Exited at its prompt")
+        #expect(TrayRowModel.startSourceText("startup", lang: .en) == nil, "a plain start is not said")
+        #expect(TrayRowModel.startSourceText("clear", lang: .zh) == "/clear 之后")
+    }
+
+    /// The timeline discloses the steps behind each run: each step's
+    /// target relative to the folder, a failure marked, its duration.
+    @Test func theTimelineDisclosesARunsSteps() throws {
+        let folded = SurfaceFixtures.detailTimeline(lang: .en)
+        #expect(!folded.stepsShown)
+        let open = SurfaceFixtures.detail(SurfaceFixtures.rowTimeline(), lang: .en, disclosed: true)
+        #expect(open.stepsShown)
+        let first = try #require(open.timeline.first { $0.effect == "Read · Edit ×3" })
+        let texts = first.steps.map { $0.text }
+        #expect(texts == [
+            "Read · Sources/Upload/Queue.swift",
+            "Edit · Sources/Upload/Queue.swift",
+            "Edit · Sources/Upload/Queue.swift",
+            "Edit · Sources/Upload/Queue.swift",
+        ])
+        let failedRun = try #require(open.timeline.first { $0.effect == "Edit · Bash · 1 failed" })
+        let failedTexts = failedRun.steps.map { $0.text }
+        #expect(failedTexts == ["Edit · Sources/Upload/Backoff.swift", "Bash · swift test · failed · 2.3s"])
+        #expect(failedRun.steps.last?.failed == true)
+        let single = try #require(open.timeline.first)
+        #expect(single.steps.isEmpty, "a single step has nothing to disclose")
+        let step = SessionBook.Step(tool: "Edit", target: "/Users/me/code/app/Sources/App.swift", ms: 0, tookMs: 1_200)
+        let zh = TrayRowModel.stepDetailText(step, cwd: "/Users/me/code/app", home: "/Users/me", lang: .zh)
+        #expect(zh == "Edit · Sources/App.swift · 1.2秒")
+        let outside = TitleHeuristics.relativePath("/Users/me/notes/a.md", cwd: "/Users/me/code/app", home: "/Users/me")
+        #expect(outside == "~/notes/a.md")
+    }
+
+    /// → (or Space) on the detail page discloses the steps — only when its
+    /// timeline has a run; ← hides them before it goes back; Esc goes back
+    /// at once; a page opens folded.
+    @Test func keysDiscloseTheSteps() {
+        let rows = [TrayKeys.Row(key: "a", discloses: true), TrayKeys.Row(key: "b")]
+        let open = TrayKeys.State(selected: "a", detail: "a")
+        let shown = press(open, [.right], rows: rows)
+        #expect(shown.state.disclosed)
+        #expect(shown.state.detail == "a")
+        let space = press(open, [.space], rows: rows)
+        #expect(space.state.disclosed)
+        let hidden = press(shown.state, [.left], rows: rows)
+        #expect(!hidden.state.disclosed)
+        #expect(hidden.state.detail == "a", "← hides the steps first")
+        let back = press(hidden.state, [.left], rows: rows)
+        #expect(back.state.detail == nil)
+        let escape = press(shown.state, [.escape], rows: rows)
+        #expect(escape.state.detail == nil)
+        #expect(!escape.state.disclosed)
+        let nothing = press(TrayKeys.State(selected: "b", detail: "b"), [.right], rows: rows)
+        #expect(!nothing.state.disclosed, "no run, nothing to disclose")
+        let reopened = press(escape.state, [.right], rows: rows)
+        #expect(reopened.state.detail == "a")
+        #expect(!reopened.state.disclosed, "a page opens folded")
+        let normalized = TrayKeys.normalize(TrayKeys.State(selected: "a", detail: nil, disclosed: true), rows: rows)
+        #expect(!normalized.disclosed)
+    }
+
+    /// The summary: the turn in plain text, in the interface's language —
+    /// content the person asked for (unlike the content-free report).
+    @Test func theSummarySaysTheTurn() {
+        let sample = SurfaceFixtures.rowTurnDigest()
+        let text = TurnSummary.text(row: sample.row, facts: sample.facts, lang: .en, nowMs: SurfaceFixtures.nowMs)
+        let lines = text.split(separator: "\n").map(String.init)
+        #expect(lines.first == "Add retry with jitter to the upload queue")
+        #expect(lines.dropFirst().first?.hasPrefix("Claude") == true)
+        for expected in [
+            "Prompt: Make the jitter configurable and test it",
+            "This turn: 14m · 12 steps (1 failed)",
+            "Tools: Edit 4 · Read 1 · TodoWrite 1 · Skill 1 · github · search_issues 1 · Bash 1",
+            "Files:",
+            "  Sources/Upload/Queue.swift",
+            "  Tests/UploadTests/BackoffTests.swift",
+            "Skills: swift-testing",
+            "MCP: github",
+            "Subagents: 1 · Explore",
+            "Plan: 3/7 · Write the backoff tests",
+        ] {
+            #expect(lines.contains(expected), "\(expected)")
+        }
+        let quoted = lines.contains { $0.hasPrefix("Last message") }
+        #expect(!quoted, "while the turn goes on, the last words are an earlier turn's")
+        let zh = TurnSummary.text(row: sample.row, facts: sample.facts, lang: .zh, nowMs: SurfaceFixtures.nowMs)
+        #expect(zh.contains("提示：Make the jitter configurable and test it"))
+        #expect(zh.contains("技能：swift-testing"))
+        var done = sample
+        done.row.status = .yourTurn(sinceMs: SurfaceFixtures.nowMs - 60_000)
+        done.facts.lastWords = "Jitter is configurable.\nTests pass."
+        let finished = TurnSummary.text(row: done.row, facts: done.facts, lang: .en, nowMs: SurfaceFixtures.nowMs)
+        #expect(finished.contains("Last message: Jitter is configurable.\n"))
+        #expect(finished.contains("This turn: 12 steps (1 failed)"))
     }
 }

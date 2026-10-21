@@ -7,5 +7,7 @@
   "turn_id": "turn-3",
   "agent_id": "thread-2",
   "stop_hook_active": false,
-  "last_assistant_message": "Reviewed the diff."
+  "last_assistant_message": "Reviewed the diff.",
+  "agent_type": "worker",
+  "permission_mode": "default"
 }

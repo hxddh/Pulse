@@ -1,0 +1,18 @@
+{
+  "sessionID": "ses_fx1",
+  "directory": "/Users/me/code/app",
+  "todos": [
+    {
+      "status": "completed",
+      "content": "Map the cache calls"
+    },
+    {
+      "status": "in_progress",
+      "content": "Move reads to Redis"
+    },
+    {
+      "status": "pending",
+      "content": "Benchmark"
+    }
+  ]
+}

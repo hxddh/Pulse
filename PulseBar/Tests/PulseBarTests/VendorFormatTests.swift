@@ -91,8 +91,9 @@ struct VendorDriftTests {
             #expect(HookContract.gatingEvents.contains(never), "\(never)")
         }
         let codex = Set(AgentID.codex.spec.hooks.events.map(\.name))
-        #expect(codex.isSuperset(of: ["Interrupt", "SubagentStop"]))
+        #expect(codex.isSuperset(of: ["Interrupt", "SubagentStart", "SubagentStop", "PostCompact"]))
         #expect(!codex.contains("PermissionRequest"))
+        #expect(!codex.contains("PreCompact"), "its continue: false stops the compaction")
         guard case .nested(let flavor) = AgentID.codex.spec.hooks.format else {
             Issue.record("Codex is nested")
             return
@@ -161,8 +162,12 @@ struct VendorDriftTests {
     /// never blocked; its conversation is its session.
     @Test func cursorInstallsOnlyAfterEvents() {
         let names = Set(AgentID.cursor.spec.hooks.events.map(\.name))
-        #expect(names == ["sessionStart", "sessionEnd", "afterShellExecution", "afterFileEdit", "afterMCPExecution", "afterAgentResponse", "stop"])
-        #expect(names.allSatisfy { !$0.hasPrefix("before") })
+        #expect(names == [
+            "sessionStart", "sessionEnd", "afterShellExecution", "afterFileEdit", "afterMCPExecution",
+            "postToolUseFailure", "afterAgentResponse", "stop",
+        ])
+        let gated = names.filter { $0.hasPrefix("before") }
+        #expect(gated.isEmpty)
         #expect(AgentID.cursor.waitingSource == .none)
         #expect(AgentID.cursor.spec.sessionKeys.first == "conversation_id")
         #expect(AgentID.claude.spec.sessionKeys == HookContext.sessionKeys)
@@ -197,6 +202,7 @@ struct RecordedPayloadTests {
         let data = try Data(contentsOf: Self.folder.appendingPathComponent("expected.json"))
         let root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let expected = try #require(root?["expected"] as? [String: String])
+        let fields = root?["fields"] as? [String: [String: String]] ?? [:]
         for agent in AgentID.allCases {
             for event in agent.spec.hooks.events {
                 #expect(expected["\(agent.rawValue)/\(event.name)"] != nil, "\(agent.rawValue) \(event.name) has no fixture")
@@ -230,6 +236,28 @@ struct RecordedPayloadTests {
             #expect(got == want, "\(name)")
             #expect(line.message != PulseHookReceiver.Ignored.unparsable.rawValue, "\(name)")
             #expect(line.event == event, "\(name)")
+            // The columns `fields` pins, each exactly as written.
+            for (column, value) in (fields[name] ?? [:]).sorted(by: { $0.key < $1.key }) {
+                let written = Self.column(column, of: line)
+                #expect(written == value, "\(name) \(column)")
+            }
+        }
+        for name in fields.keys.sorted() {
+            #expect(expected[name] != nil, "\(name): fields for a fixture expected.json does not name")
+        }
+    }
+
+    /// One column of a written line, as `expected.json`'s `fields` names it.
+    static func column(_ name: String, of line: AttentionRecord) -> String? {
+        switch name {
+        case "tool": return line.tool
+        case "cat": return line.category?.rawValue ?? ""
+        case "err": return line.failed ? "1" : ""
+        case "took": return line.tookMs > 0 ? String(line.tookMs) : ""
+        case "meta": return line.meta.field
+        case "sub": return line.sub
+        case "message": return line.message
+        default: return nil
         }
     }
 }

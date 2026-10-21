@@ -1,0 +1,11 @@
+{
+  "session_id": "fx-codex-1",
+  "transcript_path": null,
+  "cwd": "/Users/me/code/app",
+  "model": "gpt-5-codex",
+  "hook_event_name": "SubagentStart",
+  "turn_id": "turn-3",
+  "permission_mode": "default",
+  "agent_id": "thread-2",
+  "agent_type": "worker"
+}

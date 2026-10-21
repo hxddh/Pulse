@@ -25,7 +25,9 @@ extension AgentSpec {
         stepsAnswerBlocks: false,
         process: AgentProcessRule(
             basenames: ["opencode", "open-code"],
-            pathNeedles: ["/bin/opencode", "opencode@", "@opencode"]
+            pathNeedles: ["/bin/opencode", "opencode@", "@opencode"],
+            // `opencode serve` / `web`: one server for every client's session.
+            serviceArguments: ["serve", "web"]
         ),
         hooks: HookContract(
             format: .module(render: { OpenCode.plugin(launcher: $0, events: $1) }),
@@ -56,6 +58,11 @@ extension AgentSpec {
                 HookEvent("question.asked", .blocked(.question)),
                 HookEvent("question.replied", .resolved),
                 HookEvent("question.rejected", .resolved),
+                // The root's to-do list changed: its progress, on a status
+                // line that names no tool.
+                HookEvent("todo.updated", .status),
+                // The files a turn changed, as one batch.
+                HookEvent("session.diff", .status),
                 // 2.x.
                 HookEvent("session.renamed", .title),
                 HookEvent("session.inbox.enqueued", .prompt),
@@ -78,15 +85,50 @@ extension AgentSpec {
             // sees neither, so Pulse installs to the default and says so.
             relocation: HookContract.Relocation(dir: ".config/opencode", variable: "OPENCODE_CONFIG_DIR")
         ),
+        // A child session's tool steps carry its id (the plugin's
+        // `subagent_id`): the subagent's own, never the person's.
+        subagentKeys: ["subagent_id"],
+        // OpenCode's built-in tools (packages/opencode/src/tool).
+        toolCategories: OpenCode.toolCategories,
         read: { OpenCode.read($0, $1) }
     )
 }
 
 /// OpenCode's events whose meaning is in the payload, and its plugin.
 package enum OpenCode {
+    /// OpenCode's tools by category, lowercased.
+    package static let toolCategories: [String: StepCategory] = [
+        "bash": .shell,
+        "read": .read,
+        "edit": .edit, "write": .edit, "patch": .edit, "multiedit": .edit, "apply_patch": .edit,
+        "grep": .search, "glob": .search, "list": .search, "codesearch": .search, "lsp": .search,
+        "webfetch": .web, "websearch": .web,
+        "task": .agent,
+        "skill": .skill,
+        "todowrite": .plan, "todoread": .plan,
+    ]
+
     package static func read(_ event: String, _ payload: [String: Any]) -> HookReading? {
         func field(_ key: String) -> String { PulseHookReceiver.string(payload, keys: [key]) }
         switch event {
+        case "session.updated":
+            // 1.x archives a session by its `time.archived` (the plugin
+            // sends `archived`): it is over.
+            return payload["archived"] as? Bool == true ? HookReading(action: .end, meta: LineMeta(why: "archived")) : nil
+        case "todo.updated":
+            // `todos[{content, status}]` (SDK `Todo`): how many are done, of
+            // how many, and the one in progress.
+            let todos = payload["todos"] as? [[String: Any]] ?? []
+            let items = todos.map { (status: PulseHookReceiver.string($0, keys: ["status"]), text: PulseHookReceiver.string($0, keys: ["content"])) }
+            let progress = LineMeta.progress(items)
+            return HookReading(action: .status, note: "plan updated", meta: LineMeta(plan: progress.plan, planNow: progress.now))
+        case "session.diff":
+            // The files the batch changed (`diff[].file`), at most
+            // `LineMeta.maxFiles`; how many in all is the words.
+            let files = (payload["files"] as? [Any] ?? []).compactMap { $0 as? String }.filter { !$0.isEmpty }
+            let count = max(files.count, (payload["count"] as? NSNumber)?.intValue ?? 0)
+            guard count > 0 else { return HookReading(action: .ignore) }
+            return HookReading(action: .status, note: count == 1 ? "1 file changed" : "\(count) files changed", meta: LineMeta(files: files))
         case "session.status":
             let status = (payload["status"] as? [String: Any]).map { PulseHookReceiver.string($0, keys: ["type"]) }
                 ?? field("status")
@@ -196,8 +238,10 @@ package enum OpenCode {
     ///   2.x streams it to `ctx.event.subscribe`. No `tool.execute.*`,
     ///   `chat.*` or permission hook — each can change what OpenCode does.
     /// - **Subagents.** A child session (`parentID`, learned from any session
-    ///   event that carries one) is not the person's: its lifecycle, prompts
-    ///   and steps are dropped (the root's `task` tool runs meanwhile); its
+    ///   event that carries one) is not the person's: its lifecycle, prompts,
+    ///   to-dos and diffs are dropped (the root's `task` tool runs
+    ///   meanwhile); its steps are sent under the root's id marked with the
+    ///   child's (`subagent_id`: the subagent's own, never an answer); its
     ///   asks block the root's work and are sent under the root's id.
     /// - **Asks.** Each root keeps its open asks by id; a `*.replied` /
     ///   `rejected` / `form.cancelled` says how many are still open
@@ -213,6 +257,11 @@ package enum OpenCode {
     ///   sent). One argument of the input (command, path, pattern, URL,
     ///   query, description), whether it failed, how long it ran. A call
     ///   cut short by an abort is no step.
+    /// - **Plans, diffs, archives** (1.x). `todo.updated` sends each item's
+    ///   status and content (at most 100); `session.diff` the changed files
+    ///   (at most 16) and how many; a session whose `time.archived` is set
+    ///   sends `session.updated` with `archived`, once. A skill's step
+    ///   names the skill.
     /// - **Prompts and titles.** 1.x: a user message's (`message.updated`,
     ///   observed) first text part that is not synthetic; 2.x: a user item
     ///   of `session.inbox.enqueued`. A non-default title rides on
@@ -258,6 +307,8 @@ package enum OpenCode {
         const STATUS = new Map()
         // 1.x: roots whose run the person stopped: the idle after it is not a turn.
         const ABORTED = new Set()
+        // 1.x: roots whose archive was sent.
+        const ARCHIVED = new Set()
         const TARGET_KEYS = ["command", "filePath", "file_path", "path", "pattern", "url", "query", "description"]
         const DEFAULT_TITLE = /^(New session|Child session) - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 
@@ -284,8 +335,10 @@ package enum OpenCode {
           return name && !DEFAULT_TITLE.test(name) ? name : ""
         }
 
-        function target(input) {
+        // A skill is its name; any other tool its first argument that says one.
+        function target(input, name) {
           if (!input || typeof input !== "object") return ""
+          if (name === "skill" && typeof input.name === "string" && input.name) return input.name.slice(0, 2000)
           for (const key of TARGET_KEYS) {
             if (typeof input[key] === "string" && input[key]) return input[key].slice(0, 2000)
           }
@@ -332,11 +385,19 @@ package enum OpenCode {
           send(type, Object.assign(payload, extra || {}))
         }
 
+        // A child session's step is its own: sent under the root, marked
+        // with the child's id.
+        function step(own, extra) {
+          if (child(own)) extra.subagent_id = own
+          return extra
+        }
+
         function forget(id) {
           TITLES.delete(id)
           STATUS.delete(id)
           OPEN.delete(id)
           ABORTED.delete(id)
+          ARCHIVED.delete(id)
         }
 
         function prompt(own, id, directory, words) {
@@ -363,6 +424,13 @@ package enum OpenCode {
               forget(id)
               return deliver(type, id, directory)
             }
+            // Archived (`time.archived`): the session is over, said once.
+            if (type === "session.updated" && info.time && typeof info.time.archived === "number") {
+              if (ARCHIVED.has(id)) return
+              mark(ARCHIVED, id, 256)
+              return deliver(type, id, directory, { archived: true })
+            }
+            if (type === "session.updated") ARCHIVED.delete(id)
             const name = title(info.title)
             if (type === "session.updated" && (!name || TITLES.get(id) === name)) return
             if (name) remember(TITLES, id, name, 256)
@@ -381,8 +449,8 @@ package enum OpenCode {
           if (type === "message.part.updated") {
             const part = p.part || {}
             const own = part.sessionID || p.sessionID || ""
-            if (child(own)) return
             if (part.type === "text") {
+              if (child(own)) return
               if (part.synthetic || part.ignored || !part.messageID || PROMPTED.has(part.messageID)) return
               const words = text(part.text).trim()
               if (!words) return
@@ -397,7 +465,7 @@ package enum OpenCode {
               remember(NAMES, part.callID, name, 256)
               if (state.status !== "running" || PHASES.has(part.callID)) return
               remember(PHASES, part.callID, "running", 512)
-              return deliver(type, own, directory, { phase: "running", tool_name: name, target: target(state.input) })
+              return deliver(type, own, directory, step(own, { phase: "running", tool_name: name, target: target(state.input, name) }))
             }
             if (state.status !== "completed" && state.status !== "error") return
             if (PHASES.get(part.callID) === "done") return
@@ -407,13 +475,13 @@ package enum OpenCode {
             if (state.status === "error" && state.metadata && state.metadata.interrupted === true) return
             const time = state.time || {}
             const took = typeof time.start === "number" && typeof time.end === "number" && time.end >= time.start ? Math.round(time.end - time.start) : 0
-            return deliver(type, own, directory, {
+            return deliver(type, own, directory, step(own, {
               phase: "done",
               tool_name: name,
-              target: target(state.input),
+              target: target(state.input, name),
               is_error: state.status === "error",
               duration_ms: took,
-            })
+            }))
           }
           const own = p.sessionID || ""
           if (type === "permission.asked" || type === "question.asked") {
@@ -437,6 +505,21 @@ package enum OpenCode {
             return deliver(type, own, directory, { pending: closed(rootOf(own), p.requestID) })
           }
           if (child(own)) return
+          if (type === "todo.updated") {
+            const todos = (Array.isArray(p.todos) ? p.todos : [])
+              .slice(0, 100)
+              .map((item) => ({ status: text(item && item.status, 16), content: text(item && item.content, 500) }))
+            return deliver(type, own, directory, { todos })
+          }
+          if (type === "session.diff") {
+            const diff = Array.isArray(p.diff) ? p.diff : []
+            if (!diff.length) return
+            const files = diff
+              .map((item) => (item && typeof item.file === "string" ? item.file.slice(0, 500) : ""))
+              .filter(Boolean)
+              .slice(0, 16)
+            return deliver(type, own, directory, { files, count: diff.length })
+          }
           if (type === "session.status") {
             const kind = text(p.status && p.status.type, 16)
             if (kind === "busy") ABORTED.delete(own)
@@ -521,6 +604,24 @@ package enum OpenCode {
           if (type === "form.replied" || type === "form.cancelled") {
             return deliver(type, own, directory, { pending: closed(rootOf(own), d.id) })
           }
+          if (type === "session.tool.called") {
+            const call = CALLS.get(d.id) || { name: "", target: "", at: 0 }
+            call.target = target(d.input, call.name)
+            call.at = typeof event.created === "number" ? event.created : Date.now()
+            if (d.id) remember(CALLS, d.id, call, 256)
+            return deliver(type, own, directory, step(own, { tool_name: call.name || "tool", target: call.target }))
+          }
+          if (type === "session.tool.success" || type === "session.tool.failed") {
+            const call = CALLS.get(d.id) || { name: "", target: "", at: 0 }
+            CALLS.delete(d.id)
+            const now = typeof event.created === "number" ? event.created : Date.now()
+            return deliver(type, own, directory, step(own, {
+              tool_name: call.name || "tool",
+              target: call.target,
+              is_error: type === "session.tool.failed",
+              duration_ms: call.at > 0 && now >= call.at ? Math.round(now - call.at) : 0,
+            }))
+          }
           if (child(own)) return
           if (type === "session.renamed") {
             const name = title(d.title)
@@ -532,24 +633,6 @@ package enum OpenCode {
             const item = d.item || {}
             if (item.type !== "user") return
             return deliver(type, own, directory, { prompt: text(item.payload && item.payload.text).trim() })
-          }
-          if (type === "session.tool.called") {
-            const call = CALLS.get(d.id) || { name: "", target: "", at: 0 }
-            call.target = target(d.input)
-            call.at = typeof event.created === "number" ? event.created : Date.now()
-            if (d.id) remember(CALLS, d.id, call, 256)
-            return deliver(type, own, directory, { tool_name: call.name || "tool", target: call.target })
-          }
-          if (type === "session.tool.success" || type === "session.tool.failed") {
-            const call = CALLS.get(d.id) || { name: "", target: "", at: 0 }
-            CALLS.delete(d.id)
-            const now = typeof event.created === "number" ? event.created : Date.now()
-            return deliver(type, own, directory, {
-              tool_name: call.name || "tool",
-              target: call.target,
-              is_error: type === "session.tool.failed",
-              duration_ms: call.at > 0 && now >= call.at ? Math.round(now - call.at) : 0,
-            })
           }
           // The run is over: no ask of it is still open.
           if (type === "session.execution.succeeded" || type === "session.execution.failed" || type === "session.execution.interrupted") {

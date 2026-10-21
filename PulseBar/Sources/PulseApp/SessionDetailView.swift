@@ -18,7 +18,10 @@ struct SessionDetailView: View {
         // On the tray's clock: the page's times, timeline and last words
         // move without a projection.
         TimelineView(.periodic(from: .now, by: TrayChrome.clock)) { context in
-            SessionDetailFace(model: store.detailModel(row, at: context.date), maxHeight: CGFloat(ui.maxListHeight)) { action in
+            SessionDetailFace(
+                model: store.detailModel(row, at: context.date, disclosed: ui.keys.disclosed),
+                maxHeight: CGFloat(ui.maxListHeight)
+            ) { action in
                 ui.send(action, row: row)
             }
         }
@@ -27,10 +30,12 @@ struct SessionDetailView: View {
 
 /// Renders a `DetailModel` and nothing else: the header (back, lamp, the
 /// agent's icon and the headline — the page's title), then the ask with Go
-/// and Ignore, the landing notice, the why, the timeline of what Pulse
-/// heard, the last message, the error, the facts (this turn, the folder)
-/// and — for an agent that cannot report one — that it does not report
-/// waits; each block only when it has something to say.
+/// and Ignore, the landing notice, the why, Now (the tools still going and
+/// the live subagents), This turn (its facts), the timeline of what Pulse
+/// heard (a run's steps disclosed under it — a click on the run, or →), the
+/// last message, the error, the folder, "Copy this turn's summary" and — for
+/// an agent that cannot report one — that it does not report waits; each
+/// block only when it has something to say.
 struct SessionDetailFace: View {
     let model: DetailModel
     /// Off for a fixture capture, which measures the whole page.
@@ -111,9 +116,28 @@ struct SessionDetailFace: View {
                     .foregroundStyle(model.lamp == .stalled ? AnyShapeStyle(PulseTheme.warning) : AnyShapeStyle(.secondary))
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if !model.now.isEmpty {
+                section(t(.detailNowHeading)) {
+                    VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
+                        ForEach(Array(model.now.enumerated()), id: \.offset) { _, item in
+                            Text(item)
+                                .font(PulseTheme.Font.caption)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
+                }
+            }
+            if !model.turn.isEmpty {
+                section(model.turnHeading) {
+                    FactGrid(facts: model.turn)
+                }
+            }
             if !model.timeline.isEmpty {
                 section(t(.timelineHeading)) {
-                    TimelineGrid(entries: model.timeline)
+                    TimelineGrid(entries: model.timeline, stepsShown: model.stepsShown, lang: model.lang) {
+                        send(.toggleSteps)
+                    }
                 }
             }
             if let message = model.lastMessage {
@@ -134,6 +158,11 @@ struct SessionDetailFace: View {
                 }
             }
             FactGrid(facts: model.facts)
+            if model.canCopySummary {
+                Button(t(.copyTurnSummary)) { send(.copySummary) }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
             if let caveat = model.caveat {
                 Text(caveat)
                     .font(PulseTheme.Font.caption)
@@ -191,8 +220,9 @@ struct FactGrid: View {
                         .gridColumnAlignment(.trailing)
                     Text(fact.value)
                         .textSelection(.enabled)
-                        .lineLimit(1)
+                        .lineLimit(fact.multiline ? nil : 1)
                         .truncationMode(.middle)
+                        .fixedSize(horizontal: false, vertical: fact.multiline)
                 }
             }
         }
@@ -202,9 +232,15 @@ struct FactGrid: View {
 
 /// The timeline: one heard line per row — how long ago, the vendor's event
 /// in small monospaced type, what it did. A raise is red; a line that
-/// changed nothing is quiet.
+/// changed nothing is quiet. A run of steps ("Edit ×4") carries a
+/// disclosure mark: a click on it shows (or hides) the steps behind every
+/// run, each on its own line under its run — "Edit · Sources/App.swift ·
+/// 1.2s", a failed one in the warning tone.
 struct TimelineGrid: View {
     let entries: [DetailModel.Entry]
+    var stepsShown = false
+    var lang: ResolvedLanguage = .en
+    var toggle: () -> Void = {}
 
     var body: some View {
         Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: PulseTheme.Space.s, verticalSpacing: PulseTheme.Space.xxs) {
@@ -217,14 +253,57 @@ struct TimelineGrid: View {
                         .font(PulseTheme.Font.code)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                    effect(entry)
+                }
+                if stepsShown, entry.discloses {
+                    if entry.earlier > 0 {
+                        stepRow(String(format: L10n.t(.timelineEarlierSteps, lang), entry.earlier), style: AnyShapeStyle(.tertiary))
+                    }
+                    ForEach(Array(entry.steps.enumerated()), id: \.offset) { _, step in
+                        stepRow(step.text, style: step.failed ? AnyShapeStyle(PulseTheme.warning) : AnyShapeStyle(.secondary))
+                    }
+                }
+            }
+        }
+        .font(PulseTheme.Font.caption)
+    }
+
+    @ViewBuilder
+    private func effect(_ entry: DetailModel.Entry) -> some View {
+        if entry.discloses {
+            Button { toggle() } label: {
+                HStack(spacing: PulseTheme.Space.xxs) {
+                    Image(systemName: stepsShown ? "chevron.down" : "chevron.right")
+                        .font(PulseTheme.Font.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
                     Text(entry.effect)
                         .foregroundStyle(Self.style(entry.tone))
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityHint(L10n.t(stepsShown ? .timelineHideSteps : .timelineShowSteps, lang))
+        } else {
+            Text(entry.effect)
+                .foregroundStyle(Self.style(entry.tone))
+                .lineLimit(1)
+                .truncationMode(.middle)
         }
-        .font(PulseTheme.Font.caption)
+    }
+
+    /// One disclosed step, under the effect column.
+    private func stepRow(_ text: String, style: AnyShapeStyle) -> some View {
+        GridRow {
+            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+            Text(text)
+                .foregroundStyle(style)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.leading, PulseTheme.Space.m)
+        }
     }
 
     private static func style(_ tone: DetailModel.Entry.Tone) -> AnyShapeStyle {

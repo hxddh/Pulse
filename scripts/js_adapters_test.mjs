@@ -144,7 +144,7 @@ scenario("pi · a turn with tools", async () => {
     ["agent_settled", {}],
   ])
   return [
-    pi("session_start", { session_name: "" }),
+    pi("session_start", { session_name: "", source: "startup" }),
     pi("agent_start"),
     pi("message_start", { prompt: "Fix the build" }),
     pi("tool_execution_start", { tool_name: "bash", tool_input: { command: "npm test" } }),
@@ -206,7 +206,7 @@ scenario("pi · names, a skill prompt, an error, an abort", async () => {
     piContext({ name: "auth" }),
   )
   return [
-    pi("session_start", { session_name: "auth" }),
+    pi("session_start", { session_name: "auth", source: "resume" }),
     pi("session_info_changed", { session_name: "auth refactor" }),
     pi("message_start", { prompt: "/skill:review PR 12" }),
     pi("agent_settled", { error: "529 overloaded" }),
@@ -337,7 +337,7 @@ scenario("opencode 1.x · parallel asks keep the lamp until the last answer", as
   ]
 })
 
-scenario("opencode 1.x · a subagent's asks go under the root, the rest is dropped", async () => {
+scenario("opencode 1.x · a subagent's asks go under the root, its steps are its own, the rest is dropped", async () => {
   await legacyRun([
     ["session.created", { info: { id: S1, directory: "/w", title: "Port" } }],
     ["session.created", { info: { id: "ses_c", parentID: S1, directory: "/w", title: "Child session - 2026-10-18T10:00:00.000Z" } }],
@@ -353,6 +353,7 @@ scenario("opencode 1.x · a subagent's asks go under the root, the rest is dropp
   ])
   return [
     oc("session.created", S1, { session_name: "Port" }),
+    oc("message.part.updated", S1, { phase: "running", tool_name: "read", target: "a.ts", subagent_id: "ses_c" }),
     oc("permission.asked", S1, { permission: "webfetch", patterns: ["https://example.com"], title: "", tool_name: "webfetch" }),
     oc("permission.replied", S1, { pending: 0 }),
     oc("session.error", S1, { error: "The operation was aborted.", error_name: "MessageAbortedError" }),
@@ -378,6 +379,39 @@ scenario(
   },
   { compare: "last" },
 )
+
+scenario("opencode 1.x · a plan, a diff, a skill, an archive", async () => {
+  await legacyRun([
+    ["session.created", { info: { id: S1, directory: "/w", title: "Plan it" } }],
+    ["session.created", { info: { id: "ses_c", parentID: S1, directory: "/w", title: "Child session - 2026-10-18T10:00:00.000Z" } }],
+    ["todo.updated", { sessionID: S1, todos: [
+      { id: "t1", content: "Write the test", status: "completed", priority: "high" },
+      { id: "t2", content: "Fix the bug\nand the docs", status: "in_progress", priority: "high" },
+      { id: "t3", content: "Ship", status: "pending", priority: "low" },
+    ] }],
+    ["todo.updated", { sessionID: "ses_c", todos: [{ id: "c1", content: "child", status: "pending", priority: "low" }] }],
+    ["message.part.updated", { part: { type: "tool", callID: "call_s", tool: "skill", sessionID: S1, state: { status: "running", input: { name: "review" } } } }],
+    ["session.diff", { sessionID: S1, diff: [] }],
+    ["session.diff", { sessionID: S1, diff: [
+      { file: "src/a.ts", additions: 3, deletions: 1, status: "modified" },
+      { file: "src/b.ts", additions: 9, deletions: 0, status: "added" },
+    ] }],
+    ["session.diff", { sessionID: "ses_c", diff: [{ file: "x.ts", additions: 1, deletions: 0 }] }],
+    ["session.updated", { info: { id: S1, title: "Plan it", time: { created: 1, updated: 2, archived: 3 } } }],
+    ["session.updated", { info: { id: S1, title: "Plan it", time: { created: 1, updated: 4, archived: 3 } } }],
+  ])
+  return [
+    oc("session.created", S1, { session_name: "Plan it" }),
+    oc("todo.updated", S1, { todos: [
+      { status: "completed", content: "Write the test" },
+      { status: "in_progress", content: "Fix the bug\nand the docs" },
+      { status: "pending", content: "Ship" },
+    ] }),
+    oc("message.part.updated", S1, { phase: "running", tool_name: "skill", target: "review" }),
+    oc("session.diff", S1, { files: ["src/a.ts", "src/b.ts"], count: 2 }),
+    oc("session.updated", S1, { archived: true }),
+  ]
+})
 
 // --- OpenCode 2.x -------------------------------------------------------------
 
@@ -464,6 +498,7 @@ scenario("opencode 2.x · a subagent's form goes under the root", async () => {
   ])
   return [
     oc("session.created", S2, { session_name: "" }),
+    oc("session.tool.called", S2, { tool_name: "tool", target: "TODO", subagent_id: "ses_k" }),
     oc("form.created", S2, { questions: [{ question: "Search tests too?", header: "Scope" }] }),
     oc("form.cancelled", S2, { pending: 0 }),
   ]

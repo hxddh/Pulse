@@ -1,0 +1,20 @@
+{
+  "conversation_id": "fx-cursor-conv-1",
+  "generation_id": "gen-1",
+  "workspace_roots": [
+    "/Users/me/code/app"
+  ],
+  "cursor_version": "2.0.0",
+  "model": "gpt-5",
+  "hook_event_name": "postToolUseFailure",
+  "tool_name": "shell",
+  "tool_input": {
+    "command": "npm run dev"
+  },
+  "tool_use_id": "t8",
+  "cwd": "/Users/me/code/app",
+  "error_message": "Aborted",
+  "failure_type": "error",
+  "duration": 1200,
+  "is_interrupt": true
+}

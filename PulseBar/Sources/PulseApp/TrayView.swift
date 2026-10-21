@@ -287,9 +287,10 @@ private struct TrayRowButton: View {
     }
 }
 
-/// The row's face: one line — lamp, icon, project, headline, time — and a
-/// second line only for a blocked row (its ask), an orange one (its why) or
-/// a running one whose hook named its last step (quietly).
+/// The row's face: one line — lamp, icon, project, headline, the plan's
+/// quiet "3/7" when the agent reported one, time — and a second line only
+/// for a blocked row (its ask), an orange one (its why) or a running one
+/// whose hook named its last step or a live tool (quietly).
 /// The row's body, both lines, is one button: a click goes (the terminal,
 /// else the detail). A "›" column at the trailing edge, as tall as the row
 /// and always drawn, opens the detail; so does an ⌥-click anywhere on the
@@ -452,6 +453,15 @@ struct TrayRowFace: View {
                     .lineLimit(1)
                     .fixedSize()
             }
+            // The plan's progress, quietest of all — never red.
+            if let plan = model.planProgress {
+                Text(plan)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize()
+            }
             if !model.age.isEmpty {
                 Text(model.age)
                     .font(PulseTheme.Font.caption)
@@ -522,8 +532,15 @@ final class TrayUI {
 
     private func reducerRows() -> [TrayKeys.Row] {
         var rows = displayRows.map { TrayKeys.Row($0) }
-        if let detail = detailRow, !rows.contains(where: { $0.key == detail.key }) {
-            rows.append(TrayKeys.Row(detail))
+        if let detail = detailRow {
+            // The open page's row knows whether its timeline has a run to
+            // disclose (→ shows each step).
+            let open = TrayKeys.Row(detail, facts: store.facts(for: detail.key))
+            if let index = rows.firstIndex(where: { $0.key == detail.key }) {
+                rows[index] = open
+            } else {
+                rows.append(open)
+            }
         }
         return rows
     }
@@ -560,6 +577,7 @@ final class TrayUI {
         var next = keys
         next.selected = reveal.key
         next.detail = reveal.detail ? reveal.key : nil
+        next.disclosed = false
         if keys != next { keys = next }
     }
 
@@ -626,6 +644,11 @@ final class TrayUI {
         case .back: closeDetail()
         case .focus: store.focusTerminal(row)
         case .dismiss: store.dismissWaiting(row)
+        case .toggleSteps:
+            var next = keys
+            next.disclosed = next.detail != nil && !next.disclosed
+            if keys != next { keys = next }
+        case .copySummary: store.copyTurnSummary(row)
         }
     }
 
@@ -643,6 +666,7 @@ final class TrayUI {
 
     func showDetail(_ key: SessionKey) {
         var next = keys
+        if next.detail != key { next.disclosed = false }
         next.detail = key
         next.selected = key
         if keys != next { keys = next }
@@ -652,6 +676,7 @@ final class TrayUI {
         var next = keys
         if let open = next.detail { next.selected = open }
         next.detail = nil
+        next.disclosed = false
         if keys != next { keys = next }
     }
 }

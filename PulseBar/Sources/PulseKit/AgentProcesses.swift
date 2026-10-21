@@ -88,7 +88,13 @@ package enum AgentProcesses {
 
     /// Pure: which rows of `table` are agents, collapsed into families, with
     /// the handles Focus needs from the parent chain.
-    package static func hits(in table: [Proc], cwd: (Int32) -> String) -> [Hit] {
+    ///
+    /// A process the catalog calls a service (`isService`) is left out.
+    package static func hits(
+        in table: [Proc],
+        cwd: (Int32) -> String,
+        serviceArguments: (AgentID) -> [String] = AgentProcesses.serviceArguments(of:)
+    ) -> [Hit] {
         var byPid: [Int32: Proc] = [:]
         for proc in table { byPid[proc.pid] = proc }
         var matched: [Int32: AgentID] = [:]
@@ -96,7 +102,11 @@ package enum AgentProcesses {
             // Warp's own helpers carry agent-looking argv; they are the
             // terminal, not a session.
             if proc.args.contains("Warp.app") { continue }
-            if let agent = match(args: proc.args) { matched[proc.pid] = agent }
+            guard let agent = match(args: proc.args) else { continue }
+            // A service serves many sessions and outlives each: it is not
+            // one, so it is no process-only row either.
+            if isService(args: proc.args, arguments: serviceArguments(agent)) { continue }
+            matched[proc.pid] = agent
         }
 
         func ancestors(of pid: Int32) -> [Proc] {
@@ -134,7 +144,38 @@ package enum AgentProcesses {
     }
 
     package static func hostApp(in args: String) -> HostAppKind? {
-        HostAppKind.allCases.first { kind in kind.pathNeedles.contains { args.contains($0) } }
+        HostAppKind(path: args)
+    }
+
+    // MARK: - Services
+
+    /// The arguments that make an agent's process a long-lived service
+    /// that serves many sessions (`codex app-server`, `opencode serve`, a
+    /// daemon flag) rather than one session — read here and by the hook
+    /// (`HookLanding.agentPID`), set in each adapter's process rule.
+    package static func serviceArguments(of agent: AgentID) -> [String] {
+        agent.spec.process.serviceArguments
+    }
+
+    /// Whether a command line (`commandLine(path:argv:)`) runs the agent as
+    /// a service. A needle that starts with `-` is a flag and matches any
+    /// whole argument; any other is a subcommand and matches only the first
+    /// argument that is not a flag, so `codex exec restart the app-server`
+    /// is a session. The program (and an interpreter's script) is never an
+    /// argument. Pure.
+    package static func isService(args: String, arguments needles: [String]) -> Bool {
+        guard !needles.isEmpty else { return false }
+        var rest = args.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard let exe = rest.first else { return false }
+        rest.removeFirst()
+        if interpreters.contains((exe as NSString).lastPathComponent.lowercased()),
+           let script = rest.firstIndex(where: { !$0.hasPrefix("-") }) {
+            rest.removeSubrange(...script)
+        }
+        let subcommand = rest.first { !$0.hasPrefix("-") }
+        return needles.contains { needle in
+            needle.hasPrefix("-") ? rest.contains(needle) : subcommand == needle
+        }
     }
 
     // MARK: - Matching

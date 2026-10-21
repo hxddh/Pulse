@@ -271,7 +271,7 @@ struct SessionBookTests {
             "turn", "working", "idle",
         ])
         let session = run.book.sessions[SessionKey(.opencode, "s1")]
-        #expect(session?.lastStep == SessionBook.Step(tool: "bash", target: "redis-cli ping", ms: t0 + 4 * minute, tookMs: 800))
+        #expect(session?.lastStep == SessionBook.Step(tool: "bash", target: "redis-cli ping", ms: t0 + 4 * minute, tookMs: 800, category: .shell))
         #expect(session?.name == "Port the cache")
     }
 
@@ -280,20 +280,20 @@ struct SessionBookTests {
     /// summary, Cursor's command — and its own prompt event becomes the
     /// title. Cursor's reply and OpenCode's busy name no tool: no step.
     @Test func everyAgentsStepsComeFromItsOwnHook() {
-        let cases: [(AgentID, String, [String: Any], String, String)] = [
-            (.claude, "PostToolUse", ["tool_name": "Bash", "tool_input": ["command": "swift test"]], "Bash", "swift test"),
-            (.codex, "PostToolUse", ["tool_name": "shell", "tool_input": ["command": "cargo build"]], "shell", "cargo build"),
-            (.copilot, "postToolUse", ["toolName": "bash", "toolArgs": #"{"command":"npm test"}"#], "bash", "npm test"),
-            (.pi, "tool_execution_end", ["tool_name": "edit", "tool_input": ["path": "src/x.ts"]], "edit", "src/x.ts"),
-            (.opencode, "message.part.updated", ["phase": "done", "tool_name": "read", "target": "src/x.ts"], "read", "src/x.ts"),
-            (.opencode, "session.tool.success", ["tool_name": "grep", "target": "TODO"], "grep", "TODO"),
-            (.cursor, "afterShellExecution", ["command": "make test"], "Shell", "make test"),
+        let cases: [(AgentID, String, [String: Any], String, String, StepCategory)] = [
+            (.claude, "PostToolUse", ["tool_name": "Bash", "tool_input": ["command": "swift test"]], "Bash", "swift test", .shell),
+            (.codex, "PostToolUse", ["tool_name": "shell", "tool_input": ["command": "cargo build"]], "shell", "cargo build", .shell),
+            (.copilot, "postToolUse", ["toolName": "bash", "toolArgs": #"{"command":"npm test"}"#], "bash", "npm test", .shell),
+            (.pi, "tool_execution_end", ["tool_name": "edit", "tool_input": ["path": "src/x.ts"]], "edit", "src/x.ts", .edit),
+            (.opencode, "message.part.updated", ["phase": "done", "tool_name": "read", "target": "src/x.ts"], "read", "src/x.ts", .read),
+            (.opencode, "session.tool.success", ["tool_name": "grep", "target": "TODO"], "grep", "TODO", .search),
+            (.cursor, "afterShellExecution", ["command": "make test"], "Shell", "make test", .shell),
         ]
-        for (agent, event, payload, tool, target) in cases {
+        for (agent, event, payload, tool, target, category) in cases {
             var book = SessionBook()
             for line in HookFeed.write(agent, event, payload, at: t0).lines { book.apply(line, nowMs: t0) }
             let step = book.sessions[SessionKey(agent, "s1")]?.lastStep
-            #expect(step == SessionBook.Step(tool: tool, target: target, ms: t0), "\(agent.rawValue)")
+            #expect(step == SessionBook.Step(tool: tool, target: target, ms: t0, category: category), "\(agent.rawValue)")
         }
         let quiet: [(AgentID, String, [String: Any])] = [(.cursor, "afterAgentResponse", [:]), (.opencode, "session.status", ["status": "busy"])]
         for (agent, event, payload) in quiet {
@@ -1604,6 +1604,268 @@ struct SessionBookTests {
         feed("message_start", ["prompt": "Again"], at: t0 + 20 * second)
         #expect(HookFeed.word(book.sessions[key]?.state) == "working")
     }
+
+    /// v9's facts are kept, never turned into state: the main agent's plan
+    /// progress, why the session started and ended, each subagent's type,
+    /// the files a batch changed, a step's category and its error. A
+    /// subagent's plan is not the session's; the state reads exactly as it
+    /// did without them.
+    @Test func theBookKeepsEachLinesFacts() throws {
+        let run = play(.claude, [
+            ("SessionStart", ["source": "resume"]),
+            ("UserPromptSubmit", ["prompt": "Fix the login test"]),
+            ("PostToolUse", ["tool_name": "TodoWrite", "tool_input": ["todos": [
+                ["content": "Read", "status": "completed"], ["content": "Fix", "status": "in_progress"],
+            ]]]),
+            ("SubagentStart", ["agent_id": "a1", "agent_type": "Explore"]),
+            ("PostToolUse", ["agent_id": "a1", "tool_name": "TodoWrite", "tool_input": ["todos": [
+                ["content": "Sub", "status": "pending"],
+            ]]]),
+            ("PostToolUseFailure", ["tool_name": "Bash", "tool_input": ["command": "npm test"], "error": "Exit code 1\nmore", "duration_ms": 900]),
+            ("Stop", [:]),
+            ("SessionEnd", ["reason": "logout"]),
+        ])
+        #expect(run.states == ["idle", "working", "working", "working", "working", "working", "turn", "ended"])
+        let session = try #require(run.book.sessions[SessionKey(.claude, "s1")])
+        #expect(session.plan == SessionBook.PlanProgress(done: 1, total: 2, now: "Fix", ms: t0 + 2 * minute))
+        #expect(session.startSource == "resume")
+        #expect(session.endReason == "logout")
+        #expect(session.subagentTypes == [SessionBook.SubagentType(sub: "a1", type: "Explore")])
+        let step = try #require(session.lastStep)
+        #expect(step.category == .shell)
+        #expect(step.failed)
+        #expect(step.error == "Exit code 1")
+        #expect(step.tookMs == 900)
+        let heard = session.timeline.first { $0.event == "SubagentStart" }
+        #expect(heard?.meta.agentType == "Explore")
+
+        var book = SessionBook()
+        let diff = AttentionRecord(
+            agent: .opencode, kind: .status, ms: t0, message: "2 files changed", session: "s1", event: "session.diff", seq: 1,
+            meta: LineMeta(files: ["a.ts", "b.ts"])
+        )
+        book.apply(AttentionRecord(agent: .opencode, kind: .start, ms: t0 - 1, session: "s1", seq: 0), nowMs: t0)
+        book.apply(diff, nowMs: t0)
+        #expect(book.sessions[SessionKey(.opencode, "s1")]?.changedFiles == ["a.ts", "b.ts"])
+        #expect(HookFeed.word(book.sessions[SessionKey(.opencode, "s1")]?.state) == "idle", "a batch of files after the turn moves nothing")
+    }
+
+    /// A custom name wins over the first prompt — Claude's `session_title`,
+    /// on its start or riding on a later prompt.
+    @Test func claudesCustomTitleWinsOverThePrompt() {
+        let named = play(.claude, [
+            ("SessionStart", ["source": "startup"]),
+            ("UserPromptSubmit", ["prompt": "Fix the login test"]),
+            ("UserPromptSubmit", ["prompt": "Now the refresh path", "session_title": "Auth rewrite"]),
+        ])
+        let session = named.book.sessions[SessionKey(.claude, "s1")]
+        #expect(session?.title == "Fix the login test")
+        #expect(session?.shownTitle == "Auth rewrite")
+        let resumed = play(.claude, [
+            ("SessionStart", ["source": "resume", "session_title": "Auth rewrite"]),
+            ("UserPromptSubmit", ["prompt": "Fix the login test"]),
+        ])
+        #expect(resumed.book.sessions[SessionKey(.claude, "s1")]?.shownTitle == "Auth rewrite")
+    }
+}
+
+/// What a turn did (`TurnDigest`), as the book accumulates it from each
+/// agent's own lines: the main agent's tools, what the turn touched
+/// whoever touched it, each subagent apart — started over with the turn and
+/// rebuilt identically by a replay of the log's text.
+@Suite("Turn digest")
+struct TurnDigestTests {
+    let t0: Int64 = 1_800_000_000_000
+    let second: Int64 = 1_000
+    let minute: Int64 = 60_000
+    let key = SessionKey(.claude, "s1")
+
+    /// Each event a second apart through Claude's own reading
+    /// (`HookFeed`), numbered as a log numbers them.
+    private func feed(_ steps: [(String, [String: Any])], from start: Int64 = 0) -> (book: SessionBook, lines: [AttentionRecord]) {
+        var book = SessionBook()
+        var lines: [AttentionRecord] = []
+        for (index, step) in steps.enumerated() {
+            let ms = t0 + start + Int64(index) * second
+            for written in HookFeed.write(.claude, step.0, step.1, at: ms, cwd: "/Users/me/app").lines {
+                var line = written
+                line.seq = Int64(lines.count + 1)
+                lines.append(line)
+                book.apply(line, nowMs: ms)
+            }
+        }
+        return (book, lines)
+    }
+
+    private var claudeTurn: [(String, [String: Any])] {
+        [
+            ("SessionStart", ["source": "resume"]),
+            ("UserPromptSubmit", ["prompt": "Make the jitter configurable"]),
+            ("PostToolUse", ["tool_name": "Edit", "tool_input": ["file_path": "/Users/me/app/Sources/Queue.swift"]]),
+            ("PostToolUse", ["tool_name": "Edit", "tool_input": ["file_path": "/Users/me/app/Sources/Queue.swift"]]),
+            ("PostToolUse", ["tool_name": "Write", "tool_input": ["file_path": "/Users/me/app/Sources/Backoff.swift"]]),
+            ("PostToolUse", ["tool_name": "Bash", "tool_input": ["command": "swift test"]]),
+            ("PostToolUse", ["tool_name": "Skill", "tool_input": ["skill": "swift-testing"]]),
+            ("PostToolUse", ["tool_name": "mcp__github__search_issues", "tool_input": ["query": "retry"]]),
+            ("PostToolUse", ["tool_name": "TodoWrite", "tool_input": ["todos": [
+                ["status": "completed", "content": "Read the queue"],
+                ["status": "in_progress", "content": "Write the tests"],
+                ["status": "pending", "content": "Ship it"],
+            ]]]),
+            ("SubagentStart", ["agent_id": "a1", "agent_type": "Explore"]),
+            ("PostToolUse", ["tool_name": "Grep", "agent_id": "a1", "tool_input": ["pattern": "jitter"]]),
+            ("PostToolUse", ["tool_name": "Edit", "agent_id": "a1", "tool_input": ["file_path": "/Users/me/app/Sources/Client.swift"]]),
+        ]
+    }
+
+    /// The main agent's tools are its own tally; a subagent's steps are its
+    /// own entry; the files, the skill and the MCP server are the turn's,
+    /// whoever touched them. The step total counts every speaker, as before.
+    @Test func aTurnIsDigestedFromItsLines() throws {
+        let run = feed(claudeTurn)
+        let facts = run.book.facts(for: key)
+        let digest = facts.digest
+        let tools = digest.tools
+        #expect(tools == [
+            TurnDigest.Count(name: "Edit", count: 2), TurnDigest.Count(name: "Write", count: 1), TurnDigest.Count(name: "Bash", count: 1),
+            TurnDigest.Count(name: "Skill", count: 1), TurnDigest.Count(name: "github · search_issues", count: 1), TurnDigest.Count(name: "TodoWrite", count: 1),
+        ], "the main agent's steps alone, in the order each first ran")
+        let files = digest.files
+        #expect(files == ["/Users/me/app/Sources/Queue.swift", "/Users/me/app/Sources/Backoff.swift", "/Users/me/app/Sources/Client.swift"])
+        #expect(digest.skills == ["swift-testing"])
+        #expect(digest.mcpServers == ["github"])
+        let subagents = digest.subagents
+        #expect(subagents == [TurnDigest.Subagent(sub: "a1", type: "Explore", steps: 2, started: true)])
+        let live = digest.liveSubagents.count
+        #expect(live == 1, "its start was heard and its end was not")
+        #expect(facts.turnSteps == 9, "every speaker's steps, the subagent's among them")
+        let plan = try #require(facts.turnPlan)
+        #expect(plan.done == 1)
+        #expect(plan.total == 3)
+        #expect(plan.now == "Write the tests")
+        #expect(facts.startSource == "resume")
+    }
+
+    /// A subagent's end is heard: it is no longer live, and its steps stay
+    /// its own.
+    @Test func aSubagentsEndEndsItsLiveness() {
+        let run = feed(claudeTurn + [("SubagentStop", ["agent_id": "a1", "agent_type": "Explore"])])
+        let digest = run.book.facts(for: key).digest
+        #expect(digest.liveSubagents.isEmpty)
+        let entry = digest.subagents.first
+        #expect(entry?.finished == true)
+        #expect(entry?.steps == 2)
+    }
+
+    /// A subagent known from its steps alone is never said to be going.
+    @Test func aSubagentWithoutAStartIsNotLive() {
+        let run = feed([
+            ("UserPromptSubmit", ["prompt": "Map the API"]),
+            ("PostToolUse", ["tool_name": "Grep", "agent_id": "a2", "tool_input": ["pattern": "upload"]]),
+        ])
+        let digest = run.book.facts(for: key).digest
+        #expect(digest.subagents.count == 1)
+        #expect(digest.liveSubagents.isEmpty, "no start heard: no guessed state")
+    }
+
+    /// The digest starts over with the turn: the person's next prompt, or
+    /// work after the turn ended with no prompt seen — the same moments the
+    /// turn's clock and step count start over. A subagent's prompt starts
+    /// nothing.
+    @Test func theDigestStartsOverWithTheTurn() {
+        var steps = claudeTurn
+        steps.append(("UserPromptSubmit", ["prompt": "Check the README", "agent_id": "a1"]))
+        let kept = feed(steps).book.facts(for: key).digest
+        #expect(kept.tools.count == 6, "a subagent's own task is not the person's prompt")
+        steps.append(("UserPromptSubmit", ["prompt": "Now the docs"]))
+        steps.append(("PostToolUse", ["tool_name": "Read", "tool_input": ["file_path": "/Users/me/app/README.md"]]))
+        let next = feed(steps).book.facts(for: key)
+        #expect(next.digest.tools == [TurnDigest.Count(name: "Read", count: 1)])
+        #expect(next.digest.files.isEmpty, "a read changes no file")
+        #expect(next.digest.subagents.isEmpty)
+        #expect(next.turnPlan == nil, "the last turn's plan is not this turn's")
+
+        var unprompted = claudeTurn
+        unprompted.append(("Stop", ["last_assistant_message": "Done."]))
+        unprompted.append(("PostToolUse", ["tool_name": "Bash", "tool_input": ["command": "git status"]]))
+        let resumed = feed(unprompted).book.facts(for: key).digest
+        #expect(resumed.tools == [TurnDigest.Count(name: "Bash", count: 1)], "work after the turn ended is a new turn")
+    }
+
+    /// The digest is bounded: 32 files (and that more were heard), 16
+    /// tools, skills, servers and subagents.
+    @Test func theDigestIsBounded() {
+        var digest = TurnDigest()
+        for index in 0..<40 {
+            let step = SessionBook.Step(tool: "Edit\(index % 20)", target: "/w/f\(index).swift", ms: 0, category: .edit)
+            digest.add(step, files: [])
+            digest.add(SessionBook.Step(tool: "Skill", target: "s\(index)", ms: 0, category: .skill), files: [])
+            digest.add(SessionBook.Step(tool: "m\(index) · t", target: "", ms: 0, category: .mcp), files: [])
+            digest.hear(sub: "a\(index)", type: "worker", kind: .start)
+        }
+        #expect(digest.files.count == TurnDigest.maxFiles)
+        #expect(digest.filesOverflowed)
+        #expect(digest.tools.count == TurnDigest.maxNames)
+        #expect(digest.skills.count == TurnDigest.maxNames)
+        #expect(digest.mcpServers.count == TurnDigest.maxNames)
+        #expect(digest.subagents.count == TurnDigest.maxSubagents)
+    }
+
+    /// Codex's patch names its files in `meta` (the step's target is a
+    /// summary): the files are the meta's; a line that is not a step
+    /// (OpenCode's `session.diff`) adds its own.
+    @Test func filesComeFromMetaWhenALineNamesThem() {
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: .codex, kind: .working, ms: t0, message: "Patch it", session: "x1", event: "UserPromptSubmit"), nowMs: t0)
+        book.apply(AttentionRecord(
+            agent: .codex, kind: .tool, ms: t0 + second, message: "src/upload.rs (+1)", session: "x1", tool: "apply_patch",
+            event: "PostToolUse", category: .edit, meta: LineMeta(files: ["src/upload.rs", "src/retry.rs"])
+        ), nowMs: t0 + second)
+        book.apply(AttentionRecord(
+            agent: .codex, kind: .status, ms: t0 + 2 * second, session: "x1", event: "session.diff",
+            meta: LineMeta(files: ["src/retry.rs", "docs/retry.md"])
+        ), nowMs: t0 + 2 * second)
+        let files = book.facts(for: SessionKey(.codex, "x1")).digest.files
+        #expect(files == ["src/upload.rs", "src/retry.rs", "docs/retry.md"], "deduplicated, in the order first heard")
+    }
+
+    /// The digest, the plan and the timeline's steps are rebuilt exactly by
+    /// a replay of the log's own text — the launch replay.
+    @Test func aReplayOfTheTextRebuildsTheDigest() throws {
+        let run = feed(claudeTurn)
+        var replayed = SessionBook()
+        for line in run.lines {
+            let read = try #require(AttentionRecord(line: line.line))
+            replayed.apply(read, nowMs: t0 + minute)
+        }
+        let before = run.book.facts(for: key)
+        let after = replayed.facts(for: key)
+        #expect(after.digest == before.digest)
+        #expect(after.plan == before.plan)
+        #expect(after.timeline == before.timeline)
+        #expect(after == before)
+    }
+
+    /// A timeline entry for a run keeps its steps (the newest eight), each
+    /// with its target, duration and failure; a single step keeps itself.
+    @Test func aRunKeepsItsSteps() throws {
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: .claude, kind: .working, ms: t0, message: "Go", session: "s1", event: "UserPromptSubmit"), nowMs: t0)
+        for index in 0..<10 {
+            book.apply(AttentionRecord(
+                agent: .claude, kind: .tool, ms: t0 + Int64(index + 1) * second, message: "f\(index).swift", session: "s1",
+                tool: "Edit", event: "PostToolUse", failed: index == 9, tookMs: 1_000 + Int64(index)
+            ), nowMs: t0 + minute)
+        }
+        let run = try #require(book.facts(for: key).timeline.last)
+        #expect(run.steps.count == SessionBook.maxStepsPerEntry)
+        let targets = run.steps.map { $0.target }
+        let newest = (2..<10).map { "f\($0).swift" }
+        #expect(targets == newest, "the newest, oldest first")
+        #expect(run.steps.last?.failed == true)
+        #expect(run.steps.first?.tookMs == 1_002)
+        #expect(SessionBook.maxTimeline == 40)
+    }
 }
 
 /// The book as rows: process-only discovery, the time rules, and what the
@@ -1755,6 +2017,36 @@ struct TrayStateTests {
         #expect(keys == ["opencode|o3", "opencode|o4"])
         let live = later.filter { $0.liveProcess }.count
         #expect(live == 2)
+    }
+
+    /// A service (`codex app-server` inside ChatGPT.app) serves many
+    /// sessions and outlives each: the scan lists no row for it and the
+    /// hook records no pid for a session it serves, so a live service keeps
+    /// none listed — even a working one leaves by the quiet bound. Its
+    /// session has no terminal: it lands on the app.
+    @Test func aServiceKeepsNoSessionListed() throws {
+        let table = [
+            AgentProcesses.Proc(pid: 10, ppid: 1, args: "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"),
+            AgentProcesses.Proc(pid: 11, ppid: 10, args: "/Applications/ChatGPT.app/Contents/Resources/codex app-server"),
+        ]
+        let service: (AgentID) -> [String] = { $0 == .codex ? ["app-server"] : [] }
+        let hits = AgentProcesses.hits(in: table, cwd: { _ in "" }, serviceArguments: service)
+        #expect(hits.isEmpty, "a service is no process-only row")
+        let unnamed = AgentProcesses.hits(in: table, cwd: { _ in "" }, serviceArguments: { _ in [] })
+        let pids = unnamed.map { $0.pid }
+        #expect(pids == [11], "until the catalog names it, as before")
+
+        let landing = "detached:1;app:com.openai.codex;host:codexApp"
+        let b = book([
+            AttentionRecord(agent: .codex, kind: .working, ms: t0, session: "c1", cwd: "/w/app", landing: landing),
+            AttentionRecord(agent: .codex, kind: .turn, ms: t0, session: "c2", cwd: "/w/app", landing: landing),
+        ])
+        let now = try #require(rows(b, processes: hits, at: t0 + minute).first { $0.key == SessionKey(.codex, "c1") })
+        #expect(!now.liveProcess)
+        #expect(now.landingPlan.steps == [.activateApp(bundleIDs: HostAppKind.codexApp.bundleIDs)])
+        let quiet = try #require(rows(b, processes: hits, at: t0 + 31 * minute).first { $0.key == SessionKey(.codex, "c1") })
+        #expect(quiet.status == .recent(.quiet))
+        #expect(rows(b, processes: hits, at: t0 + 100 * minute).isEmpty)
     }
 
     /// An interrupted turn sends no Stop. From an agent that reports

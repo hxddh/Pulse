@@ -4,8 +4,5 @@
   "cwd": "/Users/me/code/app",
   "toolName": "bash",
   "toolArgs": "{\"command\":\"npm run lint\"}",
-  "toolResult": {
-    "resultType": "failure",
-    "textResultForLlm": "exit 1"
-  }
+  "error": "exit 1\n2 lint errors"
 }

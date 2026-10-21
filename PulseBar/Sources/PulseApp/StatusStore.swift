@@ -303,13 +303,26 @@ final class StatusStore {
         ))
     }
 
-    /// One session in full — the detail page's value, at `date`.
-    func detailModel(_ row: AgentRow, at date: Date = Date()) -> DetailModel {
+    /// One session in full — the detail page's value, at `date`;
+    /// `disclosed`: the steps behind its timeline's runs are shown.
+    func detailModel(_ row: AgentRow, at date: Date = Date(), disclosed: Bool = false) -> DetailModel {
         DetailModel.make(
             row: row, facts: facts(for: row.key), lang: lang,
             nowMs: Self.ms(date), notice: rowActionNotices[row.key],
-            connected: connected(row.agent)
+            connected: connected(row.agent), disclosed: disclosed
         )
+    }
+
+    /// "Copy this turn's summary" (`TurnSummary`): only on the person's
+    /// click, only to their own clipboard. Unlike Settings' content-free
+    /// "Copy report", it carries the turn's prompt and paths — the person
+    /// asked for exactly that. Nothing of it is logged.
+    func copyTurnSummary(_ row: AgentRow) {
+        let text = TurnSummary.text(row: row, facts: facts(for: row.key), lang: lang, nowMs: Self.ms(Date()))
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        DebugLog.write("turn summary copied")
     }
 
     /// Pulse's hook is in the agent's config (the last probe; a status not

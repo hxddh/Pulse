@@ -1,0 +1,13 @@
+{
+  "conversation_id": "fx-cursor-conv-1",
+  "generation_id": "gen-1",
+  "workspace_roots": [
+    "/Users/me/code/app"
+  ],
+  "cursor_version": "2.0.0",
+  "hook_event_name": "sessionEnd",
+  "session_id": "fx-cursor-1",
+  "reason": "error",
+  "duration_ms": 600000,
+  "error_message": "Model provider unavailable\nretry later"
+}

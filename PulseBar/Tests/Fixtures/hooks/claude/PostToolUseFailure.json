@@ -10,6 +10,7 @@
     "description": "Lint"
   },
   "tool_use_id": "toolu_02",
-  "error": "Command failed with exit code 1",
-  "is_interrupt": false
+  "error": "Exit code 1\nsrc/login.ts: 2 problems",
+  "is_interrupt": false,
+  "duration_ms": 2210
 }

@@ -239,11 +239,17 @@ package enum TrayOrder {
 /// | -------------- | -------------------------------------- | --------------- |
 /// | ↑ ↓            | select                                 | —               |
 /// | ↩              | go: the terminal, else the detail      | go              |
-/// | → / Space      | detail                                 | —               |
-/// | ← / Esc        | Esc: close                             | back            |
+/// | → / Space      | detail                                 | show each step  |
+/// | ← / Esc        | Esc: close                             | ← hide, back    |
 /// | ⌘D / ⌘⌫        | ignore the selected wait               | ignore          |
 /// | ⌘R ⌘, ⌘Q       | refresh · settings · quit              | same            |
 /// | ⌘W             | close (as Esc here)                    | close           |
+///
+/// On the detail page → (or Space) discloses the steps behind every run on
+/// the timeline ("Edit ×4" → each Edit with its target and duration) — the
+/// same as a click on a run; ← hides them before it goes back, as ← leaves
+/// the page one level at a time. Esc always goes back. Leaving the page
+/// hides them: the next page opens with its runs folded.
 ///
 /// A bare letter is not the tray's: the tray opens with a row selected, and a
 /// bare D must never ignore a wait; the commands carry ⌘. ⌘W is the
@@ -268,10 +274,14 @@ package enum TrayKeys {
         package var selected: SessionKey?
         /// The row whose detail page is open.
         package var detail: SessionKey?
+        /// The detail page shows the steps behind every run on its
+        /// timeline. Never true without a detail page.
+        package var disclosed: Bool
 
-        package init(selected: SessionKey? = nil, detail: SessionKey? = nil) {
+        package init(selected: SessionKey? = nil, detail: SessionKey? = nil, disclosed: Bool = false) {
             self.selected = selected
             self.detail = detail
+            self.disclosed = disclosed && detail != nil
         }
     }
 
@@ -280,15 +290,29 @@ package enum TrayKeys {
         package var key: SessionKey
         package var blocked: Bool
         package var canFocus: Bool
+        /// Its timeline has a run of steps to disclose (`SessionFacts`).
+        package var discloses: Bool
 
-        package init(key: SessionKey, blocked: Bool = false, canFocus: Bool = false) {
+        package init(key: SessionKey, blocked: Bool = false, canFocus: Bool = false, discloses: Bool = false) {
             self.key = key
             self.blocked = blocked
             self.canFocus = canFocus
+            self.discloses = discloses
         }
 
-        package init(_ row: AgentRow) {
-            self.init(key: row.key, blocked: row.isBlocked, canFocus: row.canFocusTerminal)
+        package init(_ row: AgentRow, facts: SessionFacts? = nil) {
+            self.init(
+                key: row.key, blocked: row.isBlocked, canFocus: row.canFocusTerminal,
+                discloses: facts.map(Self.hasRun) ?? false
+            )
+        }
+
+        /// A timeline entry is a run of two or more steps.
+        package static func hasRun(_ facts: SessionFacts) -> Bool {
+            facts.timeline.contains { heard in
+                if case .steps(let run) = heard.effect { return run.count > 1 }
+                return false
+            }
         }
     }
 
@@ -325,9 +349,16 @@ package enum TrayKeys {
         if let open = state.detail {
             let row = rows.first { $0.key == open }
             switch key {
+            case .left where state.disclosed:
+                next.disclosed = false
+                return done()
             case .escape, .left:
                 next.detail = nil
+                next.disclosed = false
                 next.selected = open
+                return done()
+            case .right, .space:
+                if row?.discloses == true { next.disclosed = true }
                 return done()
             case .enter:
                 guard let row, row.canFocus else { return done() }
@@ -354,10 +385,12 @@ package enum TrayKeys {
             guard let selected else { return done() }
             if selected.canFocus { return done(.focus(selected.key)) }
             next.detail = selected.key
+            next.disclosed = false
             return done()
         case .right, .space:
             guard let selected else { return done() }
             next.detail = selected.key
+            next.disclosed = false
             return done()
         case .left:
             return done()
@@ -373,6 +406,7 @@ package enum TrayKeys {
     /// left moves to the first row.
     package static func normalize(_ state: State, rows: [Row]) -> State {
         var next = state
+        if next.detail == nil { next.disclosed = false }
         if let selected = state.selected, !rows.contains(where: { $0.key == selected }) {
             next.selected = rows.first?.key
         }

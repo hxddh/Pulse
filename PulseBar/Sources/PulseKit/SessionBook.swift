@@ -4,7 +4,7 @@ import Foundation
 /// what its events said about it — from the agents' own hook events.
 ///
 /// Pulse reads no vendor session file. Each supported agent's hook appends
-/// one v8 line to the event log (`EventLog`) when a session starts, takes a
+/// one v9 line to the event log (`EventLog`) when a session starts, takes a
 /// prompt, runs a tool, is blocked, finishes its turn or ends; a process exit
 /// ends a session. This is the reducer those lines feed, in `seq` order — a
 /// pure value, `apply` in, `sessions` out — and `TrayState.project` turns it
@@ -25,6 +25,9 @@ import Foundation
 /// - **title**: the vendor's own name for the session when it has one (a
 ///   `title` line, or a `start` that carries it), else the first prompt
 ///   that says something (not "continue"); and the latest prompt;
+/// - **this turn** (`TurnDigest`): the main agent's tools, the files,
+///   skills and MCP servers the turn touched, each subagent's own steps —
+///   started over with the turn, like its clock;
 /// - **last words**: what the latest turn line carried; **error**: the text
 ///   of a turn that ended on an error (a `failed` line), until the next turn
 ///   starts (a prompt, or work after the turn ended). Tokens, context,
@@ -142,6 +145,39 @@ package struct SessionBook: Equatable {
         package var tookMs: Int64 = 0
         /// The subagent that ran it; "" for the main agent.
         package var sub = ""
+        /// What kind of step it is (`cat`), as its adapter named the tool;
+        /// nil when the line said none.
+        package var category: StepCategory?
+        /// A failed step's error, its first line (`meta` `err`); "" none.
+        package var error = ""
+    }
+
+    /// A plan's progress as the main agent last reported it (`meta`
+    /// `plan` / `planNow`): how many items are done, of how many, the one
+    /// in progress, and when it said so.
+    package struct PlanProgress: Hashable, Sendable {
+        package var done: Int
+        package var total: Int
+        package var now: String
+        package var ms: Int64
+
+        package init(done: Int, total: Int, now: String = "", ms: Int64) {
+            self.done = done
+            self.total = total
+            self.now = now
+            self.ms = ms
+        }
+    }
+
+    /// A subagent's type as its own lines said it (`meta` `type`).
+    package struct SubagentType: Hashable, Sendable {
+        package var sub: String
+        package var type: String
+
+        package init(sub: String, type: String) {
+            self.sub = sub
+            self.type = type
+        }
     }
 
     /// One line a session heard, as its timeline says it: when, the
@@ -157,13 +193,31 @@ package struct SessionBook: Equatable {
         /// How long a single step ran, in ms (`took`); 0 unknown, and 0
         /// for anything that is not one step.
         package var tookMs: Int64
+        /// A single step's category (`cat`); nil for anything else, and for
+        /// a run of steps.
+        package var category: StepCategory?
+        /// The facts the line carried (`meta`); empty for a run of steps.
+        package var meta: LineMeta
+        /// The steps behind a steps entry, oldest first: the step itself,
+        /// or the newest `maxStepsPerEntry` of a run — each with its target,
+        /// duration and failure, what the detail page discloses under the
+        /// run's "Edit ×4". Empty for anything that is not steps. Kept
+        /// beside the effect, never in it: what the entry *did* stays the
+        /// effect's.
+        package var steps: [Step]
 
-        package init(ms: Int64, event: String, effect: Effect, sub: String = "", tookMs: Int64 = 0) {
+        package init(
+            ms: Int64, event: String, effect: Effect, sub: String = "", tookMs: Int64 = 0,
+            category: StepCategory? = nil, meta: LineMeta = LineMeta(), steps: [Step] = []
+        ) {
             self.ms = ms
             self.event = event
             self.effect = effect
             self.sub = sub
             self.tookMs = tookMs
+            self.category = category
+            self.meta = meta
+            self.steps = steps
         }
     }
 
@@ -288,12 +342,15 @@ package struct SessionBook: Equatable {
         package var prompt: Int64 = 0
         /// The line its vendor name came from.
         package var name: Int64 = 0
+        /// The line the main agent's latest plan came from — the current
+        /// turn's plan, when it reported one this turn.
+        package var plan: Int64 = 0
         /// The raise that turned it red, while it is blocked — the open
         /// block's first line.
         package var block: Int64 = 0
 
         /// Every anchor but the block.
-        package var lines: [Int64] { [first, title, turn, prompt, name].filter { $0 > 0 } }
+        package var lines: [Int64] { [first, title, turn, prompt, name, plan].filter { $0 > 0 } }
     }
 
     /// One session: who it is, where it runs, the one state it is in and
@@ -329,8 +386,6 @@ package struct SessionBook: Equatable {
         /// The vendor's own name for the session (a `title` line, or a
         /// `start` that carries one); "" none.
         package var name = ""
-        /// The latest prompt's text.
-        package var lastPrompt = ""
         /// A turn waiting out the grace of the current block.
         package var heldTurn: HeldTurn?
         /// Where the session was when the current block was raised while no
@@ -382,7 +437,11 @@ package struct SessionBook: Equatable {
     /// A step's target is at most this many characters.
     package static let stepTargetLimit = 120
     /// Heard lines kept per session — the detail page's timeline.
-    package static let maxTimeline = 12
+    package static let maxTimeline = 40
+    /// Steps kept behind one timeline entry (`Heard.steps`).
+    package static let maxStepsPerEntry = 8
+    /// Subagent types kept per session.
+    package static let maxSubagentTypes = 16
 
     package init() {}
 
@@ -437,7 +496,8 @@ package struct SessionBook: Equatable {
 
         if !sub.isEmpty {
             Self.applySubagent(record, sub: sub, at: ms, new: before == nil, into: &session)
-            Self.hear(&session, Heard(ms: ms, event: event, effect: Self.effect(of: record, prior: prior, now: session), sub: sub, tookMs: Self.took(record)))
+            Self.digestFiles(record, into: &session)
+            Self.hear(&session, Self.heard(record, effect: Self.effect(of: record, prior: prior, now: session), sub: sub))
             return land(session, record: record, before: before)
         }
 
@@ -454,6 +514,12 @@ package struct SessionBook: Equatable {
             }
         case .working:
             session.activityMs = max(session.activityMs, ms)
+            // A custom name riding on the prompt (Claude's `session_title`).
+            let named = TitleHeuristics.firstLine(record.meta.name)
+            if !named.isEmpty {
+                session.name = named
+                session.anchors.name = record.seq
+            }
             Self.prompt(record, at: ms, into: &session)
             // A prompt stamped no later than the session's end is from
             // before it: it revives nothing.
@@ -499,6 +565,8 @@ package struct SessionBook: Equatable {
                     let step = kind == .tool ? Self.stepOf(record) : nil
                     session.turnSteps = step == nil ? 0 : 1
                     session.turnFailedSteps = step?.failed == true ? 1 : 0
+                    session.digest = TurnDigest()
+                    if let step { session.digest.add(step, files: record.meta.files) }
                     Self.set(&session, .working, at: ms, event: event)
                 }
             }
@@ -540,7 +608,8 @@ package struct SessionBook: Equatable {
         case .ignored:
             return false
         }
-        Self.hear(&session, Heard(ms: ms, event: event, effect: Self.effect(of: record, prior: prior, now: session), tookMs: Self.took(record)))
+        Self.digestFiles(record, into: &session)
+        Self.hear(&session, Self.heard(record, effect: Self.effect(of: record, prior: prior, now: session), sub: ""))
         return land(session, record: record, before: before)
     }
 
@@ -590,6 +659,7 @@ package struct SessionBook: Equatable {
     /// the session's (the subagent cannot go on, so neither can the work).
     private static func applySubagent(_ record: AttentionRecord, sub: String, at ms: Int64, new: Bool, into session: inout Session) {
         let event = record.event
+        session.digest.hear(sub: String(sub.prefix(80)), type: record.meta.agentType, kind: record.kind)
         var owned: Block?
         if case .blocked(let block) = session.state, block.sub == String(sub.prefix(80)) { owned = block }
         let live: Bool
@@ -670,7 +740,10 @@ package struct SessionBook: Equatable {
            case .steps(var run) = last.effect, case .steps(let next) = heard.effect, next.count == 1,
            let tool = next.tools.first?.tool {
             run.add(tool, failed: next.failed > 0)
-            session.timeline[session.timeline.count - 1] = Heard(ms: max(last.ms, heard.ms), event: heard.event, effect: .steps(run), sub: heard.sub)
+            let steps = Array((last.steps + heard.steps).suffix(maxStepsPerEntry))
+            session.timeline[session.timeline.count - 1] = Heard(
+                ms: max(last.ms, heard.ms), event: heard.event, effect: .steps(run), sub: heard.sub, steps: steps
+            )
             return
         }
         session.timeline.append(heard)
@@ -681,6 +754,25 @@ package struct SessionBook: Equatable {
     /// 0 for any other line.
     private static func took(_ record: AttentionRecord) -> Int64 {
         record.kind == .tool ? max(0, record.tookMs) : 0
+    }
+
+    /// One applied line as its timeline entry: its effect, its speaker, its
+    /// step's duration and category, and the facts it carried.
+    private static func heard(_ record: AttentionRecord, effect: Effect, sub: String) -> Heard {
+        var steps: [Step] = []
+        if case .steps = effect, let step = stepOf(record) { steps = [step] }
+        return Heard(
+            ms: record.ms, event: record.event, effect: effect, sub: sub, tookMs: took(record),
+            category: record.category, meta: record.meta, steps: steps
+        )
+    }
+
+    /// The files a line that is not a step named (`meta` `files`: a
+    /// batch's diff) go in the turn's digest; a step's own went in with it
+    /// (`progress`).
+    private static func digestFiles(_ record: AttentionRecord, into session: inout Session) {
+        guard !record.meta.files.isEmpty, stepOf(record) == nil || record.kind != .tool else { return }
+        session.digest.addFiles(record.meta.files)
     }
 
     /// What one applied line did, from the state before it (`prior`, after
@@ -769,6 +861,30 @@ package struct SessionBook: Equatable {
         if session.startedMs == 0 || ms < session.startedMs { session.startedMs = ms }
         if ms >= session.lastEventMs { session.lastEvent = record.event }
         session.lastEventMs = max(session.lastEventMs, ms)
+        remember(record.meta, of: record, at: ms, into: &session)
+    }
+
+    /// The facts a line carried (`meta`), kept as the session's latest: the
+    /// main agent's plan progress, why it started and why it ended, each
+    /// subagent's type, the files a batch changed. A subagent's plan, start
+    /// or end is not the session's.
+    private func remember(_ meta: LineMeta, of record: AttentionRecord, at ms: Int64, into session: inout Session) {
+        let speaker = String(record.sub.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+        if speaker.isEmpty {
+            if let plan = meta.plan, ms >= (session.plan?.ms ?? .min) {
+                session.plan = PlanProgress(done: plan.done, total: plan.total, now: meta.planNow, ms: ms)
+                session.anchors.plan = record.seq
+            }
+            if record.kind == .start, !meta.src.isEmpty { session.startSource = meta.src }
+            if record.kind == .end, !meta.why.isEmpty { session.endReason = meta.why }
+        } else if !meta.agentType.isEmpty {
+            session.subagentTypes.removeAll { $0.sub == speaker }
+            session.subagentTypes.append(SubagentType(sub: speaker, type: meta.agentType))
+            if session.subagentTypes.count > Self.maxSubagentTypes {
+                session.subagentTypes.removeFirst(session.subagentTypes.count - Self.maxSubagentTypes)
+            }
+        }
+        if !meta.files.isEmpty { session.changedFiles = meta.files }
     }
 
     /// A prompt: a new turn. Its text is the latest prompt, and the title
@@ -782,6 +898,7 @@ package struct SessionBook: Equatable {
         session.turnSteps = 0
         session.turnFailedSteps = 0
         session.runningSteps = []
+        session.digest = TurnDigest()
         let text = TitleHeuristics.promptTitle(record.message)
         guard !text.isEmpty else { return }
         session.lastPrompt = text
@@ -824,6 +941,7 @@ package struct SessionBook: Equatable {
         session.turnSteps += 1
         if step.failed { session.turnFailedSteps += 1 }
         session.lastStep = step
+        session.digest.add(step, files: record.meta.files)
     }
 
     /// The step a `tool` (or `status`) line names; nil when it names no tool.
@@ -832,13 +950,16 @@ package struct SessionBook: Equatable {
         guard !tool.isEmpty else { return nil }
         var target = TitleHeuristics.firstLine(record.message, limit: stepTargetLimit)
         if target.caseInsensitiveCompare(tool) == .orderedSame { target = "" }
+        let failed = record.kind == .tool && record.failed
         return Step(
             tool: String(tool.prefix(64)),
             target: target,
             ms: record.ms,
-            failed: record.kind == .tool && record.failed,
+            failed: failed,
             tookMs: record.kind == .tool ? max(0, record.tookMs) : 0,
-            sub: String(record.sub.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+            sub: String(record.sub.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80)),
+            category: record.category,
+            error: failed ? record.meta.err : ""
         )
     }
 

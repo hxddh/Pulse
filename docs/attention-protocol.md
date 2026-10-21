@@ -1,4 +1,4 @@
-# Attention Protocol v8
+# Attention Protocol v9
 
 The contract between each supported agent's hook and Pulse's lamp: one
 append-only event log of numbered lines.
@@ -26,21 +26,21 @@ UTF-8 TSV, one event per line, numbered in the order the append lock was
 granted. The first line is the header:
 
 ```text
-# pulse-events v8 next=<seq> gen=<gen> (seq\tms\tagent\tkind\tevent\tsession\tsub\tcwd\tpid\tfront\tlanding\ttool\terr\ttook\tmessage)
-<seq>\t<unix_ms>\t<agent>\t<kind>\t<event>\t<session>\t<sub>\t<cwd>\t<pid>\t<front>\t<landing>\t<tool>\t<err>\t<took>\t<message>
+# pulse-events v9 next=<seq> gen=<gen> (seq\tms\tagent\tkind\tevent\tsession\tsub\tcwd\tpid\tfront\tlanding\ttool\terr\ttook\tcat\tmeta\tmessage)
+<seq>\t<unix_ms>\t<agent>\t<kind>\t<event>\t<session>\t<sub>\t<cwd>\t<pid>\t<front>\t<landing>\t<tool>\t<err>\t<took>\t<cat>\t<meta>\t<message>
 ```
 
 - **`gen`** names the log. It is chosen when the log is started — the file
-  is created, or a file that is not a v8 log is started over — and every
+  is created, or a file that is not a v9 log is started over — and every
   compaction keeps it. A reader that finds another `gen` is reading another
   log.
 - **`next`** is the `seq` the next line gets when no line in the file has a
   larger one: 1 for an empty log, one past the newest kept line after a
   compaction.
-- **Only a v8 log is read.** A file whose first line is not a v8 header (a
-  v7 log or any older protocol, or no header) is treated as absent: a read
+- **Only a v9 log is read.** A file whose first line is not a v9 header (a
+  v8 log or any older protocol, or no header) is treated as absent: a read
   finds it empty, and the next writer — the app's `ensureExists` at launch,
-  or a hook's append — empties it under its lock and starts a fresh v8 log
+  or a hook's append — empties it under its lock and starts a fresh v9 log
   (a new `gen`, numbering from 1). It is never read and never migrated.
 - **Append only, numbered under the lock.** A writer opens the file
   `O_APPEND`, takes an exclusive `flock`, gives the line the next `seq` —
@@ -61,7 +61,8 @@ granted. The first line is the header:
   the lines a replay rebuilds its own facts from (`SessionBook.Anchors`: its
   first line that raises nothing — its first clock — the prompt its title
   came from, the line that started its turn, its latest prompt that says
-  something and the line its vendor name came from) and, while the replay
+  something, the line its vendor name came from and the line the main
+  agent's latest plan came from) and, while the replay
   holds it blocked, the raise that turned it red with every line after it.
   An answered block is never kept without its answer. Over half a MiB
   the per-session count and the window halve until it fits. The line being
@@ -90,7 +91,7 @@ granted. The first line is the header:
   session — its steps, its title, its turn's clock — is rebuilt by this
   replay and kept nowhere else.
 
-**Every line has exactly fifteen columns**, in the order above, and a `seq`
+**Every line has exactly seventeen columns**, in the order above, and a `seq`
 that is a positive integer. A line with any other count, another `seq`, an
 agent or a kind the protocol does not know, is not read. Leave a column
 empty when you have nothing for it; the trailing tabs are part of the
@@ -104,17 +105,50 @@ record.
 | `kind` | One of the kinds below, spelled exactly as listed |
 | `event` | The vendor's own name of the hook event that wrote the line (`PermissionRequest`, `tool_execution_end`, `session.status`); `pulse.dismiss` / `pulse.seen` for the app's own `dismiss`. ≤64 chars. Read by nobody's state — it says where a line came from: the why, the detail page's timeline, Settings' "heard" and the report cite it (only when it is a name: letters, digits, `_ . : -`) |
 | `session` | The vendor's session id; empty allowed (not for `tool`, `status`, `working`, `title`) |
-| `sub` | The vendor's id of the subagent (child agent) the event came from — Claude's and Codex's `agent_id`, Copilot's `agentId` (each adapter's `subagentKeys`); empty for the main agent. A subagent's line belongs to its session, but it is not the person: see the reader rules |
+| `sub` | The vendor's id of the subagent (child agent) the event came from — Claude's and Codex's `agent_id`, Copilot's `agentId`, the OpenCode plugin's `subagent_id` (a child session's id; each adapter's `subagentKeys`); empty for the main agent. A subagent's line belongs to its session, but it is not the person: see the reader rules |
 | `cwd` | Absolute project path; empty allowed |
 | `pid` | The agent process the hook ran under: the first ancestor of the hook whose argv matches the agent's catalog process rule. Never the hook's direct parent (usually a `sh -c` that exits with the hook) and never `1` — empty when unknown. The one exception is a module that spawns the hook itself and says its own pid (Pi's extension sends `process.pid`, `AgentSpec.reportsOwnPID`): that pid is taken only when it is the hook's own parent |
 | `front` | `1` when the prompt's own window was frontmost as the event was raised, `0` when not, empty when unknown. Only written for blocked kinds, `turn`, `failed` and `idle` |
-| `landing` | Where the session can be reached, most specific first, `;`-separated: `tmux:%3`, `tmuxsock:<TMUX socket path>`, `iterm:<ITERM_SESSION_ID>`, `tty:/dev/ttys004`, `term:<TERM_PROGRAM>`, `app:<__CFBundleIdentifier>`; unknown keys are ignored (`architecture.md`, "Landing") |
+| `landing` | Where the session can be reached, most specific first, `;`-separated, whole fields within 240 characters: `detached:1` (no controlling terminal anywhere on the chain), `tmux:%3`, `tmuxsock:<TMUX socket path>`, `zellij:<ZELLIJ_PANE_ID>`, `zellijsession:<ZELLIJ_SESSION_NAME>`, `wezterm:<WEZTERM_PANE>`, `weztermsock:<WEZTERM_UNIX_SOCKET>`, `kitty:<KITTY_WINDOW_ID>`, `kittysock:<KITTY_LISTEN_ON, unix: only>`, `iterm:<ITERM_SESSION_ID>`, `tty:/dev/ttys004`, `term:<TERM_PROGRAM>`, `app:<__CFBundleIdentifier>`, `host:<HostAppKind or other>`; unknown keys are ignored (`architecture.md`, "Landing") |
 | `tool` | The tool a `tool` line ran, the tool a `status` line says has started (Pi's `tool_execution_start`), or the tool a block is about (`Bash`, `AskUserQuestion`); empty when the event names none. A tool name only — no column but `kind` says what a line means |
 | `err` | `1` when the tool a `tool` line reports failed (Claude's `PostToolUseFailure`, Copilot's `postToolUseFailure`, Pi's `isError`); empty otherwise. Anything but `1` is not a failure |
-| `took` | How long the tool a `tool` line reports ran, in integer milliseconds, when the vendor said (Pi's `durationMs`); empty when unknown. Anything but a positive integer is unknown |
+| `took` | How long the tool a `tool` line reports ran, in integer milliseconds, when the vendor said (Pi's `durationMs`, Claude's `duration_ms`, Cursor's `duration`); empty when unknown. Anything but a positive integer is unknown |
+| `cat` | What kind of step a line that names a tool is — `edit`, `read`, `shell`, `search`, `web`, `mcp`, `agent`, `skill`, `plan` or `other` — as the agent's own adapter names its tool (`StepCategory`; each adapter's table of its vendor's tool names, an MCP prefix such as `mcp__` is `mcp`); empty on any line that names no tool. A word not in the list reads as none |
+| `meta` | Small structured facts the line carries, `key=value` pairs separated by `;` (below); empty when it carries none |
 | `message` | What is asked, the turn's last words, a `failed` turn's error, the prompt's text on a `working` line, a tool or `status` line's target, the reply's words on a `tool` line that names no tool (Cursor's `afterAgentResponse`: the turn's last words so far), the vendor's name for the session on a `title` line (or a `start`, when the session already has one), or why a line was `ignored`; tabs and every kind of line break (`\n`, `\r`, VT, FF, NEL, U+2028, U+2029) made spaces; ≤200 chars; credentials redacted from the whole value before it is shortened. Last, so free text never shifts a column |
 
 Readers skip blank lines and `#` comments.
+
+### `meta`
+
+Each key at most once, in this order; an unknown key is skipped and a
+malformed value is none. Every value is one line (`flatten`), credentials
+redacted, bounded, with `%`, `;` and `|` written `%25`, `%3B`, `%7C` — so
+no value can end a pair, a list item or a column (`LineMeta`).
+
+| Key | Value | Written by |
+| --- | --- | --- |
+| `plan` | `<done>/<total>`: how many of the agent's plan items are completed, of how many (`0 ≤ done ≤ total`, `0 < total ≤ 9999`) | Claude's `TodoWrite` step, Codex's `update_plan` step, OpenCode 1.x `todo.updated` |
+| `planNow` | The item in progress (`in_progress`), its first line, ≤120 chars | the same |
+| `err` | An error's first line, ≤160 chars: a failed step's (Claude's `PostToolUseFailure` `error`, Copilot's `error`, Cursor's `failure_type`), a recoverable error's name (Copilot's `error.name`), an end's (Cursor's `error_message`) | the adapters |
+| `src` | Why the session started — a word (`startup`, `resume`, `clear`, `compact`, `fork`, `new`…), ≤40 chars | a `start` line's `source` (Claude, Codex, Copilot; Pi's forwarded `reason`) |
+| `why` | Why it ended — a word (`clear`, `logout`, `prompt_input_exit`, `quit`, `user_close`, `archived`…), ≤40 chars | an `end` line's `reason` |
+| `type` | The subagent's type (`Explore`, `worker`), ≤40 chars | Claude's and Codex's `SubagentStart` / `SubagentStop` `agent_type` |
+| `files` | The files a batch reported changed, `path\|path…`, at most 16 paths of ≤160 chars, ≤480 chars in all | Codex's `apply_patch` (its patch headers), OpenCode 1.x `session.diff` |
+| `name` | The vendor's name for the session riding on a line that is not a `title` or a `start`, ≤120 chars | Claude's `UserPromptSubmit` `session_title` |
+
+Examples:
+
+```text
+41\t…\tclaude\ttool\tPostToolUse\ts1\t\t/w\t…\t\t\tTodoWrite\t\t3\tplan\tplan=1/3;planNow=Fix the token refresh\t
+42\t…\tclaude\ttool\tPostToolUseFailure\ts1\t\t/w\t…\t\t\tBash\t1\t2210\tshell\terr=Exit code 1\tnpm run lint
+43\t…\tcodex\ttool\tPostToolUse\tx1\t\t/w\t…\t\t\tapply_patch\t\t\tedit\tfiles=src/upload.rs|src/retry.rs\tsrc/upload.rs (+1)
+44\t…\tclaude\tstart\tSubagentStart\ts1\tagent_7f3a\t/w\t…\t\t\t\t\t\t\ttype=Explore\t
+```
+
+No fact moves a state: the reader keeps them (the main agent's latest plan,
+why the session started and ended, each subagent's type, the latest batch of
+files, a step's category and error) and the timeline keeps each heard line's.
 
 ## Kinds
 
@@ -135,7 +169,7 @@ Readers skip blank lines and `#` comments.
 | | `end` | The session ended |
 | Activity | `tool` | A tool ran (or a reply streamed): the session is working, and — when it names its tool — its last step and the answer to a block raised for that tool; when it names none, its message is the reply's words |
 | | `status` | Work goes on and no tool finished (a status, a retry, a recoverable error, a compaction, or a tool that started — `tool` names it, `message` its target: what runs now): never a step, never an answer; one that names no tool never starts a turn |
-| Heard | `ignored` | The receiver heard an event it did not turn into state: an event Pulse does not install, a payload that is not a JSON object, a blocked event from an agent that cannot report one, activity or a prompt with no session, an event that says nothing Pulse shows, a prompt that does not block (Pi's `custom` view), a request no prompt can show (Claude's `dontAsk`, a `claude -p` run without a permission host — read from the agent process's argv), a notice that may be about another session (Claude's `agent_needs_input`). `message` says which (`PulseHookReceiver.Ignored`) — never the payload's words. The reducer changes no state for it; it goes on its session's timeline and is Settings' "last not used" |
+| Heard | `ignored` | The receiver heard an event it did not turn into state: an event Pulse does not install, a payload that is not a JSON object, a blocked event from an agent that cannot report one, activity or a prompt with no session, an event that says nothing Pulse shows, a prompt that does not block (Pi's `custom` view), a request no prompt can show (Claude's `dontAsk`, a `claude -p` run without a permission host — read from the agent process's argv), a notice that may be about another session (Claude's `agent_needs_input`), another host running an agent's hook with its own payload (Cursor or VS Code running Claude's settings hooks: "another host ran Claude's hook"). `message` says which (`PulseHookReceiver.Ignored`) — never the payload's words. The reducer changes no state for it; it goes on its session's timeline and is Settings' "last not used" |
 
 `working`, `done`, `dismiss`, `stopped` and `end` clear the session's
 block; `start` does unless the session is working — each only when the
@@ -164,7 +198,7 @@ as spelled in the table — no alias, no vendor word, no guess from free text.
 - Every line applies, in `seq` order, to its session (`SessionKey`: agent +
   session, or agent + folder when it names none). `ignored` lines change no
   state and make no session; one that names a session the reader holds goes
-  on that session's timeline (its last twelve heard lines, with what each
+  on that session's timeline (its last forty heard lines, with what each
   did — rebuilt by the replay, kept nowhere else).
 - The `event` column is carried, never read for state: a session keeps the
   event that put it in its current state (a re-raise inside the grace keeps
@@ -188,7 +222,7 @@ as spelled in the table — no alias, no vendor word, no guess from free text.
   only the agent's session-less entry in the folder it names, or every
   session-less one when it names none; a dismissal always names the folder).
 - A `tool` line that names its tool is a step: the session keeps its last
-  five (tool, target, time, `err`, `took`, `sub`); a `status` line is not a
+  five (tool, target, time, `err`, `took`, `sub`, `cat`, `meta` `err`); a `status` line is not a
   step. A main-agent `tool` line that names no tool and says something is a
   reply: its words are the session's last words until a turn line that
   carries its own. A `status` line that names no tool (a retry, a recoverable
@@ -206,7 +240,8 @@ as spelled in the table — no alias, no vendor word, no guess from free text.
   from your turn; one stamped before the block or turn it would end is
   about an earlier one. It carries no last words.
 - A `title` line sets the session's name (empty clears it); a `start`
-  that carries a name sets it too. The row's title is the name, else the
+  that carries a name sets it too, and so does a main-agent `working` line
+  whose `meta` carries `name`. The row's title is the name, else the
   first prompt that says something. A `working`
   line starts a new turn (its clock), its text is the latest prompt, and the
   first that says something (not "continue") is the title. A `turn` line's
@@ -254,8 +289,7 @@ as spelled in the table — no alias, no vendor word, no guess from free text.
 
 ## Versioning
 
-The protocol is v8: fifteen numbered columns (v7's twelve plus `sub`,
-`err` and `took`) and the kinds above (v7's plus `stopped` and `title`),
-and a log whose header is not v8 is treated as absent (emptied, started
-over, never read). A change to the columns or the kinds is a new protocol
+The protocol is v9: seventeen numbered columns (v8's fifteen plus `cat` and
+`meta`, before `message`) and the kinds above (v8's), and a log whose
+header is not v9 is treated as absent (emptied, started over, never read). A change to the columns or the kinds is a new protocol
 version and a major release.

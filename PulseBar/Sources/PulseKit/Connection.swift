@@ -309,6 +309,7 @@ package struct Connection: Equatable, Sendable {
         case .notABlock?: return t(.ignoredNotABlock)
         case .noPrompt?: return t(.ignoredNoPrompt)
         case .otherSession?: return t(.ignoredOtherSession)
+        case .otherHost?: return t(.ignoredOtherHost)
         case nil: return t(.ignoredOther)
         }
     }

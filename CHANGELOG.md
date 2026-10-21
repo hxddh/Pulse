@@ -2,6 +2,56 @@
 
 All notable changes to Pulse are documented here.
 
+## 33.0.0 — Trace（迹）
+
+一次把「会话里发生了什么」讲清楚的版本：工具、Skill、MCP、子代理、改过的文件、计划进度，Agent 报了的都看得见。
+**事件日志升到 v9，升级后旧的 v8 日志会被清空重来**（只丢以前的时间线，不影响 hook）。
+
+### 看得见这一轮
+
+- **详情页「正在进行」**：每个还在跑的工具和它自己的用时，加上还活着的子代理（「子代理 · Explore · 6 步」）。
+- **详情页「本轮」**：你的提示、用时和步数、工具分布（`Edit 9 · Bash 6 · Read 5`）、**改动的文件**（相对项目目录，
+  最多 5 个，其余 +N）、用到的 **Skill**、**MCP 服务**、**子代理**、**计划**（`3/7 · 当前这一项`）；恢复的会话、
+  `/clear` 之后的会话说出来；结束的会话说结束原因。有才显示，没有就不写。
+- **时间线**从 12 条加到 40 条；合并的「Edit ×4」可以展开（点一下或 →），看到每一步的文件、命令和用时，失败的标出来。
+- **复制本轮摘要**：一段纯文本，带上提示与文件路径，方便贴进 PR 或聊天——这是你主动要的内容；设置里的「复制报告」
+  仍然不带任何内容。
+- **托盘行**仍是一行：几个工具同时在跑写「当前：Bash · npm test · 3分钟 +2」；Agent 报了计划时安静地带上 `3/7`。
+
+### 协议 v9
+
+- 新增两列：`cat`（这一步的类别：编辑、读取、命令、搜索、网页、MCP、子代理、Skill、计划）和 `meta`（小段结构化事实：
+  计划进度、错误首行、会话来源、结束原因、子代理类型、改动的文件、会话名）。类别由各自的适配器给出，Pulse 从不猜。
+- 日志压缩会保留最近一次计划，重放后计划进度不丢。
+
+### 各个 Agent 读得更深
+
+- **Claude**：每步用时（`duration_ms`）、失败的错误首行、TodoWrite 的计划进度、Skill 名、子代理类型、会话来源与结束原因；
+  `/rename` 起的名字（`session_title`）优先于第一句提示。**Cursor 与 VS Code 代跑 Claude 的 hook 时不再冒出假的 Claude 行**。
+- **Codex**：apply_patch 显示改了哪些文件（不再是一段补丁原文）；`update_plan` 的计划进度；装上 `SubagentStart` 与
+  `PostCompact`（都异步、只观察；`PreCompact` 能拦下压缩，不装）。
+- **Cursor**：装上 `postToolUseFailure`——失败、被拒、超时的工具调用看得见，打断算停下；会话结束的原因和错误说出来。
+- **Copilot CLI**：可恢复的错误写出错误名；设置里认出 `disableAllHooks`。
+- **OpenCode**：Skill 名；子会话的步骤标成子代理（以前被丢掉）；1.x 的计划进度、改动文件、归档会话结束这一行。
+- **Pi**：会话来源与退出原因。
+
+### 点一下落到对的地方
+
+- **WezTerm、kitty、Zellij 精确落到那个窗格**：用它们自带的命令行（`wezterm cli`、`kitten @`——需要 kitty 打开 socket
+  远程控制、`zellij action`），从 app 包里的固定路径运行，不经过 shell，2 秒超时；Ghostty、Warp 没有接口，仍只激活 app。
+- **没有终端的会话**（Claude 后台会话、OpenCode 托管服务、Codex.app / IDE 扩展里的 app-server、VS Code 里的 Copilot）
+  落到宿主 app；认不出宿主就打开这一行的详情，不再落到错的终端。
+- 长驻的服务进程（`codex app-server`、`opencode serve`）不再让它服务过的会话一直挂着，也不再单独占一行。
+- 修正 Antigravity 的 bundle id；认出 ChatGPT/Codex、Claude、OpenCode Desktop、GitHub Copilot 这几个 app。
+
+### 已知限制
+
+- **仍没有在真机上验证过**；`scripts/smoke.sh` 是第一次真机验收的入口。
+- 后台会话与服务进程的落地、WezTerm / kitty / Zellij 的精确落地，只能在真机上确认。
+- Cursor 的官网在开发环境里打不开，新字段来自第三方绑定，标为「未验证」。
+- OpenCode 2.x 在当前版本没有计划、改动文件和归档事件；Copilot 的计划工具参数没有文档，只记一步、不算进度。
+- 只报步骤、不报开始与结束的子代理（OpenCode 子会话）不会出现在「正在进行」里——Pulse 不猜它是否还活着。
+
 ## 32.0.0 — Proof（证）
 
 一次求证的版本：修掉会让灯卡住的问题，删掉靠猜的提示，并且第一次让 hook → 灯这条真实链路在 CI 里整条跑起来。

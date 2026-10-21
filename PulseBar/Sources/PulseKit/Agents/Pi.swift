@@ -62,6 +62,13 @@ extension AgentSpec {
         subagentKeys: [],
         // The extension spawns pulse-hook itself, with `process.pid`.
         reportsOwnPID: true,
+        // Pi's built-in tools (`src/core/tools`).
+        toolCategories: [
+            "bash": .shell, "powershell": .shell,
+            "read": .read,
+            "edit": .edit, "write": .edit,
+            "ls": .search, "grep": .search, "find": .search,
+        ],
         read: { Pi.read($0, $1) }
     )
 }
@@ -354,8 +361,10 @@ package enum Pi {
                   else Object.assign(payload, lastRun)
                   lastRun = {}
                 }
-                // A reason is a shutdown's why; on a prompt it is not the ask.
-                if (name === "session_shutdown" && event && typeof event.reason === "string") payload.reason = event.reason
+                // A reason is a shutdown's why, a start's source; on a prompt it is
+                // not the ask.
+                if (name === "session_shutdown" && event && typeof event.reason === "string") payload.reason = event.reason.slice(0, 40)
+                if (name === "session_start" && event && typeof event.reason === "string") payload.source = event.reason.slice(0, 40)
                 if (name === "session_shutdown") shutdown(name, payload)
                 else send(name, payload)
               } catch {}
