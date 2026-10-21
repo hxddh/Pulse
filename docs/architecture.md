@@ -81,7 +81,36 @@ facts lines carry (`SessionFacts`: the main agent's plan progress, why the
 session started and ended, each subagent's type, the files a batch
 changed; a step's category and error on the step) — kept for the detail
 page, never a state. Nothing is guessed from an event's name, and all of it is
-rebuilt by the launch replay like every other fact. The why says what
+rebuilt by the launch replay like every other fact.
+
+**This turn** is a `TurnDigest` on `SessionFacts.digest`, accumulated by
+`SessionBook.apply` as lines apply and started over exactly where the
+turn's clock and step count start over (the person's prompt, or work after
+a turn ended): the main agent's tools by name (a subagent's steps count in
+its own entry — type, steps, whether its start and its end were heard — and
+in the turn's step total, as before), the files the turn changed (an `edit`
+step's target, or the `meta` `files` of any line, deduplicated), the skills
+(`skill` steps' targets) and MCP servers (`mcp` steps, the server half of
+the "server · tool" label) — those three whoever touched them. Bounded: 32
+files, 16 tools, skills, servers and subagents. A subagent is *live* only
+when its start was heard and its end was not. The plan shown is the main
+agent's latest only when it was reported no earlier than the turn's start
+(`SessionFacts.turnPlan`); a compaction keeps the line it came from
+(`SessionBook.Anchors.plan`). The detail page draws it through
+`TrayRowModel.turnFacts`, Now through `nowItems` (every entry of
+`runningSteps` with its own clock, never `nowLine`, and the live
+subagents), and "Copy this turn's summary" through `TurnSummary.text` — the
+one copy that carries content (prompt, paths) because the person asked for
+exactly that; Settings' "Copy report" stays content-free.
+
+**The timeline's disclosure.** A run entry (`StepRun`, "Edit ×4") keeps the
+steps behind it beside its effect (`Heard.steps`: the newest eight, each
+with target, duration and failure; never in the effect, so what an entry
+*did* compares as before). The ring holds `SessionBook.maxTimeline` (40)
+entries. The detail page discloses every run's steps at once —
+`TrayKeys.State.disclosed`, set by → / Space or a click on a run, cleared by
+← (before ← goes back), Esc or leaving the page; `DetailModel.stepsShown`
+carries it to the face. The why says what
 happened in plain words and cites no event; the event names are the detail
 page's timeline column (`EventName.display` refuses a column that is not a
 name), Settings → Hooks and the report, which carries the last three
