@@ -5,9 +5,11 @@ import Foundation
 /// One line — lamp · agent · project · headline · time — and a second line
 /// only when the row has something to add: the ask of a blocked row, the why
 /// of a stalled one, or — quietly — a running row's live tool ("Now: Bash ·
-/// npm test · 3m", only while the agent says it has not finished) else its
+/// npm test · 3m", only while the agent says it has not finished — "+2" when
+/// two more are going beside it) else its
 /// last step ("Bash · swift test · 12m ago", a past step, never "running"),
-/// or a failed turn's error ("Turn failed: …"). No chip, no tint, no "new"
+/// or a failed turn's error ("Turn failed: …"); on a live row whose agent
+/// reported a plan this turn, a quiet "3/7" beside the time. No chip, no tint, no "new"
 /// dot, no buttons on the row: the verbs are a click (the body goes, the
 /// trailing "›" or an ⌥-click opens the detail — `clickAction`), keys (↩ →
 /// ⌘D), the context menu (which shows each key), VoiceOver actions and
@@ -101,6 +103,9 @@ package struct TrayRowModel: Equatable {
     package var age: String
     /// "Your turn", quietly, for a session whose turn ended unseen.
     package var turnLabel: String?
+    /// The plan's progress, "3/7", quietly, on a live row whose agent
+    /// reported a plan this turn (`planBadge`); never red.
+    package var planProgress: String?
     package var secondLine: SecondLine?
     /// `why(_:lang:nowMs:)`: which evidence put this row in its state.
     package var why: String
@@ -151,6 +156,7 @@ package struct TrayRowModel: Equatable {
         let project = place == headline ? "" : place
         let second = secondLine(row, facts: facts, why: why, lang: lang, nowMs: input.nowMs)
         let turnLabel = row.isYourTurn ? t(.yourTurn) : nil
+        let plan = Self.planBadge(row, facts: facts)
 
         var menu: [Button] = []
         if row.canFocusTerminal {
@@ -166,6 +172,7 @@ package struct TrayRowModel: Equatable {
         if !spokenAge.isEmpty { spoken.append(spokenAge) }
         if let second, !second.kind.isQuiet { spoken.append(second.text) } else { spoken.append(why) }
         if let second, second.kind.isQuiet { spoken.append(second.text) }
+        if let plan { spoken.append(String(format: t(.rowPlanSpoken), plan)) }
 
         return TrayRowModel(
             lang: lang,
@@ -177,6 +184,7 @@ package struct TrayRowModel: Equatable {
             headlineQuiet: row.isProcessOnly,
             age: age,
             turnLabel: turnLabel,
+            planProgress: plan,
             secondLine: second,
             why: why,
             canFocus: row.canFocusTerminal,
@@ -211,8 +219,13 @@ package struct TrayRowModel: Equatable {
         case .running(stalled: false):
             // Only the agent's own "started, not finished" says a tool is
             // live; a finished step never does.
+            // Several tools going at once: the newest, and how many others
+            // ("Now: Bash · npm test · 3m +2").
             if let live = facts.running {
-                return SecondLine(kind: .now, text: truncate(nowLine(live, nowMs: nowMs, lang: lang), 140))
+                var text = truncate(nowLine(live, nowMs: nowMs, lang: lang), 132)
+                let others = facts.runningSteps.count - 1
+                if others > 0 { text += " +\(others)" }
+                return SecondLine(kind: .now, text: text)
             }
             guard let step = facts.lastStep else { return nil }
             return SecondLine(kind: .step, text: truncate(stepLine(step, nowMs: nowMs, lang: lang), 140))
@@ -464,34 +477,67 @@ extension TrayRowModel {
 /// The row is one line; this is what a person reads after deciding to look,
 /// in the order it is worth reading: the headline as the page's title (in
 /// its header, once), the ask (and what to do about it), the why (when the
-/// row's second line did not already say it), the timeline of what Pulse
-/// heard (steps among it), the agent's last message, the last error and the
-/// folder — all from the session's own
-/// events (the row and its `SessionFacts`), in the words the row uses
-/// (`TrayRowModel`). Each thing is said
-/// once: no headline block under a header that names it, no state-and-age
-/// beside "This turn", no start time. How Pulse reads a session is not on
-/// the page; it is in Settings → Hooks → "Copy report". Nothing is shown as
-/// a placeholder: a fact Pulse does not have is not a row. Tokens, context,
-/// cost, model and plan are never shown — a decision.
+/// row's second line did not already say it), **Now** — while the turn is
+/// live, every tool the agent said started and has not finished, each with
+/// how long it has been going, and every subagent whose start was heard and
+/// whose end was not — then **This turn** (its clock and steps, the prompt,
+/// the tools it ran, the files it changed, the skills, MCP servers and
+/// subagents it used, the plan's progress, how the session started and why
+/// it ended — each only when known; `TurnDigest`), the timeline of what
+/// Pulse heard (a run of steps is one entry, its steps disclosed under it on
+/// request — `stepsShown`), the agent's last message, the last error and
+/// the folder — all from the session's own events (the row and its
+/// `SessionFacts`), in the words the row uses (`TrayRowModel`). Each thing
+/// is said once: no headline block under a header that names it, no
+/// state-and-age beside "This turn", no start time, no prompt that is the
+/// title. How Pulse reads a session is not on the page; it is in Settings →
+/// Hooks → "Copy report". Nothing is shown as a placeholder: a fact Pulse
+/// does not have is not a row. Tokens, context, cost, model and billing
+/// plan are never shown — a decision. (The agent's own to-do plan, its
+/// `meta` `plan`, is a fact of the turn and is shown.)
 package struct DetailModel: Equatable {
     package struct Fact: Equatable {
         package var label: String
         package var value: String
+        /// One item per line (the files): drawn on as many lines as it has.
+        package var multiline = false
+    }
+
+    /// One step behind a timeline entry: "Edit · Sources/App.swift · 1.2s",
+    /// and whether it failed.
+    package struct StepLine: Equatable {
+        package var text: String
+        package var failed: Bool
     }
 
     /// One heard line on the timeline: how long ago, the vendor's event
-    /// ("" when it is not a name) and what it did.
+    /// ("" when it is not a name) and what it did; for a run of steps, the
+    /// steps behind it (`steps`, the newest `SessionBook.maxStepsPerEntry`)
+    /// and how many earlier ones it no longer holds.
     package struct Entry: Equatable {
         package typealias Tone = SessionBook.Effect.Tone
         package var time: String
         package var event: String
         package var effect: String
         package var tone: Tone
+        /// The steps a run is made of, oldest first; empty for anything
+        /// that is not a run of two or more.
+        package var steps: [StepLine] = []
+        /// Steps of the run older than those it keeps.
+        package var earlier = 0
+
+        /// A run whose steps can be disclosed.
+        package var discloses: Bool { !steps.isEmpty }
     }
 
     /// What the detail page can ask for.
-    package enum Action: Equatable { case back, focus, dismiss }
+    package enum Action: Equatable {
+        case back, focus, dismiss
+        /// Show or hide the steps behind every run on the timeline.
+        case toggleSteps
+        /// Copy this turn's summary (`TurnSummary`) to the clipboard.
+        case copySummary
+    }
 
     package var lang: ResolvedLanguage
     package var key: SessionKey
@@ -505,12 +551,21 @@ package struct DetailModel: Equatable {
     /// `TrayRowModel.why` — nil when it is the row's own second line (a
     /// stalled row's why), which would say the same sentence twice.
     package var why: String?
+    /// Now: what the agent said started and has not finished, newest
+    /// first, and its live subagents — only while the turn is live.
+    package var now: [String] = []
+    /// "This turn", or "Last turn" once the turn is over.
+    package var turnHeading: String = ""
+    /// This turn's facts (`TurnDigest` and the turn's clock), each only
+    /// when known.
+    package var turn: [Fact] = []
     /// Up to `SessionBook.maxTimeline` heard lines, newest first.
     package var timeline: [Entry]
+    /// The steps behind each run are disclosed (`TrayKeys.State.disclosed`).
+    package var stepsShown = false
     package var lastMessage: String?
     package var error: String?
-    /// This turn (its duration — the page's one clock — and its steps) and
-    /// the folder.
+    /// The folder.
     package var facts: [Fact]
     /// "This agent doesn't report waits" — only for an agent whose hook
     /// cannot (`WaitingSource.none`); nil otherwise.
@@ -518,6 +573,8 @@ package struct DetailModel: Equatable {
     package var canFocus: Bool
     package var focusTitle: String
     package var canDismiss: Bool
+    /// There is a turn to summarize: "Copy this turn's summary".
+    package var canCopySummary = false
     /// What the last Go did when it did not land exactly (`RowNotice`) —
     /// the same words as the row.
     package var notice: RowNotice? = nil
@@ -528,40 +585,53 @@ package struct DetailModel: Equatable {
         lang: ResolvedLanguage,
         nowMs: Int64,
         notice: RowNotice? = nil,
-        connected: Bool = true
+        connected: Bool = true,
+        disclosed: Bool = false
     ) -> DetailModel {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         typealias Words = TrayRowModel
         let fresh = said.selfReportFresh(at: nowMs)
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let live = row.isRunning || row.isBlocked
+        let headline = Words.headline(row, facts: said, lang: lang, nowMs: nowMs)
 
         var facts: [Fact] = []
-        if row.isRunning || row.isBlocked {
-            let turn = Words.turnText(said, nowMs: nowMs, lang: lang)
-            if !turn.isEmpty { facts.append(Fact(label: t(.stepThisTurn), value: turn)) }
-        }
         if !row.displayPath.isEmpty { facts.append(Fact(label: t(.detailFolder), value: row.displayPath)) }
 
-        let timeline = said.timeline.reversed().map { heard in
-            Entry(
+        let timeline: [Entry] = said.timeline.reversed().map { heard in
+            var entry = Entry(
                 time: L10n.ago(min(heard.ms, nowMs), nowMs: nowMs, lang),
                 event: EventName.display(heard.event),
                 effect: Words.heardText(heard, lang: lang),
                 tone: heard.effect.tone
             )
+            if case .steps(let run) = heard.effect, run.count > 1, !heard.steps.isEmpty {
+                entry.steps = heard.steps.map { step in
+                    StepLine(text: Words.stepDetailText(step, cwd: row.cwd, home: home, lang: lang), failed: step.failed)
+                }
+                entry.earlier = max(0, run.count - heard.steps.count)
+            }
+            return entry
         }
         let why = Words.why(row, facts: said, lang: lang, nowMs: nowMs, connected: connected)
         let second = Words.secondLine(row, facts: said, why: why, lang: lang, nowMs: nowMs)
+        let turn = Words.turnFacts(row, facts: said, headline: headline, home: home, lang: lang, nowMs: nowMs)
+        let summarizable = !row.isProcessOnly && (said.turnSteps > 0 || !said.lastPrompt.isEmpty || !said.digest.isEmpty)
 
         return DetailModel(
             lang: lang,
             key: row.key,
             agent: row.agent,
             lamp: row.lamp,
-            headline: Words.headline(row, facts: said, lang: lang, nowMs: nowMs),
+            headline: headline,
             headlineQuiet: row.isProcessOnly,
             ask: Words.ask(row),
             why: second?.text == why ? nil : why,
+            now: live ? Words.nowItems(said, nowMs: nowMs, lang: lang) : [],
+            turnHeading: t(live ? .stepThisTurn : .detailLastTurn),
+            turn: turn,
             timeline: timeline,
+            stepsShown: disclosed && timeline.contains(where: \.discloses),
             lastMessage: fresh && !said.lastWords.isEmpty ? said.lastWords : nil,
             error: said.lastError.isEmpty ? nil : said.lastError,
             facts: facts,
@@ -569,8 +639,243 @@ package struct DetailModel: Equatable {
             canFocus: row.canFocusTerminal,
             focusTitle: Words.focusTitle(row, lang: lang),
             canDismiss: row.isBlocked,
+            canCopySummary: summarizable,
             notice: notice
         )
+    }
+}
+
+/// This turn's words — the detail page's Now and This turn, and the plan's
+/// quiet suffix on the row. Pure, like every sentence here.
+extension TrayRowModel {
+    /// Tools named in "This turn" before the rest is "…".
+    package static let toolsShown = 4
+    /// Files listed in "This turn" before the rest is "+N".
+    package static let filesShown = 5
+
+    /// The row's quiet plan suffix, "3/7": only on a live row (running,
+    /// stalled or blocked), only when the main agent reported a plan this
+    /// turn. Never red, never a colour of its own.
+    package static func planBadge(_ row: AgentRow, facts: SessionFacts) -> String? {
+        guard row.isRunning || row.isBlocked, let plan = facts.turnPlan else { return nil }
+        return "\(plan.done)/\(plan.total)"
+    }
+
+    /// "3/7 · Write the tests" — the plan's progress and the item in
+    /// progress, when it named one.
+    package static func planText(_ plan: SessionBook.PlanProgress) -> String {
+        let progress = "\(plan.done)/\(plan.total)"
+        return plan.now.isEmpty ? progress : "\(progress) · \(plan.now)"
+    }
+
+    /// One of the tools the agent said started and has not finished, on
+    /// the detail page's Now: "Bash · npm test · 3m" — how long it has
+    /// been going, from a minute on; "Subagent · …" when a subagent runs
+    /// it. Only ever given an entry of `SessionFacts.runningSteps`.
+    package static func liveText(_ live: SessionBook.Step, nowMs: Int64, lang: ResolvedLanguage) -> String {
+        var text = stepText(live)
+        if !live.sub.isEmpty { text = String(format: L10n.t(.timelineBySubagent, lang), text) }
+        let seconds = Double(nowMs - live.ms) / 1000
+        if live.ms > 0, seconds >= 60 { text += " · " + L10n.duration(seconds, lang) }
+        return text
+    }
+
+    /// The detail page's Now: every tool still going, newest first, then
+    /// every live subagent — "Subagent · Explore · 6 steps".
+    package static func nowItems(_ facts: SessionFacts, nowMs: Int64, lang: ResolvedLanguage) -> [String] {
+        var items: [String] = facts.runningSteps.reversed().map { liveText($0, nowMs: nowMs, lang: lang) }
+        for subagent in facts.digest.liveSubagents {
+            var parts: [String] = []
+            if !subagent.type.isEmpty { parts.append(subagent.type) }
+            if subagent.steps > 0 { parts.append(stepsText(subagent.steps, lang: lang)) }
+            if parts.isEmpty {
+                items.append(L10n.t(.detailSubagents, lang))
+            } else {
+                items.append(String(format: L10n.t(.timelineBySubagent, lang), parts.joined(separator: " · ")))
+            }
+        }
+        return items
+    }
+
+    /// "1 step" / "6 steps".
+    package static func stepsText(_ count: Int, lang: ResolvedLanguage) -> String {
+        count == 1 ? L10n.t(.turnStepsOne, lang) : String(format: L10n.t(.turnStepsN, lang), count)
+    }
+
+    /// One step behind a run, as the detail page discloses it: "Edit ·
+    /// Sources/App.swift · 1.2s" — its target relative to the session's
+    /// folder when it is a path inside it, "· failed" when it failed, how
+    /// long it ran when the vendor said; "Subagent · …" for a subagent's.
+    package static func stepDetailText(_ step: SessionBook.Step, cwd: String, home: String, lang: ResolvedLanguage) -> String {
+        var shown = step
+        shown.target = TitleHeuristics.relativePath(step.target, cwd: cwd, home: home)
+        var text = stepText(shown)
+        if !step.sub.isEmpty { text = String(format: L10n.t(.timelineBySubagent, lang), text) }
+        if step.failed { text += " · " + L10n.t(.stepFailedMark, lang) }
+        let took = tookText(step.tookMs, lang: lang)
+        if !took.isEmpty { text += " · " + took }
+        return text
+    }
+
+    /// The main agent's tools this turn, the most used first: "Edit 9 ·
+    /// Bash 6 · Read 5"; at most `limit` (nil: all), then "…".
+    package static func toolsText(_ digest: TurnDigest, limit: Int? = toolsShown) -> String {
+        let tools = digest.toolsByCount
+        let shown = limit.map { Array(tools.prefix($0)) } ?? tools
+        var text = shown.map { "\($0.name) \($0.count)" }.joined(separator: " · ")
+        if shown.count < tools.count { text += " · …" }
+        return text
+    }
+
+    /// The files this turn changed, relative to the session's folder: at
+    /// most `limit` (nil: all), then "+N" — "+N…" when more were heard than
+    /// the digest keeps. One per line.
+    package static func filesText(_ digest: TurnDigest, cwd: String, home: String, limit: Int? = filesShown) -> String {
+        let files = digest.files.map { TitleHeuristics.relativePath($0, cwd: cwd, home: home) }
+        let shown = limit.map { Array(files.prefix($0)) } ?? files
+        var lines = shown
+        let rest = files.count - shown.count
+        if rest > 0 || digest.filesOverflowed {
+            lines.append("+\(rest)" + (digest.filesOverflowed ? "…" : ""))
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// The subagents this turn: "2 · Explore · worker", each type once
+    /// ("Explore ×2" when two ran).
+    package static func subagentsText(_ digest: TurnDigest, lang: ResolvedLanguage) -> String {
+        var types: [TurnDigest.Count] = []
+        for subagent in digest.subagents where !subagent.type.isEmpty {
+            if let index = types.firstIndex(where: { $0.name == subagent.type }) {
+                types[index].count += 1
+            } else {
+                types.append(TurnDigest.Count(name: subagent.type, count: 1))
+            }
+        }
+        let count = String(format: L10n.t(.detailSubagentCount, lang), digest.subagents.count)
+        return ([count] + types.map { $0.count > 1 ? "\($0.name) ×\($0.count)" : $0.name }).joined(separator: " · ")
+    }
+
+    /// How the session started, when it was not a plain start: "Resumed
+    /// session", "After /clear"…; another word as the vendor said it; nil
+    /// for a plain start or none.
+    package static func startSourceText(_ source: String, lang: ResolvedLanguage) -> String? {
+        switch source.lowercased() {
+        case "", "startup", "new", "start", "init": return nil
+        case "resume", "resumed": return L10n.t(.sourceResume, lang)
+        case "clear": return L10n.t(.sourceClear, lang)
+        case "compact": return L10n.t(.sourceCompact, lang)
+        case "fork": return L10n.t(.sourceFork, lang)
+        default: return source
+        }
+    }
+
+    /// Why the session ended, in words; another word as the vendor said
+    /// it; nil none.
+    package static func endReasonText(_ reason: String, lang: ResolvedLanguage) -> String? {
+        switch reason.lowercased() {
+        case "": return nil
+        case "clear": return L10n.t(.endClear, lang)
+        case "logout": return L10n.t(.endLogout, lang)
+        case "prompt_input_exit": return L10n.t(.endPromptExit, lang)
+        case "quit", "exit": return L10n.t(.endQuit, lang)
+        case "user_close": return L10n.t(.endUserClose, lang)
+        case "archived": return L10n.t(.endArchived, lang)
+        case "error": return L10n.t(.endError, lang)
+        default: return reason
+        }
+    }
+
+    /// This turn, as the detail page lists it — each fact only when known:
+    /// its clock and steps ("14m · 23 steps (2 failed)", the clock only
+    /// while the turn is live), the prompt (unless it is the headline), the
+    /// main agent's tools, the files changed, the skills, the MCP servers,
+    /// the subagents, the plan reported this turn, how the session started
+    /// (unless plainly) and — for an ended session — why it ended.
+    package static func turnFacts(
+        _ row: AgentRow, facts said: SessionFacts, headline: String, home: String, lang: ResolvedLanguage, nowMs: Int64
+    ) -> [DetailModel.Fact] {
+        typealias Fact = DetailModel.Fact
+        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
+        guard !row.isProcessOnly else { return [] }
+        let live = row.isRunning || row.isBlocked
+        var facts: [Fact] = []
+        let clock = live ? turnText(said, nowMs: nowMs, lang: lang) : stepsOnlyText(said, lang: lang)
+        if !clock.isEmpty { facts.append(Fact(label: t(.stepThisTurn), value: clock)) }
+        let prompt = TitleHeuristics.firstLine(said.lastPrompt, limit: 120)
+        if !prompt.isEmpty, prompt != headline, prompt != row.task {
+            facts.append(Fact(label: t(.detailPrompt), value: prompt))
+        }
+        let digest = said.digest
+        let tools = toolsText(digest)
+        if !tools.isEmpty { facts.append(Fact(label: t(.detailTools), value: tools)) }
+        if !digest.files.isEmpty {
+            facts.append(Fact(label: t(.detailFiles), value: filesText(digest, cwd: row.cwd, home: home), multiline: true))
+        }
+        if !digest.skills.isEmpty { facts.append(Fact(label: t(.detailSkills), value: digest.skills.joined(separator: " · "))) }
+        if !digest.mcpServers.isEmpty { facts.append(Fact(label: t(.detailMCP), value: digest.mcpServers.joined(separator: " · "))) }
+        if !digest.subagents.isEmpty { facts.append(Fact(label: t(.detailSubagents), value: subagentsText(digest, lang: lang))) }
+        if let plan = said.turnPlan { facts.append(Fact(label: t(.detailPlan), value: planText(plan))) }
+        if let source = startSourceText(said.startSource, lang: lang) { facts.append(Fact(label: t(.detailStarted), value: source)) }
+        if case .recent(.ended) = row.status, let reason = endReasonText(said.endReason, lang: lang) {
+            facts.append(Fact(label: t(.detailEnded), value: reason))
+        }
+        return facts
+    }
+
+    /// A finished turn's steps without a clock (its duration against now
+    /// would be wrong): "23 steps (2 failed)"; "" none.
+    package static func stepsOnlyText(_ facts: SessionFacts, lang: ResolvedLanguage) -> String {
+        guard facts.turnSteps > 0 else { return "" }
+        let steps = stepsText(facts.turnSteps, lang: lang)
+        guard facts.turnFailedSteps > 0 else { return steps }
+        return String(format: L10n.t(.turnStepsFailed, lang), steps, facts.turnFailedSteps)
+    }
+}
+
+/// "Copy this turn's summary": the turn in plain text, for the person to
+/// paste where they keep notes — the title, the agent, the prompt's first
+/// line, the clock and steps, the tools, the files changed (relative to the
+/// session's folder), the skills, MCP servers and subagents, the plan and
+/// — once the turn is over — the last message's first line, in the
+/// interface's language, each only when known.
+///
+/// Owner decision: unlike Settings → Hooks → "Copy report"
+/// (`SettingsModel.report`), which is content-free by design (no path, no
+/// prompt, no project — it is what a person sends when Pulse misbehaves),
+/// this summary carries content — the prompt, the paths, the last words —
+/// because the person asks for exactly that, of one session, with one
+/// click, to their own clipboard. It is never written anywhere else. Pure.
+package enum TurnSummary {
+    package static func text(row: AgentRow, facts said: SessionFacts, lang: ResolvedLanguage, nowMs: Int64) -> String {
+        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
+        typealias Words = TrayRowModel
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let colon = lang == .zh ? "：" : ": "
+        var lines = [Words.headline(row, facts: said, lang: lang, nowMs: nowMs)]
+        var agentLine = row.agent.displayName
+        if !row.displayPath.isEmpty { agentLine += " · " + row.displayPath }
+        lines.append(agentLine)
+        func add(_ key: L10n.Key, _ value: String) {
+            if !value.isEmpty { lines.append(t(key) + colon + value) }
+        }
+        add(.detailPrompt, TitleHeuristics.firstLine(said.lastPrompt, limit: 200))
+        let live = row.isRunning || row.isBlocked
+        add(.stepThisTurn, live ? Words.turnText(said, nowMs: nowMs, lang: lang) : Words.stepsOnlyText(said, lang: lang))
+        let digest = said.digest
+        add(.detailTools, Words.toolsText(digest, limit: nil))
+        if !digest.files.isEmpty {
+            lines.append(t(.detailFiles) + colon)
+            let files = Words.filesText(digest, cwd: row.cwd, home: home, limit: nil)
+            lines += files.split(separator: "\n").map { "  " + String($0) }
+        }
+        add(.detailSkills, digest.skills.joined(separator: " · "))
+        add(.detailMCP, digest.mcpServers.joined(separator: " · "))
+        if !digest.subagents.isEmpty { add(.detailSubagents, Words.subagentsText(digest, lang: lang)) }
+        if let plan = said.turnPlan { add(.detailPlan, Words.planText(plan)) }
+        // While the turn goes on, the last words are an earlier turn's.
+        if !live { add(.detailLastMessage, TitleHeuristics.firstLine(said.lastWords, limit: 200)) }
+        return lines.joined(separator: "\n") + "\n"
     }
 }
 

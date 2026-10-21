@@ -107,6 +107,22 @@ package enum TitleHeuristics {
         return path
     }
 
+    /// A file as the person reads it beside its session: relative to the
+    /// session's folder when it is inside it (`Sources/App.swift`), else
+    /// under `~` when it is in the home directory, else as it was written
+    /// (a path that is already relative stays so). Pure.
+    package static func relativePath(_ raw: String, cwd: String, home: String) -> String {
+        let path = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard path.hasPrefix("/") else { return path }
+        var folder = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        while folder.count > 1, folder.hasSuffix("/") { folder.removeLast() }
+        if folder.hasPrefix("/"), folder.count > 1, path.hasPrefix(folder + "/") {
+            return String(path.dropFirst(folder.count + 1))
+        }
+        if !home.isEmpty, path.hasPrefix(home + "/") { return "~" + path.dropFirst(home.count) }
+        return path
+    }
+
     /// Every spelling of "the home directory" this data can produce
     /// (`-Users-name` decoded to `users-name`, the bare account name, `~`).
     package static func isHomeLike(_ raw: String, home: String) -> Bool {

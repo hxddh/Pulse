@@ -53,7 +53,7 @@ VIEWS = [
 PURE_FILES = [
     "AgentRow.swift", "TrayRowModel.swift", "TrayModels.swift", "SettingsModel.swift",
     "TrayState.swift", "WaitLedger.swift", "WaitingDelivery.swift", "SessionBook.swift",
-    "L10n.swift", "Connection.swift",
+    "L10n.swift", "Connection.swift", "TurnDigest.swift",
 ]
 QA_PURE_FILES = ["SurfaceFixtures.swift"]
 STORE = re.compile(r"\b(StatusStore|store|AppServices)\b")

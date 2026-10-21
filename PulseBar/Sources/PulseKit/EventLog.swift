@@ -304,8 +304,8 @@ package enum EventLog {
     /// through `SessionBook`, so its own rules say what a session needs:
     /// each group keeps its last `linesPerSession` lines, every line newer
     /// than `recentWindowMs`, and — whatever the budget — the lines its first
-    /// clock, title, turn clock, latest prompt and vendor name came from
-    /// (`SessionBook.Anchors`, none of them a block) and, while the book
+    /// clock, title, turn clock, latest prompt, vendor name and latest plan
+    /// came from (`SessionBook.Anchors`, none of them a block) and, while the book
     /// holds it blocked, the raise that turned it red with everything after
     /// it — so a block is never kept without the lines that answer it and
     /// never dropped while it is open. Over `budget`, the per-session count

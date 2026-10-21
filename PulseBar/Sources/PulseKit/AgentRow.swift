@@ -121,7 +121,8 @@ package struct SessionFacts: Equatable, Sendable {
     /// The vendor event of its newest line.
     package var lastEvent = ""
     /// The last `SessionBook.maxTimeline` lines it heard, oldest first —
-    /// the detail page's timeline.
+    /// the detail page's timeline (a run of steps is one entry, its steps
+    /// behind it, `SessionBook.Heard.steps`).
     package var timeline: [SessionBook.Heard] = []
     /// Steps the current turn took (its subagents' among them), and how
     /// many failed — counted as the lines apply, so a replay counts them
@@ -146,6 +147,10 @@ package struct SessionFacts: Equatable, Sendable {
     /// The files the latest batch said changed (`meta` `files`); empty
     /// none.
     package var changedFiles: [String] = []
+    /// What the current turn did — its tools, the files it changed, the
+    /// skills, MCP servers and subagents it used (`TurnDigest`) — started
+    /// over with the turn, rebuilt by the replay like everything here.
+    package var digest = TurnDigest()
 
     /// Nothing said: what a key the book does not hold has. (The
     /// memberwise initializer is the module's; the app takes this.)
@@ -154,6 +159,14 @@ package struct SessionFacts: Equatable, Sendable {
     /// The newest tool still running — what the row says runs now ("Now:
     /// …"); nil none.
     package var running: SessionBook.Step? { runningSteps.last }
+
+    /// The plan the main agent reported this turn (no earlier than the
+    /// turn's start); nil when it reported none — an older plan is not this
+    /// turn's.
+    package var turnPlan: SessionBook.PlanProgress? {
+        guard let plan, plan.total > 0, plan.ms >= turnStartMs else { return nil }
+        return plan
+    }
 
     /// The newest clock, in ms; 0 unknown.
     package var lastActivityMs: Int64 { max(lastEventMs, activityMs) }

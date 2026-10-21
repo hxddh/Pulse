@@ -1442,10 +1442,10 @@ struct RowWordsTests {
         #expect(alerts == 1, "only the raise is red")
         let failures = detail.timeline.filter { $0.tone == .failure }.count
         #expect(failures == 1, "the run with a failed step")
-        let turn = detail.facts.first { $0.label == L10n.t(.stepThisTurn, .en) }
+        let turn = detail.turn.first { $0.label == L10n.t(.stepThisTurn, .en) }
         #expect(turn?.value == "14m · 8 steps (1 failed)")
         let zh = SurfaceFixtures.detailTimeline(lang: .zh)
-        let zhTurn = zh.facts.first { $0.label == "本轮" }
+        let zhTurn = zh.turn.first { $0.label == "本轮" }
         #expect(zhTurn?.value == L10n.duration(14 * 60, .zh) + " · 8 步（1 步失败）")
         let zhEffects = zh.timeline.map { $0.effect }
         #expect(zhEffects.contains(L10n.waitKind(.permission, .zh)))
@@ -1758,7 +1758,9 @@ struct RowWordsTests {
     @Test func theDetailSaysEachThingOnce() {
         let steps = SurfaceFixtures.detailTimeline(lang: .en)
         let labels = steps.facts.map { $0.label }
-        #expect(labels == [L10n.t(.stepThisTurn, .en), L10n.t(.detailFolder, .en)], "one clock, then the folder")
+        #expect(labels == [L10n.t(.detailFolder, .en)], "the folder")
+        let turnLabels = steps.turn.map { $0.label }
+        #expect(turnLabels == [L10n.t(.stepThisTurn, .en), L10n.t(.detailTools, .en)], "one clock, no prompt that is the title")
         let running = SurfaceFixtures.rowTimeline()
         let headline = TrayRowModel.headline(running.row, facts: running.facts, lang: .en, nowMs: SurfaceFixtures.nowMs)
         #expect(steps.headline == headline)
@@ -1898,5 +1900,201 @@ struct MainMenuTests {
         #expect(keys[",|\(command)"] == #selector(MainMenuActions.settings(_:)))
         let zh = MainMenu.make(lang: .zh).items.map { $0.title }
         #expect(zh.contains(L10n.t(.menuEdit, .zh)))
+    }
+}
+
+/// This turn's words: the row's "+2" and quiet plan, the detail page's Now
+/// and This turn, the disclosed steps, the keys that disclose them and the
+/// summary a person can copy.
+@Suite("This turn")
+struct TurnWordsTests {
+    private func press(_ state: TrayKeys.State, _ keys: [TrayKeys.Key], rows: [TrayKeys.Row]) -> TrayKeys.Outcome {
+        var outcome = TrayKeys.Outcome(state: state, effect: nil, handled: true)
+        for key in keys { outcome = TrayKeys.reduce(outcome.state, key, rows: rows) }
+        return outcome
+    }
+
+    /// Several tools going at once: the row says the newest and how many
+    /// others; the plan the agent reported this turn is a quiet "3/7".
+    @Test func theRowSaysParallelToolsAndThePlan() {
+        let row = SurfaceFixtures.rowModel(SurfaceFixtures.rowParallelPlan(), lang: .en)
+        #expect(row.secondLine?.kind == .now)
+        #expect(row.secondLine?.text == "Now: bash · npm test · 3m +2")
+        #expect(row.planProgress == "3/7")
+        #expect(row.accessibilityLabel.contains("plan 3/7"))
+        let zh = SurfaceFixtures.rowModel(SurfaceFixtures.rowParallelPlan(), lang: .zh)
+        #expect(zh.secondLine?.text == "当前：bash · npm test · " + L10n.duration(3 * 60, .zh) + " +2")
+    }
+
+    /// The plan is said only on a live row, only when it was reported this
+    /// turn.
+    @Test func thePlanIsOnlyThisTurnsOnALiveRow() {
+        var sample = SurfaceFixtures.rowParallelPlan()
+        sample.row.status = .yourTurn(sinceMs: SurfaceFixtures.nowMs - 60_000)
+        #expect(SurfaceFixtures.rowModel(sample, lang: .en).planProgress == nil, "a finished turn's row says no plan")
+        var older = SurfaceFixtures.rowParallelPlan()
+        older.facts.turnStartMs = SurfaceFixtures.nowMs - 60_000
+        #expect(SurfaceFixtures.rowModel(older, lang: .en).planProgress == nil, "an earlier turn's plan is not this turn's")
+        let one = SurfaceFixtures.rowModel(SurfaceFixtures.rowLiveTool(), lang: .en)
+        #expect(one.secondLine?.text == "Now: bash · npm test · 3m", "one tool: no count")
+        #expect(one.planProgress == nil)
+    }
+
+    /// Now: every tool still going with its own clock, newest first, and
+    /// the subagent whose start was heard and whose end was not.
+    @Test func theDetailSaysWhatGoesOnNow() {
+        let detail = SurfaceFixtures.detail(SurfaceFixtures.rowTurnDigest(), lang: .en)
+        #expect(detail.now == [
+            "Bash · swift build -c release · 1m",
+            "Bash · swift test · 3m",
+            "Subagent · Explore · 3 steps",
+        ])
+        for item in detail.now {
+            #expect(!item.lowercased().contains("running"), "\(item)")
+        }
+        let ended = SurfaceFixtures.detail(SurfaceFixtures.rowFailedTurn(), lang: .en)
+        #expect(ended.now.isEmpty, "only while the turn is live")
+    }
+
+    /// This turn: each fact only when known — the clock and steps, the
+    /// prompt that is not the title, the main agent's tools, the files
+    /// relative to the folder, the skill, the MCP server, the subagent, the
+    /// plan, how the session started.
+    @Test func theDetailSaysThisTurn() {
+        let detail = SurfaceFixtures.detail(SurfaceFixtures.rowTurnDigest(), lang: .en)
+        #expect(detail.turnHeading == "This turn")
+        let pairs = detail.turn.map { "\($0.label): \($0.value)" }
+        #expect(pairs == [
+            "This turn: 14m · 12 steps (1 failed)",
+            "Prompt: Make the jitter configurable and test it",
+            "Tools: Edit 4 · Read 1 · TodoWrite 1 · Skill 1 · …",
+            "Files: Sources/Upload/Queue.swift\nSources/Upload/Backoff.swift\nTests/UploadTests/BackoffTests.swift",
+            "Skills: swift-testing",
+            "MCP: github",
+            "Subagents: 1 · Explore",
+            "Plan: 3/7 · Write the backoff tests",
+            "Started: Resumed session",
+        ])
+        let files = detail.turn.first { $0.label == "Files" }
+        #expect(files?.multiline == true)
+        #expect(detail.canCopySummary)
+        let zh = SurfaceFixtures.detail(SurfaceFixtures.rowTurnDigest(), lang: .zh)
+        let zhPairs = zh.turn.map { "\($0.label)：\($0.value)" }
+        #expect(zhPairs.first == "本轮：" + L10n.duration(14 * 60, .zh) + " · 12 步（1 步失败）")
+        #expect(zhPairs.contains("子代理：1 个 · Explore"))
+        #expect(zhPairs.contains("开始：恢复的会话"))
+        #expect(zh.turnHeading == "本轮")
+        #expect(L10n.t(.detailNowHeading, .zh) == "正在进行")
+    }
+
+    /// More than five files: five, then "+N"; a finished turn says its
+    /// steps without a clock, under "Last turn", and an ended session why.
+    @Test func aFinishedTurnAndManyFiles() {
+        var sample = SurfaceFixtures.rowTurnDigest()
+        sample.row.status = .recent(.ended(atMs: SurfaceFixtures.nowMs - 60_000))
+        sample.facts.endReason = "prompt_input_exit"
+        for index in 0..<4 { sample.facts.digest.addFiles(["/Users/me/code/app/Sources/F\(index).swift"]) }
+        let detail = SurfaceFixtures.detail(sample, lang: .en)
+        #expect(detail.turnHeading == "Last turn")
+        #expect(detail.now.isEmpty)
+        let clock = detail.turn.first { $0.label == "This turn" }
+        #expect(clock?.value == "12 steps (1 failed)", "no clock against now for a turn that is over")
+        let files = detail.turn.first { $0.label == "Files" }
+        #expect(files?.value.split(separator: "\n").last == "+2")
+        let ended = detail.turn.first { $0.label == "Ended" }
+        #expect(ended?.value == "Exited at its prompt")
+        #expect(TrayRowModel.startSourceText("startup", lang: .en) == nil, "a plain start is not said")
+        #expect(TrayRowModel.startSourceText("clear", lang: .zh) == "/clear 之后")
+    }
+
+    /// The timeline discloses the steps behind each run: each step's
+    /// target relative to the folder, a failure marked, its duration.
+    @Test func theTimelineDisclosesARunsSteps() throws {
+        let folded = SurfaceFixtures.detailTimeline(lang: .en)
+        #expect(!folded.stepsShown)
+        let open = SurfaceFixtures.detail(SurfaceFixtures.rowTimeline(), lang: .en, disclosed: true)
+        #expect(open.stepsShown)
+        let first = try #require(open.timeline.first { $0.effect == "Read · Edit ×3" })
+        let texts = first.steps.map { $0.text }
+        #expect(texts == [
+            "Read · Sources/Upload/Queue.swift",
+            "Edit · Sources/Upload/Queue.swift",
+            "Edit · Sources/Upload/Queue.swift",
+            "Edit · Sources/Upload/Queue.swift",
+        ])
+        let failedRun = try #require(open.timeline.first { $0.effect == "Edit · Bash · 1 failed" })
+        let failedTexts = failedRun.steps.map { $0.text }
+        #expect(failedTexts == ["Edit · Sources/Upload/Backoff.swift", "Bash · swift test · failed · 2.3s"])
+        #expect(failedRun.steps.last?.failed == true)
+        let single = try #require(open.timeline.first)
+        #expect(single.steps.isEmpty, "a single step has nothing to disclose")
+        let step = SessionBook.Step(tool: "Edit", target: "/Users/me/code/app/Sources/App.swift", ms: 0, tookMs: 1_200)
+        let zh = TrayRowModel.stepDetailText(step, cwd: "/Users/me/code/app", home: "/Users/me", lang: .zh)
+        #expect(zh == "Edit · Sources/App.swift · 1.2秒")
+        let outside = TitleHeuristics.relativePath("/Users/me/notes/a.md", cwd: "/Users/me/code/app", home: "/Users/me")
+        #expect(outside == "~/notes/a.md")
+    }
+
+    /// → (or Space) on the detail page discloses the steps — only when its
+    /// timeline has a run; ← hides them before it goes back; Esc goes back
+    /// at once; a page opens folded.
+    @Test func keysDiscloseTheSteps() {
+        let rows = [TrayKeys.Row(key: "a", discloses: true), TrayKeys.Row(key: "b")]
+        let open = TrayKeys.State(selected: "a", detail: "a")
+        let shown = press(open, [.right], rows: rows)
+        #expect(shown.state.disclosed)
+        #expect(shown.state.detail == "a")
+        let space = press(open, [.space], rows: rows)
+        #expect(space.state.disclosed)
+        let hidden = press(shown.state, [.left], rows: rows)
+        #expect(!hidden.state.disclosed)
+        #expect(hidden.state.detail == "a", "← hides the steps first")
+        let back = press(hidden.state, [.left], rows: rows)
+        #expect(back.state.detail == nil)
+        let escape = press(shown.state, [.escape], rows: rows)
+        #expect(escape.state.detail == nil)
+        #expect(!escape.state.disclosed)
+        let nothing = press(TrayKeys.State(selected: "b", detail: "b"), [.right], rows: rows)
+        #expect(!nothing.state.disclosed, "no run, nothing to disclose")
+        let reopened = press(escape.state, [.right], rows: rows)
+        #expect(reopened.state.detail == "a")
+        #expect(!reopened.state.disclosed, "a page opens folded")
+        let normalized = TrayKeys.normalize(TrayKeys.State(selected: "a", detail: nil, disclosed: true), rows: rows)
+        #expect(!normalized.disclosed)
+    }
+
+    /// The summary: the turn in plain text, in the interface's language —
+    /// content the person asked for (unlike the content-free report).
+    @Test func theSummarySaysTheTurn() {
+        let sample = SurfaceFixtures.rowTurnDigest()
+        let text = TurnSummary.text(row: sample.row, facts: sample.facts, lang: .en, nowMs: SurfaceFixtures.nowMs)
+        let lines = text.split(separator: "\n").map(String.init)
+        #expect(lines.first == "Add retry with jitter to the upload queue")
+        #expect(lines.dropFirst().first?.hasPrefix("Claude") == true)
+        for expected in [
+            "Prompt: Make the jitter configurable and test it",
+            "This turn: 14m · 12 steps (1 failed)",
+            "Tools: Edit 4 · Read 1 · TodoWrite 1 · Skill 1 · github · search_issues 1 · Bash 1",
+            "Files:",
+            "  Sources/Upload/Queue.swift",
+            "  Tests/UploadTests/BackoffTests.swift",
+            "Skills: swift-testing",
+            "MCP: github",
+            "Subagents: 1 · Explore",
+            "Plan: 3/7 · Write the backoff tests",
+        ] {
+            #expect(lines.contains(expected), "\(expected)")
+        }
+        let quoted = lines.contains { $0.hasPrefix("Last message") }
+        #expect(!quoted, "while the turn goes on, the last words are an earlier turn's")
+        let zh = TurnSummary.text(row: sample.row, facts: sample.facts, lang: .zh, nowMs: SurfaceFixtures.nowMs)
+        #expect(zh.contains("提示：Make the jitter configurable and test it"))
+        #expect(zh.contains("技能：swift-testing"))
+        var done = sample
+        done.row.status = .yourTurn(sinceMs: SurfaceFixtures.nowMs - 60_000)
+        done.facts.lastWords = "Jitter is configurable.\nTests pass."
+        let finished = TurnSummary.text(row: done.row, facts: done.facts, lang: .en, nowMs: SurfaceFixtures.nowMs)
+        #expect(finished.contains("Last message: Jitter is configurable.\n"))
+        #expect(finished.contains("This turn: 12 steps (1 failed)"))
     }
 }

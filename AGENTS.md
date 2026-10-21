@@ -54,9 +54,10 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
   (or another subagent) raised, never revives a turn that has ended, and its
   prompt is never the person's prompt (no title, no turn clock); its steps
   are marked as its own. A Pi subagent (`--mode json`) sends nothing.
-- **No quota, cost or reset HUD.** Tokens, context, cost, model and plan are
-  not shown and no source reads a `usage` / `token_count` / `rate_limits` /
-  `cost` field. What a row says comes from the events only; Pulse reads no
+- **No quota, cost or reset HUD.** Tokens, context, cost, model and billing
+  plan are not shown and no source reads a `usage` / `token_count` /
+  `rate_limits` / `cost` field (the agent's own to-do plan, `meta` `plan`, is
+  a fact of the turn and is shown). What a row says comes from the events only; Pulse reads no
   vendor file (no session store, no transcript) — besides the hook configs
   the installer edits and, read-only for Settings, the vendor settings
   that silence hooks (`HookContract.offSwitches`).

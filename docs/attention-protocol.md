@@ -61,7 +61,8 @@ granted. The first line is the header:
   the lines a replay rebuilds its own facts from (`SessionBook.Anchors`: its
   first line that raises nothing — its first clock — the prompt its title
   came from, the line that started its turn, its latest prompt that says
-  something and the line its vendor name came from) and, while the replay
+  something, the line its vendor name came from and the line the main
+  agent's latest plan came from) and, while the replay
   holds it blocked, the raise that turned it red with every line after it.
   An answered block is never kept without its answer. Over half a MiB
   the per-session count and the window halve until it fits. The line being
@@ -197,7 +198,7 @@ as spelled in the table — no alias, no vendor word, no guess from free text.
 - Every line applies, in `seq` order, to its session (`SessionKey`: agent +
   session, or agent + folder when it names none). `ignored` lines change no
   state and make no session; one that names a session the reader holds goes
-  on that session's timeline (its last twelve heard lines, with what each
+  on that session's timeline (its last forty heard lines, with what each
   did — rebuilt by the replay, kept nowhere else).
 - The `event` column is carried, never read for state: a session keeps the
   event that put it in its current state (a re-raise inside the grace keeps

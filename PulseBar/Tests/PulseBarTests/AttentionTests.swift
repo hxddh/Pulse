@@ -2604,6 +2604,38 @@ struct EventLogTests {
         #expect(after?.title == "Fix the login redirect")
     }
 
+    /// A compaction keeps the line the main agent's latest plan came from
+    /// (`SessionBook.Anchors.plan`), whatever the budget: after a rewrite
+    /// and a replay the row's "3/7" and the detail page's plan are the same.
+    @Test func compactionKeepsTheLatestPlanLine() {
+        let now = t0
+        let base = now - 5 * Self.hour
+        var lines = [
+            record(.start, base, session: "t"),
+            record(.working, base + 1_000, session: "t", message: "Ship the upload queue"),
+        ]
+        var plan = record(.tool, base + 2_000, session: "t", tool: "TodoWrite")
+        plan.category = .plan
+        plan.meta = LineMeta(plan: LineMeta.Plan(done: 2, total: 5), planNow: "Write the tests")
+        lines.append(plan)
+        for index in 0..<300 { lines.append(record(.tool, base + 10_000 + Int64(index), session: "t", tool: "Edit")) }
+        lines = numbered(lines)
+        func replay(_ records: [AttentionRecord]) -> SessionBook.Session? {
+            var book = SessionBook()
+            for record in records { book.apply(record, nowMs: now) }
+            return book.sessions[SessionKey(.claude, "t")]
+        }
+        let kept = EventLog.compact(lines, nowMs: now, budget: 1_000)
+        let planKept = kept.contains { $0.seq == 3 }
+        #expect(planKept, "the plan's line survives a tight budget")
+        let before = replay(lines)
+        let after = replay(kept)
+        #expect(before?.plan?.total == 5)
+        #expect(after?.plan == before?.plan)
+        #expect(after?.turnPlan == before?.turnPlan)
+        #expect(after?.turnStartMs == before?.turnStartMs)
+    }
+
     /// The record being appended is always in the file after its own
     /// compaction — even one older than the retention window.
     @Test func theAppendedRecordSurvivesItsOwnCompaction() throws {
