@@ -111,7 +111,9 @@ script; an interpreter whose arguments are all empty adds its argv[0] —
 Node's `process.title = "pi"` overwrites argv in place on macOS, leaving
 `node` with `["pi", "", …]`), on path-segment boundaries, deny lists first (`pi` is not `pip`,
 `pinentry-mac` is not Pi, Cursor's worker daemon is not a session). A
-wrapper and its child are one family. It never runs `ps` or `lsof`. A
+wrapper and its child are one family; a service that serves many
+sessions (`AgentProcesses.isService`) is not a session and gets no row. It
+never runs `ps` or `lsof`. A
 `DispatchSource` exit source per session pid (`ProcessExitWatch`) ends a
 session the moment its process exits; `AgentProcesses.stillRuns` catches a
 reused pid. The hook finds its agent's pid by walking its own parent chain
@@ -140,23 +142,65 @@ every surface is a value with a fixture in
 
 ## Landing — how ↩, a click or a banner reaches the prompt
 
-The hook records where its session lives (the v8 `landing` column, most
-specific first): `tmux:%3;tmuxsock:<socket>;iterm:w0t1p0:<uuid>;tty:/dev/ttys004;term:<TERM_PROGRAM>;app:<__CFBundleIdentifier>`.
-`LandingPlan.make(handle:cwd:pid:hostApp:)` (pure, once per projection)
-turns it into ordered steps; `TerminalFocus.land` (on the click) runs them
-until one succeeds and reports **exact**, **app only** or **failed** — never
-rounded up. The process table only fills what the hook did not say (tty,
-Warp, host editor) and gives process-only rows their fallback.
+The hook records where its session lives (the `landing` column, most
+specific first, whole fields within the column's 240 characters):
+`detached:1;tmux:%3;tmuxsock:<socket>;zellij:<ZELLIJ_PANE_ID>;zellijsession:<ZELLIJ_SESSION_NAME>;wezterm:<WEZTERM_PANE>;weztermsock:<WEZTERM_UNIX_SOCKET>;kitty:<KITTY_WINDOW_ID>;kittysock:<KITTY_LISTEN_ON>;iterm:w0t1p0:<uuid>;tty:/dev/ttys004;term:<TERM_PROGRAM>;app:<__CFBundleIdentifier>;host:<HostAppKind | other>`
+(an unknown key is ignored). `host:` is the nearest app on the hook's
+parent chain, by executable path: a `HostAppKind`, or `other` for an app
+bundle no host names. `LandingPlan.make(handle:cwd:pid:hostApp:)` (pure,
+once per projection) turns it into ordered steps; `TerminalFocus.land` (on
+the click) runs them until one succeeds and reports **exact**, **app only**
+or **failed** — never rounded up. The process table only fills what the
+hook did not say (tty, Warp, host) and gives process-only rows their
+fallback.
 
 | Handle | Steps | Precision |
 | --- | --- | --- |
 | `tmux:` (+ `tmuxsock:`) | `tmux [-S sock] switch-client ; select-window ; select-pane -t %N`, then activate the app owning the tmux client, else the `term:` / `app:` app | exact |
+| `zellij:` + `zellijsession:`, a `term:` / `app:` terminal | `zellij --session <name> action focus-pane-id N` (Zellij 0.44.1+; Homebrew, `/usr/local` or cargo path), then activate that terminal | exact |
+| `wezterm:` + `term:WezTerm` (or none) | `<WezTerm.app>/Contents/MacOS/wezterm cli --no-auto-start activate-pane --pane-id N` (`WEZTERM_UNIX_SOCKET` = `weztermsock:` when given), then activate WezTerm | exact |
+| `kitty:` + `kittysock:unix:/…` (no other `term:`) | `<kitty.app>/Contents/MacOS/kitten @ --to <listen_on> focus-window --match id:N` (else `kitty @ …`), then activate kitty | exact |
 | `iterm:` + `term:iTerm.app` | AppleScript: select the session whose `unique id` matches | exact |
 | `tty:` + Terminal / iTerm (or unknown) | AppleScript tab search by tty (running apps only) | exact |
-| `term:ghostty` / `WezTerm` / `kitty` / `WarpTerminal` | activate the running app | app |
-| `term:vscode` (`app:` tells Cursor, Windsurf… apart), `zed`, a host editor on the parent chain | `open -b <bundle> <cwd>`, then activate | app |
+| `term:ghostty` / `WarpTerminal`, `kitty:` without a socket, a WezTerm pane the CLI did not select | activate the running app | app |
+| `term:vscode` (`app:` tells Cursor, Windsurf… apart), `zed`, an editor `host:` | `open -b <bundle> <cwd>`, then activate | app |
 | none, live pid | activate the first regular app on the pid's parent chain | app |
-| none | no Go; ↩ and banners open the detail page | — |
+| `detached:1` + an editor `host:` / `app:` | `open -b <bundle> <cwd>`, then activate | app |
+| `detached:1` + an agent app `host:` (Codex / ChatGPT, Claude, OpenCode, GitHub Copilot) | activate that app | app |
+| `detached:1` + `host:other`, live pid | activate the pid's owner app | app |
+| `detached:1` alone, or none | no Go; ↩ and banners open the detail page | — |
+
+A terminal's own CLI runs from inside the running app's bundle, found by
+its bundle id (`NSRunningApplication.bundleURL`) — never `PATH` (a GUI app
+sees no shell's), never a shell, never a path read from the log; the pane
+or window id must be digits, kitty's address a unix socket path (a `tcp:`
+address would be a network connection). It runs through `ProcessIO` with a
+2 s deadline, only on a click: running it is the click's action, not an
+observation (`catalog_check`: only `TerminalFocus` runs a subprocess). A
+terminal that is not running holds no session; nothing is launched
+(`--no-auto-start`). kitty is reached only when the person enabled remote
+control with a `listen_on` socket — `KITTY_LISTEN_ON` is set only then.
+Ghostty and Warp have no interface that selects a tab or pane from
+outside: they land on the app. Zellij is reached from outside its session
+(`zellij --session`), but focusing the pane does not bring forward the
+terminal its client runs in: that is the terminal its environment names
+(`term:` / `app:`), and with none known a Zellij pane is no landing. A
+Zellij older than 0.44.1 refuses `focus-pane-id` and the click falls
+through to that terminal's app.
+
+**No terminal (`detached:1`).** No process on the hook's chain has a
+controlling terminal — the hook, the agent and its parent share none: a
+daemon (Claude's background sessions), a managed service (OpenCode's
+server, `codex app-server`), or an app (Codex / ChatGPT, VS Code, Cursor,
+Claude, OpenCode Desktop, GitHub Copilot). The environment it carries was
+inherited from whoever started it, so its terminal handles are not this
+session's and are not written; only `detached:1`, `app:` when it names a
+host, and `host:`. Such a session lands on its host app, or — a daemon
+launchd adopted, with no app on its chain — offers no Go, so ↩ and a
+banner open the row's detail page instead of a wrong terminal. A service
+that serves many sessions is no session's process: the hook records no pid
+for a session it serves (`AgentProcesses.isService`, the catalog's
+`serviceArguments`), so its sessions leave by the time bounds, not with it.
 
 The AppleScript steps are always planned: no Pulse setting gates them, and
 macOS's own Automation prompt on the first Go is the consent. The label is

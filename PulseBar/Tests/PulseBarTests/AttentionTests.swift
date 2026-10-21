@@ -1216,6 +1216,145 @@ final class HookLandingTests: XCTestCase {
         XCTAssertEqual(HookLanding.handles(environment: [:], tty: "??"), "", "only a device path is a tty")
     }
 
+    /// WezTerm's pane and GUI socket, kitty's window and its remote-control
+    /// socket (a unix one only: `tcp:` is a network address).
+    func testWezTermAndKittySayTheirOwnPaneAndSocket() {
+        XCTAssertEqual(
+            HookLanding.handles(environment: [
+                "WEZTERM_PANE": "3",
+                "WEZTERM_UNIX_SOCKET": "/Users/me/.local/share/wezterm/gui-sock-4412",
+                "TERM_PROGRAM": "WezTerm",
+            ], tty: "/dev/ttys004"),
+            "wezterm:3;weztermsock:/Users/me/.local/share/wezterm/gui-sock-4412;tty:/dev/ttys004;term:WezTerm"
+        )
+        XCTAssertEqual(
+            HookLanding.handles(environment: [
+                "KITTY_WINDOW_ID": "5",
+                "KITTY_LISTEN_ON": "unix:/tmp/kitty-501",
+                "__CFBundleIdentifier": "net.kovidgoyal.kitty",
+            ], tty: "/dev/ttys003"),
+            "kitty:5;kittysock:unix:/tmp/kitty-501;tty:/dev/ttys003;app:net.kovidgoyal.kitty"
+        )
+        XCTAssertEqual(
+            HookLanding.handles(environment: ["KITTY_WINDOW_ID": "5", "KITTY_LISTEN_ON": "tcp:localhost:12488"], tty: nil),
+            "kitty:5"
+        )
+        XCTAssertEqual(
+            HookLanding.handles(environment: ["WEZTERM_PANE": "3", "WEZTERM_UNIX_SOCKET": "relative"], tty: nil),
+            "wezterm:3"
+        )
+        XCTAssertEqual(
+            HookLanding.handles(environment: [
+                "ZELLIJ": "0", "ZELLIJ_PANE_ID": "2", "ZELLIJ_SESSION_NAME": "pretentious-cat", "TERM_PROGRAM": "iTerm.app",
+            ], tty: "/dev/ttys009"),
+            "zellij:2;zellijsession:pretentious-cat;tty:/dev/ttys009;term:iTerm.app"
+        )
+        XCTAssertEqual(HookLanding.handles(environment: ["ZELLIJ_PANE_ID": "2"], tty: nil), "", "a pane without its session cannot be reached")
+        let wezterm = LandingHandle(HookLanding.handles(environment: ["WEZTERM_PANE": "3", "WEZTERM_UNIX_SOCKET": "/s"], tty: nil))
+        XCTAssertEqual(wezterm.weztermPane, "3")
+        XCTAssertEqual(wezterm.weztermSocket, "/s")
+    }
+
+    /// No terminal anywhere on the chain: the environment's terminal is
+    /// whoever started the service or daemon, so none of it is written —
+    /// only that the session is detached, a host's own bundle id and the
+    /// app the chain runs in.
+    func testADetachedSessionKeepsNoTerminalHandle() {
+        let inherited = [
+            "TMUX": "/private/tmp/tmux-501/default,1,0",
+            "TMUX_PANE": "%3",
+            "ITERM_SESSION_ID": "w0t1p0:ABCD",
+            "WEZTERM_PANE": "4",
+            "KITTY_WINDOW_ID": "2",
+            "TERM_PROGRAM": "iTerm.app",
+            "__CFBundleIdentifier": "com.googlecode.iterm2",
+        ]
+        XCTAssertEqual(HookLanding.handles(environment: inherited, tty: nil, detached: true), "detached:1")
+        XCTAssertEqual(HookLanding.handles(environment: inherited, tty: nil, host: "other", detached: true), "detached:1;host:other")
+        XCTAssertEqual(
+            HookLanding.handles(environment: ["__CFBundleIdentifier": "com.openai.codex"], tty: nil, host: "codexApp", detached: true),
+            "detached:1;app:com.openai.codex;host:codexApp"
+        )
+        let handle = LandingHandle(HookLanding.handles(environment: inherited, tty: nil, host: "vsCode", detached: true))
+        XCTAssertTrue(handle.detached)
+        XCTAssertEqual(handle.hostKind, .vsCode)
+        XCTAssertEqual(handle.tmuxPane, "")
+        XCTAssertEqual(handle.app, "")
+        // In a terminal only a known host is said; `other` would say nothing.
+        XCTAssertEqual(HookLanding.handles(environment: [:], tty: "/dev/ttys001", host: "vsCode"), "tty:/dev/ttys001;host:vsCode")
+        XCTAssertEqual(HookLanding.handles(environment: [:], tty: "/dev/ttys001", host: "other"), "tty:/dev/ttys001")
+    }
+
+    /// The column's bound keeps whole fields: a socket path is never cut.
+    func testTheLandingBudgetKeepsWholeFields() {
+        let long = String(repeating: "x", count: 300)
+        XCTAssertEqual(HookLanding.bounded(["a:1", "sock:/" + long, "b:2"]), "a:1;b:2")
+        let handles = HookLanding.handles(
+            environment: ["TMUX_PANE": "%3", "TMUX": "/" + long + ",1,0", "TERM_PROGRAM": "tmux"],
+            tty: "/dev/ttys004"
+        )
+        XCTAssertEqual(handles, "tmux:%3;tty:/dev/ttys004;term:tmux")
+        XCTAssertLessThanOrEqual(HookLanding.bounded(Array(repeating: "k:" + String(repeating: "v", count: 30), count: 20)).count, HookLanding.budget)
+    }
+
+    /// The app the hook's chain runs in, nearest first; `other` for an app
+    /// no host names; nothing for a daemon launchd adopted.
+    func testTheHostIsTheNearestAppOnTheChain() {
+        func host(_ paths: [Int32: String], _ parents: [Int32: Int32]) -> String {
+            HookLanding.host(start: 300, parentOf: { parents[$0] }, pathOf: { paths[$0] ?? "" })
+        }
+        let chain: [Int32: Int32] = [300: 200, 200: 100, 100: 1]
+        XCTAssertEqual(host([
+            300: "/bin/sh",
+            200: "/Applications/Codex.app/Contents/Resources/codex",
+            100: "/Applications/Codex.app/Contents/MacOS/Codex",
+        ], chain), "codexApp")
+        XCTAssertEqual(host([
+            300: "/bin/sh",
+            200: "/Users/me/.vscode/extensions/openai.chatgpt-26.1/bin/macos-aarch64/codex",
+            100: "/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper (Plugin).app/Contents/MacOS/Code Helper (Plugin)",
+        ], chain), "vsCode")
+        XCTAssertEqual(host([300: "/bin/sh", 200: "/Users/me/.local/bin/claude"], [300: 200, 200: 1]), "", "a daemon: no app")
+        XCTAssertEqual(host([
+            300: "/bin/sh",
+            200: "/Users/me/.local/bin/claude",
+            100: "/Applications/Conductor.app/Contents/MacOS/Conductor",
+        ], chain), "other")
+    }
+
+    /// A service — one process serving many sessions and outliving each —
+    /// is no session's process: the hook records no pid, so a live
+    /// service never keeps a session listed. The service's words are the
+    /// catalog's (`AgentProcesses.serviceArguments(of:)`); a subcommand
+    /// matches only as the subcommand, a flag anywhere.
+    func testAServiceIsNoSessionsProcess() {
+        let parents: [Int32: Int32] = [300: 200, 200: 100, 100: 1]
+        let server: [Int32: String] = [
+            300: "/bin/sh -c pulse-hook codex Stop",
+            200: "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled",
+            100: "/Applications/Codex.app/Contents/MacOS/Codex",
+        ]
+        XCTAssertEqual(
+            HookLanding.agentPID(agent: .codex, start: 300, parentOf: { parents[$0] }, argumentsOf: { server[$0] }, serviceArguments: ["app-server"]),
+            0
+        )
+        XCTAssertEqual(
+            HookLanding.agentPID(agent: .codex, start: 300, parentOf: { parents[$0] }, argumentsOf: { server[$0] }),
+            200,
+            "no service words: the pid as before"
+        )
+        let session: [Int32: String] = [300: "/bin/sh -c hook", 200: "/opt/homebrew/bin/codex exec restart the app-server", 100: "/bin/zsh"]
+        XCTAssertEqual(
+            HookLanding.agentPID(agent: .codex, start: 300, parentOf: { parents[$0] }, argumentsOf: { session[$0] }, serviceArguments: ["app-server"]),
+            200
+        )
+        XCTAssertTrue(AgentProcesses.isService(args: "/opt/homebrew/bin/node /opt/homebrew/bin/opencode serve --port 4096", arguments: ["serve"]))
+        XCTAssertFalse(AgentProcesses.isService(args: "/opt/homebrew/bin/opencode run serve", arguments: ["serve"]))
+        XCTAssertTrue(AgentProcesses.isService(args: "/Users/me/.local/bin/claude --resume x --daemon", arguments: ["--daemon"]))
+        XCTAssertFalse(AgentProcesses.isService(args: "/opt/homebrew/bin/codex", arguments: ["app-server"]))
+        XCTAssertFalse(AgentProcesses.isService(args: "/opt/homebrew/bin/codex app-server", arguments: []))
+    }
+
     func testAHandleNeverBreaksTheColumn() {
         let handles = HookLanding.handles(environment: ["TERM_PROGRAM": "evil\tprog;x\n"], tty: nil)
         XCTAssertFalse(handles.contains("\t"))

@@ -702,6 +702,198 @@ struct LandingPlanTests {
         }
     }
 
+    /// WezTerm's pane through its own CLI, from the running app's bundle,
+    /// with the GUI's socket; then the app. A pane id that is not digits,
+    /// or one another terminal's shell inherited, is no handle.
+    @Test func aWezTermPaneLandsExactlyThroughItsCLI() {
+        let socket = "/Users/me/.local/share/wezterm/gui-sock-4412"
+        let handle = LandingHandle("wezterm:3;weztermsock:\(socket);tty:/dev/ttys004;term:WezTerm")
+        #expect(handle.weztermPane == "3")
+        #expect(handle.weztermSocket == socket)
+        let plan = LandingPlan.make(handle: handle, cwd: "/Users/me/app", pid: 812)
+        #expect(plan.steps == [
+            .weztermPane(pane: "3", socket: socket),
+            .activateApp(bundleIDs: [LandingPlan.weztermBundleID]),
+            .activateOwner(pid: 812),
+        ], "no tab search: WezTerm is not Terminal or iTerm")
+        #expect(plan.precision == .exact)
+
+        let relative = LandingPlan.make(handle: LandingHandle("wezterm:3;weztermsock:gui-sock;term:WezTerm"), cwd: "")
+        #expect(relative.steps.first == .weztermPane(pane: "3", socket: ""), "a socket that is not a path is left to the CLI")
+        for bad in ["wezterm:3x;term:WezTerm", "wezterm:-1;term:WezTerm", "wezterm:3;term:iTerm.app"] {
+            let steps = LandingPlan.make(handle: LandingHandle(bad), cwd: "").steps
+            let tried = steps.contains { if case .weztermPane = $0 { return true } else { return false } }
+            #expect(!tried, "\(bad)")
+        }
+        let untitled = LandingPlan.make(handle: LandingHandle("wezterm:7"), cwd: "")
+        #expect(untitled.steps == [.weztermPane(pane: "7", socket: ""), .activateApp(bundleIDs: [LandingPlan.weztermBundleID])])
+    }
+
+    @Test func theWezTermCommandComesFromTheAppBundle() {
+        let bundle = "/Applications/WezTerm.app"
+        let command = LandingPlan.weztermCommand(bundlePath: bundle, pane: "3", socket: "/s/gui-sock-1")
+        #expect(command?.executable == "/Applications/WezTerm.app/Contents/MacOS/wezterm")
+        #expect(command?.arguments == ["cli", "--no-auto-start", "activate-pane", "--pane-id", "3"])
+        let base = ["HOME": "/Users/me", "WEZTERM_PANE": "9", "WEZTERM_UNIX_SOCKET": "/old"]
+        let environment = command?.environment(over: base) ?? [:]
+        #expect(environment == ["HOME": "/Users/me", "WEZTERM_UNIX_SOCKET": "/s/gui-sock-1"])
+        let bare = LandingPlan.weztermCommand(bundlePath: bundle, pane: "3", socket: "")
+        #expect(bare?.environment(over: base) == ["HOME": "/Users/me"], "Pulse's own pane or socket is never inherited")
+        #expect(LandingPlan.weztermCommand(bundlePath: bundle, pane: "3 --x", socket: "") == nil)
+        #expect(LandingPlan.weztermCommand(bundlePath: "WezTerm.app", pane: "3", socket: "") == nil)
+    }
+
+    /// kitty's window through its remote control — only when it listens on
+    /// a unix socket (`listen_on`): without one, or on `tcp:`, the app.
+    @Test func aKittyWindowLandsExactlyOnlyWithRemoteControl() {
+        let handle = LandingHandle("kitty:5;kittysock:unix:/tmp/kitty-501;tty:/dev/ttys003;app:net.kovidgoyal.kitty")
+        #expect(handle.kittyWindow == "5")
+        #expect(handle.kittyListenOn == "unix:/tmp/kitty-501")
+        let plan = LandingPlan.make(handle: handle, cwd: "")
+        #expect(plan.steps == [
+            .kittyWindow(window: "5", listenOn: "unix:/tmp/kitty-501"),
+            .activateApp(bundleIDs: [LandingPlan.kittyBundleID]),
+        ])
+        #expect(plan.precision == .exact)
+
+        let noRemote = LandingPlan.make(handle: LandingHandle("kitty:5;tty:/dev/ttys003"), cwd: "")
+        #expect(noRemote.steps == [.activateApp(bundleIDs: [LandingPlan.kittyBundleID])], "kitty sets no TERM_PROGRAM: its window id names it")
+        #expect(noRemote.precision == .app)
+        for listen in ["tcp:localhost:12488", "unix:@kitty", "fd:3", "unix:relative"] {
+            let steps = LandingPlan.make(handle: LandingHandle("kitty:5;kittysock:\(listen)"), cwd: "").steps
+            #expect(steps == [.activateApp(bundleIDs: [LandingPlan.kittyBundleID])], "\(listen)")
+        }
+        #expect(LandingPlan.make(handle: LandingHandle("kitty:5;kittysock:unix:/tmp/k;term:ghostty"), cwd: "").steps
+            == [.activateApp(bundleIDs: ["com.mitchellh.ghostty"])], "a kitty id inherited into Ghostty is not Ghostty's")
+    }
+
+    @Test func theKittyCommandsPreferKittenInTheAppBundle() {
+        let commands = LandingPlan.kittyCommands(bundlePath: "/Applications/kitty.app", window: "5", listenOn: "unix:/tmp/kitty-501")
+        let programs = commands.map { $0.executable }
+        #expect(programs == ["/Applications/kitty.app/Contents/MacOS/kitten", "/Applications/kitty.app/Contents/MacOS/kitty"])
+        let arguments = commands.first?.arguments ?? []
+        #expect(arguments == ["@", "--to", "unix:/tmp/kitty-501", "focus-window", "--match", "id:5"])
+        let environment = commands.first?.environment(over: ["KITTY_WINDOW_ID": "1", "KITTY_LISTEN_ON": "unix:/x", "HOME": "/h"]) ?? [:]
+        #expect(environment == ["HOME": "/h"])
+        #expect(LandingPlan.kittyCommands(bundlePath: "/Applications/kitty.app", window: "5", listenOn: "tcp:h:1").isEmpty)
+        #expect(LandingPlan.kittyCommands(bundlePath: "/Applications/kitty.app", window: "id:5", listenOn: "unix:/k").isEmpty)
+    }
+
+    /// Zellij's pane in its session, then the terminal its environment
+    /// names; inside Zellij the tty and iTerm id are the session's, not the
+    /// pane's. With no terminal to bring forward the pane is no landing.
+    @Test func aZellijPaneLandsExactlyThenItsTerminal() {
+        let handle = LandingHandle("zellij:2;zellijsession:pretentious-cat;iterm:w0t1p0:AB;tty:/dev/ttys009;term:iTerm.app")
+        #expect(handle.zellijPane == "2")
+        #expect(handle.zellijSession == "pretentious-cat")
+        let plan = LandingPlan.make(handle: handle, cwd: "")
+        #expect(plan.steps == [
+            .zellijPane(session: "pretentious-cat", pane: "2", hostBundleIDs: [LandingPlan.iTermBundleID]),
+            .activateApp(bundleIDs: [LandingPlan.iTermBundleID]),
+        ])
+        #expect(plan.precision == .exact)
+        #expect(LandingPlan.zellijArguments(session: "pretentious-cat", pane: "2")
+            == ["--session", "pretentious-cat", "action", "focus-pane-id", "2"])
+        #expect(LandingPlan.make(handle: LandingHandle("zellij:2;zellijsession:s;tty:/dev/ttys009"), cwd: "").isEmpty,
+                "no terminal app known: nothing a click could bring forward")
+        for bad in ["zellij:2;zellijsession:--help;term:iTerm.app", "zellij:2;zellijsession:a b;term:iTerm.app", "zellij:x;zellijsession:s;term:iTerm.app"] {
+            let steps = LandingPlan.make(handle: LandingHandle(bad), cwd: "").steps
+            let tried = steps.contains { if case .zellijPane = $0 { return true } else { return false } }
+            #expect(!tried, "\(bad)")
+        }
+    }
+
+    /// Inside tmux the pane is the handle, whatever terminal hosts it.
+    @Test func tmuxStillWinsOverATerminalsOwnPane() {
+        let plan = LandingPlan.make(handle: LandingHandle("tmux:%1;wezterm:3;kitty:5;kittysock:unix:/k;term:tmux"), cwd: "")
+        #expect(plan.steps.first == .tmuxPane(pane: "%1", socket: "", hostBundleIDs: [LandingPlan.weztermBundleID]))
+        let terminalSteps = plan.steps.filter { step in
+            switch step {
+            case .weztermPane, .kittyWindow: return true
+            default: return false
+            }
+        }
+        #expect(terminalSteps.isEmpty)
+    }
+
+    /// A session with no terminal — a service, a daemon, an app — lands on
+    /// the app its chain runs in, or nowhere: never on a terminal its
+    /// environment remembered from whoever started it.
+    @Test func aDetachedSessionLandsOnItsHostOrOpensTheDetail() {
+        let codex = LandingPlan.make(handle: LandingHandle("detached:1;app:com.openai.codex;host:codexApp"), cwd: "/Users/me/app")
+        #expect(codex.steps == [.activateApp(bundleIDs: HostAppKind.codexApp.bundleIDs)], "an agent's own app opens no folder")
+        #expect(codex.precision == .app)
+
+        let vscode = LandingPlan.make(handle: LandingHandle("detached:1;app:com.microsoft.VSCode;host:vsCode"), cwd: "/Users/me/app", pid: 900)
+        #expect(vscode.steps == [
+            .openFolder(bundleIDs: HostAppKind.vsCode.bundleIDs, path: "/Users/me/app"),
+            .activateApp(bundleIDs: HostAppKind.vsCode.bundleIDs),
+            .activateOwner(pid: 900),
+        ])
+
+        let apps: [(String, HostAppKind)] = [
+            ("detached:1;host:claudeApp", .claudeApp),
+            ("detached:1;host:openCodeApp", .openCodeApp),
+            ("detached:1;host:copilotApp", .copilotApp),
+        ]
+        for (raw, kind) in apps {
+            #expect(LandingPlan.make(handle: LandingHandle(raw), cwd: "/Users/me/app").steps == [.activateApp(bundleIDs: kind.bundleIDs)], "\(raw)")
+        }
+
+        // A daemon: launchd on its chain and no app. Its environment's
+        // terminal is whoever started it.
+        let daemon = LandingHandle("detached:1;tmux:%2;iterm:w0t1p0:AB;tty:/dev/ttys004;term:iTerm.app;app:com.googlecode.iterm2")
+        #expect(daemon.detached)
+        #expect(LandingPlan.make(handle: daemon, cwd: "/Users/me/app", pid: 4312).isEmpty, "no Go: the detail page opens")
+        #expect(LandingPlan.make(handle: LandingHandle("detached:1"), cwd: "/Users/me/app").isEmpty)
+
+        // An app no host names: its process's owner, when it has one.
+        #expect(LandingPlan.make(handle: LandingHandle("detached:1;host:other"), cwd: "", pid: 812).steps == [.activateOwner(pid: 812)])
+        #expect(LandingPlan.make(handle: LandingHandle("detached:1;host:other"), cwd: "").isEmpty)
+
+        // The process table's host, when the hook said none.
+        #expect(LandingPlan.make(handle: LandingHandle("detached:1"), cwd: "", hostApp: .cursor).steps
+            == [.activateApp(bundleIDs: HostAppKind.cursor.bundleIDs)])
+    }
+
+    /// An agent's own app is a host, not an editor: a terminal session
+    /// whose chain passes through one still searches its tab.
+    @Test func anAgentAppIsNeverAnEditor() {
+        #expect(LandingPlan.editor(handle: LandingHandle(), hostApp: .codexApp) == nil)
+        #expect(LandingPlan.editor(handle: LandingHandle("host:claudeApp"), hostApp: nil) == nil)
+        #expect(LandingPlan.editor(handle: LandingHandle("host:vsCode"), hostApp: nil) == .vsCode)
+        let tab = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys001;host:codexApp"), cwd: "/Users/me/app", hostApp: .codexApp)
+        #expect(tab.steps == [.ttyTab(tty: "ttys001")])
+    }
+
+    /// Bundle ids as each app's cask quits it; paths as each app runs.
+    @Test func hostsAreKnownByBundleAndByPath() {
+        #expect(HostAppKind(bundleID: "com.google.antigravity") == .antigravity)
+        #expect(HostAppKind(bundleID: "com.google.antigravity-ide") == .antigravity)
+        #expect(HostAppKind(bundleID: "com.openai.codex") == .codexApp)
+        #expect(HostAppKind(bundleID: "com.anthropic.claudefordesktop") == .claudeApp)
+        #expect(HostAppKind(bundleID: "ai.opencode.desktop") == .openCodeApp)
+        #expect(HostAppKind(bundleID: "com.github.githubapp") == .copilotApp)
+        #expect(HostAppKind(bundleID: "com.trae.app") == .trae)
+        #expect(HostAppKind(bundleID: "com.googlecode.iterm2") == nil)
+        #expect(HostAppKind(bundleID: "") == nil)
+        let paths: [(String, HostAppKind)] = [
+            ("/Applications/Codex.app/Contents/Resources/codex app-server", .codexApp),
+            ("/Applications/ChatGPT.app/Contents/Resources/codex app-server", .codexApp),
+            ("/Applications/Claude.app/Contents/MacOS/Claude", .claudeApp),
+            ("/Applications/OpenCode.app/Contents/MacOS/OpenCode", .openCodeApp),
+            ("/Applications/GitHub Copilot.app/Contents/MacOS/GitHub Copilot", .copilotApp),
+            ("/Applications/Antigravity IDE.app/Contents/MacOS/Electron", .antigravity),
+            ("/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper (Plugin).app/Contents/MacOS/Code Helper (Plugin)", .vsCode),
+        ]
+        for (path, kind) in paths {
+            #expect(HostAppKind(path: path) == kind, "\(path)")
+        }
+        #expect(HostAppKind(path: "/Applications/iTerm.app/Contents/MacOS/iTerm2") == nil)
+        let folders = HostAppKind.allCases.filter { $0.opensFolders }
+        #expect(folders == [.cursor, .vsCode, .windsurf, .zed, .trae, .antigravity, .zcode])
+    }
+
     @Test func theLabelFollowsThePrecision() {
         var row = AgentRow(key: "claude|s1")
         #expect(!row.canFocusTerminal)
