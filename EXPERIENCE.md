@@ -33,6 +33,8 @@ Claude Code、Codex、Copilot CLI、OpenCode、Cursor（编辑器与 `cursor-age
 （`--permission-prompt-tool`）时，它的 PermissionRequest 由 Claude 自己拒绝 —— 记一行「未采用：没有可显示的提示」。
 Claude 的 `agent_needs_input` 可能是另一个会话在等（agent view 里的后台会话、队友的终端设置问题、计费提示），
 通知里也没说是谁 —— 不变红，记一行「未采用：可能属于另一个会话」。
+Cursor（含它的 CLI，会导入 `~/.claude/settings.json`）和 VS Code（`chat.useClaudeHooks`）会用自己的载荷运行 Claude 的 hook ——
+这不是 Claude 在说话：不出现假的 Claude 行，记一行「未采用：另一个应用运行了 Claude 的 hook」。
 
 **红灯怎么熄。** 在厂商提示里回答后，同一个工具开始运行（Claude / Codex `PostToolUse`、Copilot `postToolUse`、
 Pi `tool_execution_end`、OpenCode 的工具完成）就熄灭；OpenCode 同时开着两个提问时，要两个都答完才熄 ——
@@ -123,7 +125,7 @@ Pi `tool_execution_end`、OpenCode 的工具完成）就熄灭；OpenCode 同时
 
 - 图标就说了是谁，行上不写产品名（VoiceOver 标签里有）。项目有最大宽度，主行先截断；项目与主行相同时不重复。
 - **主行**（`TrayRowModel.headline`）：等待行 任务 → 项目 →「需要你」；会话行 任务 → 新鲜原话 → 项目 →「会话 · 暂无标题」；
-  仅进程行说诚实短语「终端会话 · 尚未收到事件」（或「Agent 应用 · 尚未收到事件」），从不说「运行」。标题是 Agent 自己给会话起的名字（Pi 的会话名），没有时是会话第一句说了事的提示
+  仅进程行说诚实短语「终端会话 · 尚未收到事件」（或「Agent 应用 · 尚未收到事件」），从不说「运行」。标题是 Agent 自己给会话起的名字（Pi 的会话名、Claude 用 `--name` / `/rename` 起的名字），没有时是会话第一句说了事的提示
   （「继续」不算），与长度无关；子代理的任务不是你的提示，永远不当标题；Pi 的技能调用写成 `/skill:名字 参数`，
   不出现技能文件路径。占位词、工具名、纯文件名、路径和 Agent 产品名永远不是主行。
 - **一个时间**：需要你的行是等了多久（红）；运行中的行是本回合跑了多久（从开始这一回合的提示算起）；其余是
@@ -348,5 +350,5 @@ store 不发布任何变更：投影只带状态，一阵工具行只动会话�
 - **写到磁盘上的东西**：Pulse 只写 `settings.json`、hook 安装账本、`debug.log`（不落项目名），以及忽略时往事件
   日志追加的 `dismiss`。hook 往 `events.tsv` 追加，每行带一个在锁内编的序号（只追加、超过 1 MiB 压缩，序号不变，
   开着的等待与回答它的行不丢）；听到却不转成状态的事件也写一行 `ignored`，只说原因、不写负载原文。它装着你敲过
-  的提示，所以从第一个字节起就是 0600。表头不是 v8 的日志当作不存在，清空后重新开始。
+  的提示，所以从第一个字节起就是 0600。表头不是 v9 的日志当作不存在，清空后重新开始。
 - 无 Developer ID 公证时不标 `stable`。

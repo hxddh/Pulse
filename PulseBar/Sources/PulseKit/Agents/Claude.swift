@@ -72,6 +72,10 @@ extension AgentSpec {
         // Inside a subagent (the Task tool) every event carries the
         // subagent's `agent_id`; the main agent's carry none.
         subagentKeys: ["agent_id"],
+        // Claude's tool names (tools-reference, the Agent SDK's
+        // `ToolInputSchemas`); an MCP tool is `mcp__<server>__<tool>`.
+        toolCategories: Claude.toolCategories,
+        mcpToolPrefixes: ["mcp__"],
         read: { Claude.read($0, $1) }
     )
 }
@@ -82,17 +86,45 @@ package enum Claude {
     package static let managedSettings = "/Library/Application Support/ClaudeCode/managed-settings.json"
     package static let managedSettingsFolder = "/Library/Application Support/ClaudeCode/managed-settings.d"
 
+    /// Claude's tools by category, lowercased.
+    package static let toolCategories: [String: StepCategory] = [
+        "bash": .shell, "powershell": .shell, "monitor": .shell, "bashoutput": .shell, "killshell": .shell,
+        "read": .read, "notebookread": .read,
+        "edit": .edit, "multiedit": .edit, "write": .edit, "notebookedit": .edit,
+        "glob": .search, "grep": .search, "ls": .search, "toolsearch": .search,
+        "webfetch": .web, "websearch": .web,
+        "agent": .agent, "task": .agent, "taskoutput": .agent, "taskstop": .agent, "sendmessage": .agent,
+        "skill": .skill,
+        "todowrite": .plan, "taskcreate": .plan, "taskupdate": .plan, "tasklist": .plan, "taskget": .plan,
+        "listmcpresourcestool": .mcp, "readmcpresourcetool": .mcp, "readmcpresourcedirtool": .mcp,
+    ]
+
     package static func read(_ event: String, _ payload: [String: Any]) -> HookReading? {
+        // Cursor (and its CLI, which imports `~/.claude/settings.json`) and
+        // VS Code (`chat.useClaudeHooks`) run Claude's hooks with payloads
+        // of their own: not Claude speaking, and never a Claude row.
+        if foreignHost(event, payload) { return HookReading(action: .skip(.otherHost)) }
         switch event {
+        case "SessionStart":
+            // A session the person named (`--name`, `/rename`): its title
+            // over the first prompt. A generated title is not sent.
+            let title = PulseHookReceiver.string(payload, keys: ["session_title"])
+            return title.isEmpty ? nil : HookReading(action: .start, name: title)
+        case "UserPromptSubmit":
+            // The prompt is the line's words; a custom title rides along.
+            let title = PulseHookReceiver.string(payload, keys: ["session_title"])
+            return title.isEmpty ? nil : HookReading(action: .prompt, meta: LineMeta(name: title))
         case "PostToolUse":
-            return HookReading(action: .activity, target: target(payload))
+            return HookReading(action: .activity, tookMs: took(payload), target: target(payload), meta: plan(payload))
         case "PostToolUseFailure":
             // The call reached Claude as an abort, not as the tool's own
             // error: the person interrupted the run.
             if payload["is_interrupt"] as? Bool == true { return HookReading(action: .stopped) }
             // The tool ran and failed: still the answer to a block raised
-            // for it, and a step marked failed.
-            return HookReading(action: .activity, failed: true, target: target(payload))
+            // for it, and a step marked failed — with its error's first
+            // line (`Exit code 1`).
+            let error = LineMeta.firstLine(PulseHookReceiver.string(payload, keys: ["error"]), limit: LineMeta.errLimit)
+            return HookReading(action: .activity, failed: true, tookMs: took(payload), target: target(payload), meta: LineMeta(err: error))
         case "PermissionRequest":
             // `dontAsk` denies whatever is not pre-approved: nobody is shown
             // this request (`-p` without a permission host is read from the
@@ -125,7 +157,8 @@ package enum Claude {
             // nothing Pulse shows.
             let sub = PulseHookReceiver.string(payload, keys: ["agent_id"])
             guard !sub.isEmpty else { return HookReading(action: .ignore) }
-            return HookReading(action: event == "SubagentStart" ? .start : .turn, sub: sub)
+            let agentType = PulseHookReceiver.string(payload, keys: ["agent_type"])
+            return HookReading(action: event == "SubagentStart" ? .start : .turn, sub: sub, meta: LineMeta(agentType: agentType))
         case "Notification":
             let words = PulseHookReceiver.string(payload, keys: ["message", "title"])
             switch PulseHookReceiver.string(payload, keys: ["notification_type", "notificationType"]) {
@@ -149,15 +182,51 @@ package enum Claude {
         }
     }
 
+    /// Whether another tool ran Claude's hook with a payload of its own:
+    /// Cursor's carries `cursor_version`, or its `conversation_id` with a
+    /// `generation_id`; VS Code's (and Copilot's VS Code-compatible one) an
+    /// ISO `timestamp` string — Claude's payload has neither; and any other
+    /// host may name the event in its own spelling (`hook_event_name` is
+    /// Claude's event exactly). Pure.
+    package static func foreignHost(_ event: String, _ payload: [String: Any]) -> Bool {
+        if payload["cursor_version"] != nil { return true }
+        if payload["conversation_id"] != nil, payload["generation_id"] != nil { return true }
+        if payload["timestamp"] is String { return true }
+        if let named = payload["hook_event_name"] as? String, !named.isEmpty, named != event { return true }
+        return false
+    }
+
+    /// How long the tool ran (`duration_ms`, excluding permission prompts),
+    /// in ms; 0 unknown.
+    package static func took(_ payload: [String: Any]) -> Int64 {
+        guard let number = payload["duration_ms"] as? NSNumber, number.doubleValue.isFinite, number.doubleValue > 0 else { return 0 }
+        return Int64(min(number.doubleValue, 86_400_000).rounded())
+    }
+
+    /// A `TodoWrite` call's checklist (`tool_input.todos[{content, status}]`,
+    /// the Agent SDK's `TodoWriteInput`): how many items are done, of how
+    /// many, and the one in progress. Empty for any other tool. Pure.
+    package static func plan(_ payload: [String: Any]) -> LineMeta {
+        guard PulseHookReceiver.string(payload, keys: ["tool_name"]) == "TodoWrite",
+              let input = payload["tool_input"] as? [String: Any],
+              let todos = input["todos"] as? [[String: Any]]
+        else { return LineMeta() }
+        let items = todos.map { (status: PulseHookReceiver.string($0, keys: ["status"]), text: PulseHookReceiver.string($0, keys: ["content"])) }
+        let progress = LineMeta.progress(items)
+        return LineMeta(plan: progress.plan, planNow: progress.now)
+    }
+
     /// A tool's target where the generic reading misses it: an `Agent`
     /// (formerly `Task`) call's `description`, else its `subagent_type`; a
-    /// `Skill` call's `skill`. Nil for any other tool. Pure.
+    /// `Skill` call's `skill`; a `TaskCreate` / `TaskUpdate` call's
+    /// `subject`. Nil for any other tool. Pure.
     package static func target(_ payload: [String: Any]) -> String? {
         let input = payload["tool_input"] as? [String: Any] ?? [:]
         let keys: [String]
         switch PulseHookReceiver.string(payload, keys: ["tool_name"]) {
         case "Agent", "Task": keys = ["description", "subagent_type"]
         case "Skill": keys = ["skill"]
+        case "TaskCreate", "TaskUpdate": keys = ["subject"]
         default: return nil
         }
         let text = PulseHookReceiver.string(input, keys: keys)
