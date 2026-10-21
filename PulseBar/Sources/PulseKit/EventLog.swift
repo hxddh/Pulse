@@ -1,13 +1,13 @@
 import Darwin
 import Foundation
 
-/// The one event log: `events.tsv`, append-only, one numbered v8 line per
+/// The one event log: `events.tsv`, append-only, one numbered v9 line per
 /// hook event (`AttentionRecord`), in the order the hooks wrote them.
 ///
-/// - **Only a v8 log is read.** A file whose first line is not a v8 header
+/// - **Only a v9 log is read.** A file whose first line is not a v9 header
 ///   (`AttentionProtocol.Header`) is treated as absent: a read finds it
 ///   empty, and the next writer (`append`, `ensureExists` at launch) empties
-///   it and starts a fresh v8 log — a new `gen`, numbering from 1 — under the
+///   it and starts a fresh v9 log — a new `gen`, numbering from 1 — under the
 ///   same lock. It is never read and never migrated.
 /// - **Writers append** under an exclusive `flock` (`append`): the hook
 ///   receiver and the app's own `dismiss`. The appender numbers the line —
@@ -88,8 +88,8 @@ package enum EventLog {
 
     /// One read.
     package struct Chunk: Equatable, Sendable {
-        /// The file's header; nil when there is no v8 log (a missing or
-        /// empty file, or one that is not v8) — an empty log.
+        /// The file's header; nil when there is no v9 log (a missing or
+        /// empty file, or one that is not v9) — an empty log.
         package var header: AttentionProtocol.Header?
         /// The header line exactly as read.
         package var headerLine: String
@@ -136,7 +136,7 @@ package enum EventLog {
 
     /// Append one record, numbered under the lock (its `seq` is ignored and
     /// assigned). Creates the file with its header — and starts it over when
-    /// it is not a v8 log; compacts it first when the line would take it past
+    /// it is not a v9 log; compacts it first when the line would take it past
     /// `maxBytes`. Returns whether the line is in the file. `url` nil is the
     /// real log; a test passes its own file.
     @discardableResult
@@ -146,7 +146,7 @@ package enum EventLog {
             guard size >= 0 else { return false }
             let header = size > 0 ? currentHeader(fd, size: size) : nil
             if size > 0, header == nil {
-                DebugLog.write("events: not a v8 log — started over")
+                DebugLog.write("events: not a v9 log — started over")
                 guard ftruncate(fd, 0) == 0 else { return false }
                 size = 0
             }
@@ -182,7 +182,7 @@ package enum EventLog {
         } ?? false
     }
 
-    /// Create the file with its header if it is missing, empty or not a v8
+    /// Create the file with its header if it is missing, empty or not a v9
     /// log (then it is emptied first, unread) — what the watcher needs
     /// before it can open it.
     package static func ensureExists(at url: URL? = nil, nowMs: Int64) {
@@ -191,14 +191,14 @@ package enum EventLog {
             guard size >= 0 else { return false }
             if size > 0 {
                 if currentHeader(fd, size: size) != nil { return true }
-                DebugLog.write("events: not a v8 log — started over")
+                DebugLog.write("events: not a v9 log — started over")
                 guard ftruncate(fd, 0) == 0 else { return false }
             }
             return writeAll(fd, AttentionProtocol.Header(next: 1, gen: generation(nowMs: nowMs)).line)
         }
     }
 
-    /// The open file's v8 header, or nil.
+    /// The open file's v9 header, or nil.
     private static func currentHeader(_ fd: Int32, size: Int) -> AttentionProtocol.Header? {
         guard let head = readRange(fd, from: 0, count: min(size, 512)) else { return nil }
         return AttentionProtocol.Header(line: headerLine(head))
@@ -218,7 +218,7 @@ package enum EventLog {
 
     /// The records after `cursor`, or the whole file when the cursor is
     /// nil, names another header, or is past the end. A missing file, or one
-    /// that is not a v8 log, is an empty log (`Chunk.empty`). Nil when the
+    /// that is not a v9 log, is an empty log (`Chunk.empty`). Nil when the
     /// file could not be read — the caller keeps what it had.
     package static func read(at url: URL? = nil, after cursor: Cursor?) -> Chunk? {
         let target = url ?? path
@@ -268,7 +268,7 @@ package enum EventLog {
     /// and the byte after the last complete line. Lines end at `\n` bytes
     /// only — a U+2028 or a lone `\r` inside a field never splits a record.
     /// Lossy: one invalid byte never hides the file. Comments, blanks and
-    /// lines that are not v8 records are skipped.
+    /// lines that are not v9 records are skipped.
     package static func parse(_ data: Data, from start: Int, skipFirstLine: Bool = false) -> (records: [AttentionRecord], end: Int) {
         let bytes = [UInt8](data)
         guard let lastBreak = bytes.lastIndex(of: 0x0A) else { return ([], start) }

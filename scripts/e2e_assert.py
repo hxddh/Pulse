@@ -3,7 +3,7 @@
 it checked.
 
     e2e_assert.py line <events.tsv> <lines-before> <expected>
-        exactly one line was appended, and it is <expected>: a v8 kind, or
+        exactly one line was appended, and it is <expected>: a v9 kind, or
         ignored:<why> (PulseBar/Tests/Fixtures/hooks/expected.json's words)
     e2e_assert.py expected <expected.json> <agent/event[@variant]>
         print what that fixture becomes
@@ -30,9 +30,9 @@ def lines(path: Path) -> list[list[str]]:
     out = []
     for raw in path.read_text(encoding="utf-8", errors="replace").split("\n"):
         cols = raw.split("\t")
-        # A record has fifteen columns and starts with its seq; the header
+        # A record has seventeen columns and starts with its seq; the header
         # does not.
-        if len(cols) == 15 and cols[0].isdigit():
+        if len(cols) == 17 and cols[0].isdigit():
             out.append(cols)
     return out
 
@@ -47,7 +47,7 @@ def check_line(path: Path, before: int, expected: str) -> int:
     if len(records) != before + 1:
         return fail(f"{len(records) - before} lines appended, expected 1 ({path})")
     cols = records[-1]
-    kind, message = cols[3], cols[14]
+    kind, message = cols[3], cols[16]
     got = f"ignored:{message}" if kind == "ignored" else kind
     if got != expected:
         return fail(f"line is {got!r}, expected {expected!r} (event {cols[4]})")

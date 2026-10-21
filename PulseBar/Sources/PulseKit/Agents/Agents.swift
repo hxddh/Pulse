@@ -144,10 +144,19 @@ package struct HookReading: Equatable, Sendable {
     /// `title` line (Copilot's `initialPrompt`, a `-p` run's prompt); nil
     /// leaves the payload's `session_name`.
     package var name: String?
+    /// The step's category as the adapter reads it (Cursor's
+    /// `afterShellExecution` is `shell`); nil leaves the spec's own reading
+    /// of the tool's name (`AgentSpec.category(ofTool:)`).
+    package var cat: StepCategory?
+    /// Small structured facts the event carries (`LineMeta`): a plan's
+    /// progress, a failed tool's error line, a start's source, an end's
+    /// reason, a subagent's type, a batch of changed files.
+    package var meta: LineMeta
 
     package init(
         action: HookAction, ask: String = "", sub: String = "", failed: Bool = false, tookMs: Int64 = 0,
-        target: String? = nil, note: String = "", tool: String? = nil, words: String = "", name: String? = nil
+        target: String? = nil, note: String = "", tool: String? = nil, words: String = "", name: String? = nil,
+        cat: StepCategory? = nil, meta: LineMeta = LineMeta()
     ) {
         self.action = action
         self.ask = ask
@@ -159,6 +168,8 @@ package struct HookReading: Equatable, Sendable {
         self.tool = tool
         self.words = words
         self.name = name
+        self.cat = cat
+        self.meta = meta
     }
 }
 
@@ -495,6 +506,12 @@ package struct AgentSpec: Sendable {
     /// Cursor's `conversation_id` is the one every event carries, its
     /// `session_id` only some).
     package let sessionKeys: [String]
+    /// The adapter's tool names, lowercased, and the category each is
+    /// (`StepCategory`): a vendor's tool is named only here.
+    package let toolCategories: [String: StepCategory]
+    /// Prefixes that name an MCP server's tool (`mcp__`): such a tool is
+    /// `mcp` whatever its name.
+    package let mcpToolPrefixes: [String]
     /// The reading of an event whose meaning is in its payload; nil leaves
     /// the event's own action (`HookEvent.action`). Called only for an
     /// installed event.
@@ -512,6 +529,8 @@ package struct AgentSpec: Sendable {
         subagentKeys: [String] = [],
         reportsOwnPID: Bool = false,
         sessionKeys: [String] = HookContext.sessionKeys,
+        toolCategories: [String: StepCategory] = [:],
+        mcpToolPrefixes: [String] = [],
         read: @escaping @Sendable (_ event: String, _ payload: [String: Any]) -> HookReading? = { _, _ in nil }
     ) {
         self.id = id
@@ -525,17 +544,37 @@ package struct AgentSpec: Sendable {
         self.subagentKeys = subagentKeys
         self.reportsOwnPID = reportsOwnPID
         self.sessionKeys = sessionKeys
+        self.toolCategories = toolCategories
+        self.mcpToolPrefixes = mcpToolPrefixes
         self.read = read
+    }
+
+    /// The category of one of this agent's tools, by its own name: its
+    /// table (`toolCategories`, case-insensitive), an MCP prefix, else
+    /// `other`. Pure.
+    package func category(ofTool raw: String) -> StepCategory {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let known = toolCategories[name.lowercased()] { return known }
+        if mcpToolPrefixes.contains(where: { name.hasPrefix($0) }) { return .mcp }
+        return .other
     }
 
     /// What one installed event means, payload read; nil for an event Pulse
     /// does not install — it writes nothing. The subagent that spoke is
-    /// read here for every event (`subagentKeys`).
+    /// read here for every event (`subagentKeys`), and — unless the adapter
+    /// said otherwise — why a session started (a `start`'s `source`) or
+    /// ended (an `end`'s `reason`), each a word only (`LineMeta.token`).
     package func reading(_ event: String, payload: [String: Any]) -> HookReading? {
         guard let hook = hooks.event(named: event) else { return nil }
         var reading = self.read(event, payload) ?? HookReading(action: hook.action)
         if reading.sub.isEmpty, !subagentKeys.isEmpty {
             reading.sub = PulseHookReceiver.string(payload, keys: subagentKeys)
+        }
+        if reading.action == .start, reading.meta.src.isEmpty {
+            reading.meta.src = LineMeta.token(PulseHookReceiver.string(payload, keys: ["source"]))
+        }
+        if reading.action == .end, reading.meta.why.isEmpty {
+            reading.meta.why = LineMeta.token(PulseHookReceiver.string(payload, keys: ["reason"]))
         }
         return reading
     }

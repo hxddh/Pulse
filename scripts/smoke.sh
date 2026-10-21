@@ -60,7 +60,7 @@ pause() {
 # The log's last seq: lines past it are this step's.
 last_seq() {
   [[ -f "$LOG" ]] || { echo 0; return; }
-  awk -F'\t' 'NF == 15 && $1 ~ /^[0-9]+$/ { seq = $1 } END { print seq + 0 }' "$LOG"
+  awk -F'\t' 'NF == 17 && $1 ~ /^[0-9]+$/ { seq = $1 } END { print seq + 0 }' "$LOG"
 }
 
 # wait_line <since-seq> <agent> <kind-regex>: the first matching line past
@@ -70,7 +70,7 @@ wait_line() {
   while (( SECONDS < end )); do
     if [[ -f "$LOG" ]]; then
       hit="$(awk -F'\t' -v since="$since" -v agent="$agent" -v kinds="$kinds" \
-        'NF == 15 && $1 + 0 > since && $3 == agent && $4 ~ ("^(" kinds ")$") { print $4 " · " $5 " · " $15; exit }' "$LOG")"
+        'NF == 17 && $1 + 0 > since && $3 == agent && $4 ~ ("^(" kinds ")$") { print $4 " · " $5 " · " $17; exit }' "$LOG")"
       if [[ -n "$hit" ]]; then
         echo "$hit"
         return 0

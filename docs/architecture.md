@@ -62,7 +62,7 @@ format's flavor — never by the agent.
 
 ## Provenance and connections
 
-Every line keeps its vendor event (the v8 `event` column) through the
+Every line keeps its vendor event (the v9 `event` column) through the
 reducer: a session holds the event that put it in its current state (a
 re-raise inside the grace keeps the first raise's, a held turn lands with
 its own, a process exit has none) and its last `SessionBook.maxTimeline`
@@ -72,10 +72,15 @@ seen, stopped, named, steps (`StepRun`: one step with its target and
 `took`, or consecutive steps of one speaker merged as they are heard —
 each tool and its count, how many failed — so the ring covers a turn), a
 subagent's own lifecycle, an `ignored` line's reason — and which subagent
-said it (`Heard.sub`, the v8 `sub` column; the detail page marks it
-"Subagent · …"). The session also counts the current turn's steps and
-failures, and keeps whether its last turn failed and whether the person
-stopped it. Nothing is guessed from an event's name, and all of it is
+said it (`Heard.sub`, the v9 `sub` column; the detail page marks it
+"Subagent · …"), its step's category and the facts it carried (`Heard`
+`category` / `meta`, the v9 `cat` and `meta` columns). The session also
+counts the current turn's steps and failures, keeps whether its last turn
+failed and whether the person stopped it, and keeps the latest of the
+facts lines carry (`SessionFacts`: the main agent's plan progress, why the
+session started and ended, each subagent's type, the files a batch
+changed; a step's category and error on the step) — kept for the detail
+page, never a state. Nothing is guessed from an event's name, and all of it is
 rebuilt by the launch replay like every other fact. The why says what
 happened in plain words and cites no event; the event names are the detail
 page's timeline column (`EventName.display` refuses a column that is not a
@@ -140,7 +145,7 @@ every surface is a value with a fixture in
 
 ## Landing — how ↩, a click or a banner reaches the prompt
 
-The hook records where its session lives (the v8 `landing` column, most
+The hook records where its session lives (the v9 `landing` column, most
 specific first): `tmux:%3;tmuxsock:<socket>;iterm:w0t1p0:<uuid>;tty:/dev/ttys004;term:<TERM_PROGRAM>;app:<__CFBundleIdentifier>`.
 `LandingPlan.make(handle:cwd:pid:hostApp:)` (pure, once per projection)
 turns it into ordered steps; `TerminalFocus.land` (on the click) runs them

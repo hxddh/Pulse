@@ -132,6 +132,20 @@ package struct SessionFacts: Equatable, Sendable {
     package var failedTurn = false
     /// The person stopped the run, and nothing has moved it since.
     package var stopped = false
+    /// The main agent's plan as it last reported it (`meta` `plan`); nil
+    /// none.
+    package var plan: SessionBook.PlanProgress?
+    /// Why the session last started (`meta` `src`: `startup`, `resume`,
+    /// `clear`, `compact`, `fork`…); "" unknown.
+    package var startSource = ""
+    /// Why it ended (`meta` `why`); "" unknown.
+    package var endReason = ""
+    /// Each subagent's type, as its own lines said it, oldest first, at
+    /// most `SessionBook.maxSubagentTypes`.
+    package var subagentTypes: [SessionBook.SubagentType] = []
+    /// The files the latest batch said changed (`meta` `files`); empty
+    /// none.
+    package var changedFiles: [String] = []
 
     /// Nothing said: what a key the book does not hold has. (The
     /// memberwise initializer is the module's; the app takes this.)

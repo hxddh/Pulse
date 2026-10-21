@@ -144,6 +144,7 @@ package enum L10n {
         case ignoredNotABlock
         case ignoredNoPrompt
         case ignoredOtherSession
+        case ignoredOtherHost
         case ignoredOther
         case settingsHookConfigDir
         case settingsHookTurnedOff
@@ -324,6 +325,7 @@ extension L10n.Key {
         case .ignoredNotABlock: return ("a prompt that does not block", "不阻塞的提示")
         case .ignoredNoPrompt: return ("no prompt can be shown", "没有可显示的提示")
         case .ignoredOtherSession: return ("may be about another session", "可能属于另一个会话")
+        case .ignoredOtherHost: return ("another app ran Claude's hook", "另一个应用运行了 Claude 的 hook")
         case .ignoredOther: return ("unknown reason", "原因不明")
         case .settingsHookTurnedOff: return ("Installed — but hooks are turned off in %@'s settings (disableAllHooks)", "已安装——但 %@ 的设置关掉了所有 hooks（disableAllHooks）")
         case .settingsHookManagedOnly: return ("Installed — but a managed policy keeps %@ from running it", "已安装——但管理策略不让 %@ 运行它")
