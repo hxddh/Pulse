@@ -184,6 +184,10 @@ package struct SessionFacts: Equatable, Sendable {
     package func selfReportFresh(at nowMs: Int64) -> Bool {
         lastActivitySeconds(at: nowMs) <= 30 * 60
     }
+
+    /// The latest prompt's text: the detail page's "this turn" and the
+    /// copied summary.
+    package var lastPrompt = ""
 }
 
 /// One tray row: a session (or a process no session has claimed) and the

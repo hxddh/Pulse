@@ -386,8 +386,6 @@ package struct SessionBook: Equatable {
         /// The vendor's own name for the session (a `title` line, or a
         /// `start` that carries one); "" none.
         package var name = ""
-        /// The latest prompt's text.
-        package var lastPrompt = ""
         /// A turn waiting out the grace of the current block.
         package var heldTurn: HeldTurn?
         /// Where the session was when the current block was raised while no
