@@ -13,7 +13,7 @@ CHANGELOG.
 | [`README.md`](README.md) | You want to know what the product is |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You change anything the user sees — it is the behaviour spec |
 | [`docs/architecture.md`](docs/architecture.md) | You need who owns which state, how processes are read, how a click lands, or the version identity |
-| [`docs/attention-protocol.md`](docs/attention-protocol.md) | You touch the event log (`events.tsv`, Attention Protocol v8) or a hook's line |
+| [`docs/attention-protocol.md`](docs/attention-protocol.md) | You touch the event log (`events.tsv`, Attention Protocol v9) or a hook's line |
 | [`docs/vendor-formats.md`](docs/vendor-formats.md) | You touch a hook receiver, the installer or any per-agent fact — each contract has a pinned source (`vendor-formats.json`), a test and a weekly drift sentinel |
 
 The tests are the spec's proof: a behaviour is pinned by a test in the file of
@@ -69,10 +69,10 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
 - **No network.** Pulse makes no network connection; "Releases…" opens the
   releases page in the browser.
 - **Pulse keeps no record of its own.** The hooks write the one event log
-  (`events.tsv`, append-only, v8); beside it only `settings.json`, the
+  (`events.tsv`, append-only, v9); beside it only `settings.json`, the
   hook-install ledger and `debug.log` outlive a launch. The app appends only a
   `dismiss` (a wait set aside, a finished turn looked at). Banner bookkeeping
-  (`WaitLedger`) is in memory. A log that is not v8 is treated as absent and
+  (`WaitLedger`) is in memory. A log that is not v9 is treated as absent and
   started over — never read or migrated.
 - **Every heard event is one line.** The receiver writes a state line, or an
   `ignored` line that says why not (an event not installed, a payload that is

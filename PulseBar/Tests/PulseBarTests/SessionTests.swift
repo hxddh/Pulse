@@ -1820,6 +1820,36 @@ struct TrayStateTests {
         #expect(live == 2)
     }
 
+    /// A service (`codex app-server` inside ChatGPT.app) serves many
+    /// sessions and outlives each: the scan lists no row for it and the
+    /// hook records no pid for a session it serves, so a live service keeps
+    /// none listed — even a working one leaves by the quiet bound. Its
+    /// session has no terminal: it lands on the app.
+    @Test func aServiceKeepsNoSessionListed() throws {
+        let table = [
+            AgentProcesses.Proc(pid: 10, ppid: 1, args: "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"),
+            AgentProcesses.Proc(pid: 11, ppid: 10, args: "/Applications/ChatGPT.app/Contents/Resources/codex app-server"),
+        ]
+        let service: (AgentID) -> [String] = { $0 == .codex ? ["app-server"] : [] }
+        let hits = AgentProcesses.hits(in: table, cwd: { _ in "" }, serviceArguments: service)
+        #expect(hits.isEmpty, "a service is no process-only row")
+        let unnamed = AgentProcesses.hits(in: table, cwd: { _ in "" }, serviceArguments: { _ in [] })
+        let pids = unnamed.map { $0.pid }
+        #expect(pids == [11], "until the catalog names it, as before")
+
+        let landing = "detached:1;app:com.openai.codex;host:codexApp"
+        let b = book([
+            AttentionRecord(agent: .codex, kind: .working, ms: t0, session: "c1", cwd: "/w/app", landing: landing),
+            AttentionRecord(agent: .codex, kind: .turn, ms: t0, session: "c2", cwd: "/w/app", landing: landing),
+        ])
+        let now = try #require(rows(b, processes: hits, at: t0 + minute).first { $0.key == SessionKey(.codex, "c1") })
+        #expect(!now.liveProcess)
+        #expect(now.landingPlan.steps == [.activateApp(bundleIDs: HostAppKind.codexApp.bundleIDs)])
+        let quiet = try #require(rows(b, processes: hits, at: t0 + 31 * minute).first { $0.key == SessionKey(.codex, "c1") })
+        #expect(quiet.status == .recent(.quiet))
+        #expect(rows(b, processes: hits, at: t0 + 100 * minute).isEmpty)
+    }
+
     /// An interrupted turn sends no Stop. From an agent that reports
     /// each tool's start and end, silence is a stall for a while — then,
     /// past `silentBoundMs`, the session is recent and says why: never an

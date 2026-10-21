@@ -440,6 +440,11 @@ package struct AgentProcessRule: Sendable {
     /// `--permission-prompt-tool`: an SDK host answers it), alone or as
     /// `flag=value`.
     package var promptHostFlags: [String]
+    /// Arguments that run a long-lived service rather than one session
+    /// (`codex app-server`): it serves many sessions, so its pid never
+    /// keeps a row listed and it gets no process-only row
+    /// (`AgentProcesses.isService`).
+    package var serviceArguments: [String]
 
     package init(
         basenames: [String],
@@ -448,7 +453,8 @@ package struct AgentProcessRule: Sendable {
         argvDenyNeedles: [String] = [],
         allowBareBasename: Bool = false,
         promptlessFlags: [String] = [],
-        promptHostFlags: [String] = []
+        promptHostFlags: [String] = [],
+        serviceArguments: [String] = []
     ) {
         self.basenames = basenames
         self.pathNeedles = pathNeedles
@@ -457,6 +463,7 @@ package struct AgentProcessRule: Sendable {
         self.allowBareBasename = allowBareBasename
         self.promptlessFlags = promptlessFlags
         self.promptHostFlags = promptHostFlags
+        self.serviceArguments = serviceArguments
     }
 
     /// The agent process with this argv can show nobody a prompt: it

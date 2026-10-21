@@ -17,7 +17,11 @@ extension AgentSpec {
         process: AgentProcessRule(
             basenames: ["codex"],
             pathNeedles: ["/opt/homebrew/bin/codex", "/bin/codex", "Resources/codex"],
-            argvDenyNeedles: ["Codex Framework", "crashpad", "computer-use", "codex-code-mode-host"]
+            // The desktop app's own executable is not the CLI.
+            denyNeedles: ["Codex.app/Contents/MacOS/"],
+            argvDenyNeedles: ["Codex Framework", "crashpad", "computer-use", "codex-code-mode-host"],
+            // Codex.app and the IDE extension run one app-server for many threads.
+            serviceArguments: ["app-server"]
         ),
         // The same nested shape as Claude's, `async` honoured — except
         // SessionEnd, which Codex always runs synchronously and caps at 3 s

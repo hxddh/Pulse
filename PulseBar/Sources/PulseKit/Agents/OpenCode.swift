@@ -25,7 +25,9 @@ extension AgentSpec {
         stepsAnswerBlocks: false,
         process: AgentProcessRule(
             basenames: ["opencode", "open-code"],
-            pathNeedles: ["/bin/opencode", "opencode@", "@opencode"]
+            pathNeedles: ["/bin/opencode", "opencode@", "@opencode"],
+            // `opencode serve` / `web`: one server for every client's session.
+            serviceArguments: ["serve", "web"]
         ),
         hooks: HookContract(
             format: .module(render: { OpenCode.plugin(launcher: $0, events: $1) }),

@@ -17,6 +17,16 @@ enum TerminalFocus {
         switch step {
         case .tmuxPane(let pane, let socket, let hostBundleIDs):
             return focusTmuxPane(pane, socket: socket, hostBundleIDs: hostBundleIDs)
+        case .zellijPane(let session, let pane, let hostBundleIDs):
+            return focusZellijPane(session: session, pane: pane, hostBundleIDs: hostBundleIDs)
+        case .weztermPane(let pane, let socket):
+            return runInApp(LandingPlan.weztermBundleID) { bundle in
+                LandingPlan.weztermCommand(bundlePath: bundle, pane: pane, socket: socket).map { [$0] } ?? []
+            }
+        case .kittyWindow(let window, let listenOn):
+            return runInApp(LandingPlan.kittyBundleID) { bundle in
+                LandingPlan.kittyCommands(bundlePath: bundle, window: window, listenOn: listenOn)
+            }
         case .iTermSession(let uniqueID):
             return isRunning(LandingPlan.iTermBundleID)
                 && osascriptBool(iTermSessionScript(uniqueID: uniqueID), timeout: focusScriptTimeout)
@@ -63,6 +73,57 @@ enum TerminalFocus {
             }
         }
         return activateRunning(hostBundleIDs)
+    }
+
+    // MARK: - Zellij
+
+    /// Where Homebrew, a manual install and cargo put it: a GUI app has no
+    /// `PATH` to search.
+    static var zellijPaths: [String] {
+        ["/opt/homebrew/bin/zellij", "/usr/local/bin/zellij",
+         FileManager.default.homeDirectoryForCurrentUser.path + "/.cargo/bin/zellij"]
+    }
+
+    /// Focus the pane in its session, then bring its terminal forward.
+    private static func focusZellijPane(session: String, pane: String, hostBundleIDs: [String]) -> Bool {
+        guard let zellij = zellijPaths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }),
+              let result = ProcessIO.run(
+                  executable: zellij,
+                  arguments: LandingPlan.zellijArguments(session: session, pane: pane),
+                  timeout: hostCommandTimeout,
+                  outputLimit: 16 * 1024
+              ),
+              !result.timedOut, result.status == 0
+        else { return false }
+        return activateRunning(hostBundleIDs)
+    }
+
+    // MARK: - A terminal's own CLI (WezTerm, kitty)
+
+    /// A terminal's CLI may take this long to answer; past it the click
+    /// falls through to the app instead of freezing the menu bar.
+    static let hostCommandTimeout: TimeInterval = 2
+
+    /// Run the first of `commands` whose program exists inside the running
+    /// app's bundle — the app found by bundle id, its CLI by the bundle's
+    /// own path, never a shell or `PATH` (a GUI app has none) and never a
+    /// path read from the log — then bring that app forward. Executing it
+    /// is the click's action: nothing runs to observe a session. A terminal
+    /// that is not running holds no session, so nothing is launched.
+    private static func runInApp(_ bundleID: String, commands: (String) -> [LandingPlan.HostCommand]) -> Bool {
+        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first,
+              let bundle = app.bundleURL?.path,
+              let command = commands(bundle).first(where: { FileManager.default.isExecutableFile(atPath: $0.executable) }),
+              let result = ProcessIO.run(
+                  executable: command.executable,
+                  arguments: command.arguments,
+                  environment: command.environment(over: ProcessInfo.processInfo.environment),
+                  timeout: hostCommandTimeout,
+                  outputLimit: 16 * 1024
+              ),
+              !result.timedOut, result.status == 0
+        else { return false }
+        return app.activate()
     }
 
     // MARK: - Apps
