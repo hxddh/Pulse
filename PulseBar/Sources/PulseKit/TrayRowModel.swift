@@ -719,7 +719,7 @@ extension TrayRowModel {
 
     /// The main agent's tools this turn, the most used first: "Edit 9 ·
     /// Bash 6 · Read 5"; at most `limit` (nil: all), then "…".
-    package static func toolsText(_ digest: TurnDigest, limit: Int? = toolsShown) -> String {
+    package static func toolsText(_ digest: TurnDigest, limit: Int? = TrayRowModel.toolsShown) -> String {
         let tools = digest.toolsByCount
         let shown = limit.map { Array(tools.prefix($0)) } ?? tools
         var text = shown.map { "\($0.name) \($0.count)" }.joined(separator: " · ")
@@ -730,7 +730,7 @@ extension TrayRowModel {
     /// The files this turn changed, relative to the session's folder: at
     /// most `limit` (nil: all), then "+N" — "+N…" when more were heard than
     /// the digest keeps. One per line.
-    package static func filesText(_ digest: TurnDigest, cwd: String, home: String, limit: Int? = filesShown) -> String {
+    package static func filesText(_ digest: TurnDigest, cwd: String, home: String, limit: Int? = TrayRowModel.filesShown) -> String {
         let files = digest.files.map { TitleHeuristics.relativePath($0, cwd: cwd, home: home) }
         let shown = limit.map { Array(files.prefix($0)) } ?? files
         var lines = shown
