@@ -865,7 +865,8 @@ package enum TurnSummary {
         let digest = said.digest
         add(.detailTools, Words.toolsText(digest, limit: nil))
         if !digest.files.isEmpty {
-            lines.append(t(.detailFiles) + colon)
+            // A heading over the list: no trailing space after its colon.
+            lines.append(t(.detailFiles) + (lang == .zh ? "：" : ":"))
             let files = Words.filesText(digest, cwd: row.cwd, home: home, limit: nil)
             lines += files.split(separator: "\n").map { "  " + String($0) }
         }
