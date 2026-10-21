@@ -257,10 +257,16 @@ final class AgentProcessesTests: XCTestCase {
         }
     }
 
-    /// The IDE and the `cursor-agent` CLI are one agent.
+    /// The IDE and the `cursor-agent` CLI are one agent. The CLI's newer
+    /// `agent` command is a link into the same install folder: the program
+    /// the kernel reports there is Cursor, and a bare `agent` anywhere else
+    /// is not.
     func testCursorAgentCLIIsCursor() {
         XCTAssertEqual(AgentProcesses.match(args: "/Users/me/.local/bin/cursor-agent"), .cursor)
         XCTAssertEqual(AgentProcesses.match(args: "node /Users/me/.local/share/cursor-agent/versions/1/index.js"), .cursor)
+        XCTAssertEqual(AgentProcesses.match(args: "/Users/me/.local/share/cursor-agent/versions/2026.10.20-a1b2c3/agent -p hi"), .cursor)
+        XCTAssertNil(AgentProcesses.match(args: "/usr/local/bin/agent --serve"), "another program called agent")
+        XCTAssertNil(AgentProcesses.match(args: "/opt/homebrew/bin/agent"))
     }
 
     func testShortAgentNamesDoNotReintroduceKnownFalsePositives() {

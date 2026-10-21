@@ -1,0 +1,20 @@
+{
+  "conversation_id": "c0a1-conv",
+  "generation_id": "gen-9",
+  "model": "gpt-5",
+  "hook_event_name": "postToolUse",
+  "cursor_version": "2.1.0",
+  "workspace_roots": [
+    "/Users/me/code/app"
+  ],
+  "user_email": "me@example.com",
+  "transcript_path": "/Users/me/.cursor/projects/app/agent-transcripts/c0a1-conv.jsonl",
+  "tool_name": "Shell",
+  "tool_input": {
+    "command": "npm test"
+  },
+  "tool_output": "{}",
+  "tool_use_id": "t1",
+  "cwd": "/Users/me/code/app",
+  "duration": 812
+}

@@ -1,0 +1,11 @@
+{
+  "conversation_id": "c0a2-conv",
+  "generation_id": "gen-1",
+  "session_id": "c0a2-conv",
+  "hook_event_name": "sessionStart",
+  "workspace_roots": [
+    "/Users/me/code/app"
+  ],
+  "is_background_agent": false,
+  "composer_mode": "agent"
+}

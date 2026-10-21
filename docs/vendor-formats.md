@@ -16,7 +16,9 @@ Every installed event also has a payload in
 event without one. They are reconstructed from the pinned source, not
 captured from a live run: a field no primary source confirms is listed under
 the agent's `unverified` in `vendor-formats.json` (today: Cursor's payload
-fields). `RecordedPayloadTests` reads them in process and `scripts/e2e.sh`
+fields, and the Cursor / VS Code shapes that run Claude's hooks). Beside each
+kind, `expected.json`'s `fields` pins some of the columns a fixture's line is
+written with (`tool`, `cat`, `err`, `took`, `meta`, `sub`, `message`). `RecordedPayloadTests` reads them in process and `scripts/e2e.sh`
 through the packaged app ([`architecture.md`](architecture.md), "Proof").
 
 Each agent is one adapter file in `PulseBar/Sources/PulseKit/Agents/`
@@ -41,7 +43,8 @@ payload. The tables below are those files in prose.
   nothing left to control; Codex never reads an async handler's output. So
   an event whose only control is a decision output is observe-only when
   installed async (Claude's `PermissionDenied`, `SubagentStop`; Codex's
-  `SubagentStop`). One exception, an owner decision: Copilot's `agentStop`
+  `SubagentStart`, `SubagentStop`, `PostCompact`). Codex's `PreCompact` is
+  never installed: its `continue: false` stops the compaction. One exception, an owner decision: Copilot's `agentStop`
   and `postToolUse` / `postToolUseFailure` are synchronous and could return
   a decision (`decision: "block"`, `modifiedResult`); Pulse's hook appends
   one line and prints nothing, so it never decides. An event whose hook takes the vendor's place —
@@ -133,23 +136,43 @@ nothing Pulse shows ("ignored" below), activity or a prompt that names no
 session, and a blocked event from Codex or Cursor. The `ignored` line's
 message says which (`PulseHookReceiver.Ignored`); the reducer skips it.
 
+**Step categories and facts (v9).** A line that names a tool carries its
+category (`cat`: edit, read, shell, search, web, mcp, agent, skill, plan,
+other), read from the adapter's own table of its vendor's tool names
+(`AgentSpec.toolCategories`; an `mcp__` tool is `mcp`) unless the adapter
+says it (Cursor's `after*` events); nothing outside `Agents/` names a
+vendor's tool. The `meta` column carries the bounded facts below — a
+`start`'s `source` and an `end`'s `reason` are read for every agent that
+sends them, a word only (`AgentSpec.reading`).
+
+**Another host running Claude's hooks.** Cursor and its CLI (which import
+`~/.claude/settings.json`) and VS Code (`chat.useClaudeHooks`) run Claude's
+settings hooks with their own payloads. A Claude payload with
+`cursor_version`, with both `conversation_id` and `generation_id`, with a
+string `timestamp` (VS Code's ISO 8601 stamp — Claude's payload has none),
+or whose `hook_event_name` is not the installed event is an `ignored` line,
+"another host ran Claude's hook": never a Claude row (`Claude.foreignHost`).
+
 **Subagents.** Inside a subagent Claude's and Codex's events carry
-`agent_id`, Copilot's `agentId` (`AgentSpec.subagentKeys`): the line's `sub`
+`agent_id`, Copilot's `agentId`, the OpenCode plugin's steps of a child
+session `subagent_id` (`AgentSpec.subagentKeys`): the line's `sub`
 column. A subagent's line never answers the main agent's block (or another
 subagent's), never revives an ended turn, and its prompt is not the person's
 (`attention-protocol.md`, reader rules). OpenCode's plugin folds a child
-session's asks (and their answers) into the root session and drops its
-lifecycle, prompts and steps — the child is learned from the `parentID` on
-any session event that carries one; Pi's subagents are separate
+session's asks (and their answers) into the root session, sends its steps
+under the root marked with the child's id (`subagent_id`), and drops its
+lifecycle, prompts, to-dos and diffs — the child is learned from the
+`parentID` on any session event that carries one; Pi's subagents are separate
 `pi --mode json` processes, which the extension silences. Copilot's
 `subagentStart` names the agent (`agentName`), not the `agentId` its own
 events carry: its status line is marked with the name.
 
 | Agent | Vendor event | Pulse |
 | --- | --- | --- |
-| **Claude** (`~/.claude/settings.json`, every entry `async: true`) | `SessionStart` | `start` |
-| | `UserPromptSubmit` | `working` (message = `prompt`) |
-| | `PostToolUse`, `PostToolUseFailure` (*payload*) | `tool` (tool = `tool_name`, an MCP tool `mcp__server__tool` as `server · tool`; message = its target — an `Agent` / `Task` call's `description`, else `subagent_type`; a `Skill`'s `skill`; else the command, path, URL, pattern or query; `PostToolUseFailure`: `err` = 1) |
+| **Claude** (`~/.claude/settings.json`, every entry `async: true`) | any event from another host (*payload*: `cursor_version`, `conversation_id` + `generation_id`, a string `timestamp`, another `hook_event_name`) | `ignored` — "another host ran Claude's hook" |
+| | `SessionStart` (*payload*) | `start` (message = `session_title`, a custom title: the row's title over the first prompt; `meta` `src` = `source`) |
+| | `UserPromptSubmit` (*payload*) | `working` (message = `prompt`; a `session_title` rides as `meta` `name`) |
+| | `PostToolUse`, `PostToolUseFailure` (*payload*) | `tool` (tool = `tool_name`, an MCP tool `mcp__server__tool` as `server · tool`; message = its target — an `Agent` / `Task` call's `description`, else `subagent_type`; a `Skill`'s `skill`; a `TaskCreate` / `TaskUpdate`'s `subject`; else the command, path, URL, pattern or query; `took` = `duration_ms`; `cat` from the tool's name; a `TodoWrite`'s `tool_input.todos` → `meta` `plan` / `planNow`; `PostToolUseFailure`: `err` = 1, `meta` `err` = the first line of `error`) |
 | | `PostToolUseFailure` with `is_interrupt: true` | `stopped` (the call reached Claude as an abort: the person interrupted) |
 | | `PermissionRequest` (*payload*) | `permission` — ask = `tool_name: command/file_path/url` (an `Agent` call: its description), tool = `tool_name`; `AskUserQuestion` → `question`, ask = `tool_input.questions[0].question`; `ExitPlanMode` → ask = the plan's first line. `ignored` when no prompt can be shown (below) |
 | | `PermissionDenied` (*payload*; async) | `status` (message = `auto mode denied <tool>`; no tool column — a status that names a tool says it runs now; `reason` is not read) |
@@ -158,29 +181,32 @@ events carry: its status line is marked with the name.
 | | `Notification` `agent_needs_input` | `ignored` — "may be about another session" (agent view's background session, a teammate's setup question, a billing notice: the payload does not name the session that waits) |
 | | `Notification` `idle_prompt` | `idle` |
 | | `Notification` `elicitation_complete` / `elicitation_response` | `done` |
-| | `SubagentStart` / `SubagentStop` (*payload*) | `start` / `turn` with `sub` = `agent_id` — the subagent's own lifecycle, timeline only (its `SubagentStop` answers only its own block); without `agent_id`: ignored |
+| | `SubagentStart` / `SubagentStop` (*payload*) | `start` / `turn` with `sub` = `agent_id`, `meta` `type` = `agent_type` — the subagent's own lifecycle, timeline only (its `SubagentStop` answers only its own block); without `agent_id`: ignored |
 | | `PostCompact` (*payload*) | `status` (message = `compacted`) when `trigger` is `auto`; a manual `/compact` (the person at the prompt, no `Stop` follows) is ignored. `compact_summary` is never read |
 | | `Stop` | `turn` (message = `last_assistant_message`; `background_tasks` / `session_crons` are not read) |
 | | `StopFailure` | `failed` (message = `last_assistant_message`, else `error_details`, else `error`) |
-| | `SessionEnd` | `end` |
-| **Codex** (`~/.codex/hooks.json` only; `config.toml` is never touched) — never blocked | `SessionStart` / `UserPromptSubmit` / `Stop` / `SessionEnd` | `start` / `working` (message = `prompt`; a subagent's, with `agent_id`, is its own task) / `turn` (message = `last_assistant_message`) / `end` |
-| | `PostToolUse` (async) | `tool` (the stall rule's evidence; tool = `tool_name`, message = its target) |
-| | `SubagentStop` (*payload*; async) | `turn` with `sub` = `agent_id` (the child thread; `session_id` is the root's) — timeline only, never the end of the person's turn |
+| | `SessionEnd` | `end` (`meta` `why` = `reason`) |
+| **Codex** (`~/.codex/hooks.json` only; `config.toml` is never touched) — never blocked | `SessionStart` / `UserPromptSubmit` / `Stop` / `SessionEnd` | `start` (`meta` `src` = `source`) / `working` (message = `prompt`; a subagent's, with `agent_id`, is its own task) / `turn` (message = `last_assistant_message`) / `end` (`meta` `why` = `reason`) |
+| | `PostToolUse` (async) (*payload*) | `tool` (tool = `tool_name`, message = its target, `cat` from the tool's name); `apply_patch`: `tool_input.command` is the raw patch — its `*** Add File:` / `*** Update File:` / `*** Delete File:` / `*** Move to:` paths are `meta` `files`, the first (+N) the target; `update_plan`: `tool_input.plan[{step, status}]` → `meta` `plan` / `planNow` |
+| | `SubagentStart` / `SubagentStop` (*payload*; async) | `start` / `turn` with `sub` = `agent_id` (the child thread; `session_id` is the root's), `meta` `type` = `agent_type` — timeline only, never the person's turn |
+| | `PostCompact` (*payload*; async) | `status` (message = `compacted`) when `trigger` is `auto`; manual ignored. `PreCompact` is never installed (its `continue: false` stops the compaction) |
 | | `Interrupt` (async, ≤ 3 s; root turns only) | `stopped` (the person interrupted the turn) |
 | | a turn that ends on an error | nothing: Codex fires no `Stop` for it, and Pulse infers nothing — the row stays working until the next event, the process's exit or the silent bound |
 | | `PermissionRequest` | never installed, not read (fires before Codex's own auto-review) |
-| **Copilot CLI** (`~/.copilot/hooks/pulse.json`, `exec` + `args`) | `sessionStart` (*payload*) / `sessionEnd` | `start` (message = `initialPrompt`, a `-p` run's prompt: the session's name) / `end` |
+| **Copilot CLI** (`~/.copilot/hooks/pulse.json`, `exec` + `args`) | `sessionStart` (*payload*) / `sessionEnd` | `start` (message = `initialPrompt`, a `-p` run's prompt: the session's name; `meta` `src` = `source`) / `end` (`meta` `why` = `reason`) |
 | | `userPromptSubmitted` | `working` (message = `prompt`) |
-| | `postToolUse` / `postToolUseFailure` (synchronous — the owner-approved exception) | `tool` (the tool ran: answers a `permission_prompt`; tool = `toolName`, message = the command or path in `toolArgs`, a JSON string; `postToolUseFailure`: `err` = 1; with `agentId`: the subagent's step, never the answer to the main agent's block) |
+| | `postToolUse` / `postToolUseFailure` (synchronous — the owner-approved exception) | `tool` (the tool ran: answers a `permission_prompt`; tool = `toolName`, message = the command or path in `toolArgs`, a JSON string; `postToolUseFailure`: `err` = 1, `meta` `err` = the first line of `error`; `cat` from the runtime tool name — `update_todo` is a plan step, its arguments are undocumented; with `agentId`: the subagent's step, never the answer to the main agent's block) |
 | | `agentStop` (synchronous — the owner-approved exception) | `turn` |
 | | `notification` `permission_prompt` / `elicitation_dialog` (*payload*; installed with `matcher` `permission_prompt\|elicitation_dialog\|agent_idle`) | `permission` / `question` |
 | | `notification` `agent_idle` | ignored (a background subagent's idle, not the session's turn) |
-| | `errorOccurred` (*payload*) | `failed`, message = `error.message` when `recoverable: false`; else `status` (work going on: never starts a turn) |
+| | `errorOccurred` (*payload*) | `failed`, message = `error.message` when `recoverable: false`; else `status` (message = `recoverable error`; work going on: never starts a turn); either way `meta` `err` = `error.name` |
 | | `subagentStart` (*payload*; cannot block) | `status` with `sub` = `agentName`, message = `subagent started` — timeline only |
 | | `preCompact` (*payload*; notification only, `matcher` `auto`) | `status` (message = `compacting`); `trigger: manual` ignored |
 | **OpenCode 1.x** (plugin `~/.config/opencode/plugins/pulse.js`, `event` hook; payload as the last argument, the plugin's own shape; one child at a time, in order; a subagent's child session dropped, its asks sent under the root session) | `session.created` | `start` (message = a non-default `info.title`) |
-| | `session.updated` (sent when a root's non-default title changes) | `title` (message = `info.title`) |
-| | `message.part.updated` (*payload*: `phase`) | a user message's first non-synthetic text (`message.updated` role user, observed) → `working` (message = the text: the title); a tool part's first `running` state → `status` (tool = `tool`, message = one input argument: what runs now); its `completed` / `error` state, once per `callID` → `tool` (`err` on error, `took` = `time.end − time.start`; a call an abort interrupted is not sent) |
+| | `session.updated` (sent when a root's non-default title changes) | `title` (message = `info.title`); sent once with `archived` when `info.time.archived` is set (there is no `session.archived` event) → `end` (`meta` `why` = `archived`) |
+| | `todo.updated` (*payload*; a root's only) | `status` (message = `plan updated`; `todos[{content, status}]` → `meta` `plan` / `planNow`) |
+| | `session.diff` (*payload*; a root's only, a non-empty diff only) | `status` (message = `N files changed`; `diff[].file` → `meta` `files`, at most 16) |
+| | `message.part.updated` (*payload*: `phase`) | a user message's first non-synthetic text (`message.updated` role user, observed) → `working` (message = the text: the title); a tool part's first `running` state → `status` (tool = `tool`, message = one input argument: what runs now); its `completed` / `error` state, once per `callID` → `tool` (`err` on error, `took` = `time.end − time.start`; a call an abort interrupted is not sent); a `skill` call's target is its `name`; a child session's steps carry `subagent_id` |
 | | `session.status` `busy` (sent when it changes) / `retry` (*payload*) | `status` (anything else: `ignored`) |
 | | `permission.asked` (*payload*: the ask) | `permission` (ask = `permission: patterns`; tool = the asking call's tool, by `tool.callID`, else the permission) |
 | | `question.asked` (*payload*: the ask) | `question` (ask = first question) |
@@ -192,7 +218,7 @@ events carry: its status line is marked with the name.
 | **OpenCode 2.x** (the same plugin, `setup`: `ctx.event.subscribe`; events of another folder skipped) | `session.created` / `session.renamed` | `start` (message = `title`) / `title` (sent when it changes) |
 | | `session.execution.started` / `session.inbox.enqueued` (user items only) | `working` (no text) / `working` (message = the item's text) |
 | | `session.tool.called` | `status` (tool = the name `session.tool.input.started` gave the call — observed, never sent —, message = one input argument) |
-| | `session.tool.success` / `session.tool.failed` | `tool` (`err` on failed, `took` from the events' `created` clocks) |
+| | `session.tool.success` / `session.tool.failed` | `tool` (`err` on failed, `took` from the events' `created` clocks; a child session's carry `subagent_id`) |
 | | `permission.asked` (*payload*) | `permission` (ask = `message`, else `action: resources`; tool = the asking call's, by `source.id`, else the action) |
 | | `form.created` (*payload*) | `question` (ask = the first field's `description`, else its `title`, else the form's) |
 | | `permission.replied` / `form.replied` / `form.cancelled` (*payload*: `pending`) | `done` when no other ask of the root is open; else ignored |
@@ -200,13 +226,14 @@ events carry: its status line is marked with the name.
 | | `session.execution.interrupted` (*payload*: `reason`) | `user` → `stopped`; `inactivity` → `failed`; `superseded` / `shutdown` ignored |
 | | `session.retry.scheduled` / `session.compaction.ended` | `status` (message = `retrying` / `compacted`; no cost or token field is read) |
 | | `session.deleted` | `end` |
-| **Cursor** (`~/.cursor/hooks.json`; session = `conversation_id`, read before `session_id`; cwd = `workspace_roots[0]`) — never blocked | `sessionStart` / `sessionEnd` | `start` / `end` |
+| **Cursor** (`~/.cursor/hooks.json`; session = `conversation_id`, read before `session_id`; cwd = `workspace_roots[0]`) — never blocked | `sessionStart` / `sessionEnd` (*payload*) | `start` / `end` (`meta` `why` = `reason`, `err` = the first line of `error_message`) |
 | | `afterShellExecution` (*payload*) | `tool` (tool = `Shell`, message = `command`, `took` = `duration` when present; `output` is never read) |
 | | `afterFileEdit` (*payload*) | `tool` (tool = `Edit`, message = `file_path` relative to its workspace root, else its name; `edits` are never read) |
-| | `afterMCPExecution` (*payload*) | `tool` (tool = `server · tool` when the payload names its server, else `tool_name`; `tool_input` / `result_json` are never read) |
+| | `afterMCPExecution` (*payload*) | `tool` (tool = `tool_name` — the payload names no server; `cat` = `mcp`; `took` = `duration`; `tool_input` / `result_json` are never read) |
+| | `postToolUseFailure` (*payload*; observational, no output read) | `tool` (tool = `tool_name`, message = its target, `err` = 1, `meta` `err` = `failure_type`, `took` = `duration`); `is_interrupt: true` → `stopped` |
 | | `afterAgentResponse` (*payload*) | `tool` with no tool name (message = `text`: the turn's last words so far) |
 | | `stop` (*payload*: `status`) | `completed` → `turn`; `error` → `failed` (no error text); `aborted` → `stopped` |
-| **Pi** (extension `~/.pi/agent/extensions/pulse.js`; payload as the last argument; nothing sent when `ctx.mode` is `json` or `print`; one child at a time, in emission order) | `session_start` / `session_shutdown` (neither sent on `reason: "reload"`) | `start` (message = `getSessionName()`, when set) / `end` (flushes the queue) |
+| **Pi** (extension `~/.pi/agent/extensions/pulse.js`; payload as the last argument; nothing sent when `ctx.mode` is `json` or `print`; one child at a time, in emission order) | `session_start` / `session_shutdown` (neither sent on `reason: "reload"`) | `start` (message = `getSessionName()`, when set; `meta` `src` = its `reason`, forwarded as `source`) / `end` (flushes the queue; `meta` `why` = `reason`) |
 | | `session_info_changed` | `title` (message = the new name; empty clears it) |
 | | `agent_start` | `working` (a run began; no text) |
 | | `message_start` (sent for `role: "user"` only) | `working` (message = the message's text: the title; a skill block is sent as `/skill:name args`, never its path) |
@@ -234,7 +261,9 @@ installed hook from running (`HookContract.offSwitches`,
 `allowManagedHooksOnly` / `disableAllHooks: true` in
 `/Library/Application Support/ClaudeCode/managed-settings.json` or
 `managed-settings.d/*.json` ("a managed policy keeps Claude from running
-it"). A project's own `disableAllHooks: false` can override the user's
+it"); Copilot's `disableAllHooks: true` in `~/.copilot/settings.json`
+(cli-config-dir-reference: it disables repository- and user-level hooks;
+Copilot documents no managed-only switch). A project's own `disableAllHooks: false` can override the user's
 `true`; Pulse reads only the user file and says so as a warning, not a
 verdict. Codex trusts each hook by a hash of its entry
 (`engine/discovery.rs`): any change Pulse makes leaves its entries

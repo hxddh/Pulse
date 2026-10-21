@@ -1,0 +1,30 @@
+{
+  "session_id": "fx-claude-1",
+  "transcript_path": "/Users/me/.claude/projects/-Users-me-code-app/fx-claude-1.jsonl",
+  "cwd": "/Users/me/code/app",
+  "hook_event_name": "PostToolUse",
+  "permission_mode": "default",
+  "tool_name": "TodoWrite",
+  "tool_input": {
+    "todos": [
+      {
+        "content": "Reproduce the login failure",
+        "status": "completed",
+        "activeForm": "Reproducing the login failure"
+      },
+      {
+        "content": "Fix the token refresh",
+        "status": "in_progress",
+        "activeForm": "Fixing the token refresh"
+      },
+      {
+        "content": "Run the login tests",
+        "status": "pending",
+        "activeForm": "Running the login tests"
+      }
+    ]
+  },
+  "tool_response": {},
+  "tool_use_id": "toolu_03",
+  "duration_ms": 3
+}

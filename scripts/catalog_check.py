@@ -28,8 +28,9 @@ The checks are the ones that guard a real fact; prose checks went.
    PulseBar/Tests/Fixtures/hooks/<agent>/<event>.json (variants
    `<event>@<variant>.json`), every fixture names an installed event and is
    a JSON object, and `expected.json` says what each one becomes — exactly
-   the fixture files. VendorFormatTests feeds them through the receiver;
-   scripts/e2e.sh through the packaged app.
+   the fixture files (and, in `fields`, some of their columns).
+   VendorFormatTests feeds them through the receiver; scripts/e2e.sh
+   through the packaged app.
 
 Run: python3 scripts/catalog_check.py
 """
@@ -345,10 +346,21 @@ def check_hooks(text: str, roster: list[Agent], problems: list[str]) -> None:
 
 def check_fixtures(roster: list[Agent], problems: list[str]) -> None:
     try:
-        expected = json.loads((FIXTURES / "expected.json").read_text(encoding="utf-8")).get("expected", {})
+        root = json.loads((FIXTURES / "expected.json").read_text(encoding="utf-8"))
+        expected = root.get("expected", {})
+        fields = root.get("fields", {})
     except (OSError, json.JSONDecodeError) as error:
         problems.append(f"fixtures — {FIXTURES.relative_to(ROOT)}/expected.json unreadable: {error}")
-        expected = {}
+        expected, fields = {}, {}
+    # `fields` pins columns of a fixture's line (VendorFormatTests): only a
+    # fixture expected.json names, only columns the test reads.
+    columns = {"tool", "cat", "err", "took", "meta", "sub", "message"}
+    for key, pinned in sorted(fields.items()):
+        if key not in expected:
+            problems.append(f"fixtures — fields names {key}, which expected.json does not")
+        if not isinstance(pinned, dict) or not set(pinned) <= columns \
+                or not all(isinstance(v, str) for v in pinned.values()):
+            problems.append(f"fixtures — {key}: fields pins string values of {sorted(columns)} only")
     seen: set[str] = set()
     for agent in roster:
         folder = FIXTURES / agent.raw

@@ -1,0 +1,28 @@
+{
+  "session_id": "fx-codex-1",
+  "transcript_path": null,
+  "cwd": "/Users/me/code/app",
+  "model": "gpt-5-codex",
+  "hook_event_name": "PostToolUse",
+  "turn_id": "turn-1",
+  "tool_name": "update_plan",
+  "tool_use_id": "call_3",
+  "tool_input": {
+    "explanation": "Starting on retries",
+    "plan": [
+      {
+        "step": "Read the uploader",
+        "status": "completed"
+      },
+      {
+        "step": "Add a retry with backoff",
+        "status": "in_progress"
+      },
+      {
+        "step": "Run cargo test",
+        "status": "pending"
+      }
+    ]
+  },
+  "tool_response": "Plan updated"
+}

@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-codex-1",
+  "transcript_path": null,
+  "cwd": "/Users/me/code/app",
+  "model": "gpt-5-codex",
+  "hook_event_name": "PostCompact",
+  "turn_id": "turn-4",
+  "trigger": "manual"
+}

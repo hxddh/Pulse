@@ -1,0 +1,14 @@
+{
+  "session_id": "fx-claude-1",
+  "transcript_path": "/Users/me/.claude/projects/-Users-me-code-app/fx-claude-1.jsonl",
+  "cwd": "/Users/me/code/app",
+  "hook_event_name": "PostToolUse",
+  "permission_mode": "default",
+  "tool_name": "Skill",
+  "tool_input": {
+    "skill": "review",
+    "args": "PR 12"
+  },
+  "tool_response": {},
+  "tool_use_id": "toolu_04"
+}

@@ -1,0 +1,9 @@
+{
+  "sessionID": "ses_fx1",
+  "directory": "/Users/me/code/app",
+  "files": [
+    "src/cache.ts",
+    "src/redis.ts"
+  ],
+  "count": 2
+}

@@ -7,17 +7,17 @@ import XCTest
 // Attention: the protocol read into the session book, the hook receiver,
 // the event log, the hooks installer.
 
-/// The event log as the book reads it: every complete v8 line, in order.
+/// The event log as the book reads it: every complete v9 line, in order.
 final class AttentionBookTests: XCTestCase {
     private let now: Int64 = 1_700_000_000_000
 
-    /// v8 lines from rows written `agent kind ms message session cwd front
+    /// v9 lines from rows written `agent kind ms message session cwd front
     /// pid landing tool sub` (missing trailing fields empty), numbered
     /// from 1.
     static func tsv(_ rows: [[String]]) -> String {
         rows.enumerated().map { index, row in
             let c = row + Array(repeating: "", count: max(0, 11 - row.count))
-            return [String(index + 1), c[2], c[0], c[1], "", c[4], c[10], c[5], c[7], c[6], c[8], c[9], "", "", c[3]]
+            return [String(index + 1), c[2], c[0], c[1], "", c[4], c[10], c[5], c[7], c[6], c[8], c[9], "", "", "", "", c[3]]
                 .joined(separator: "\t")
         }.joined(separator: "\n") + "\n"
     }
@@ -185,22 +185,22 @@ final class AttentionBookTests: XCTestCase {
         XCTAssertTrue(book("# header\nclaude\tpermission\n\n").sessions.isEmpty)
     }
 
-    /// v8 is exactly fifteen columns, with a positive `seq`. A shorter
-    /// line (a v7 line of twelve), a longer one, or one without a number is
+    /// v9 is exactly seventeen columns, with a positive `seq`. A shorter
+    /// line (a v8 line of fifteen), a longer one, or one without a number is
     /// not read.
     func testALineWithAnotherColumnCountIsNotRead() throws {
+        let v9 = "7\t\(now - 1000)\tclaude\tpermission\tPermissionRequest\ts1\t\t/p\t4242\t\ttmux:%3\tBash\t\t\t\t\tBash: ls\n"
         let v8 = "7\t\(now - 1000)\tclaude\tpermission\tPermissionRequest\ts1\t\t/p\t4242\t\ttmux:%3\tBash\t\t\tBash: ls\n"
-        let v7 = "7\t\(now - 1000)\tclaude\tpermission\tPermissionRequest\ts1\t/p\t4242\t\ttmux:%3\tBash\tBash: ls\n"
-        let long = "7\t\(now - 1000)\tclaude\tpermission\tPermissionRequest\ts1\t\t/p\t4242\t\ttmux:%3\tBash\t\t\tBash: ls\t\n"
-        let unnumbered = "0\t\(now - 1000)\tclaude\tpermission\tPermissionRequest\ts1\t\t/p\t4242\t\ttmux:%3\tBash\t\t\tBash: ls\n"
-        XCTAssertTrue(book(v7).sessions.isEmpty, "a v7 line is not read")
+        let long = "7\t\(now - 1000)\tclaude\tpermission\tPermissionRequest\ts1\t\t/p\t4242\t\ttmux:%3\tBash\t\t\t\t\tBash: ls\t\n"
+        let unnumbered = "0\t\(now - 1000)\tclaude\tpermission\tPermissionRequest\ts1\t\t/p\t4242\t\ttmux:%3\tBash\t\t\t\t\tBash: ls\n"
+        XCTAssertTrue(book(v8).sessions.isEmpty, "a v8 line is not read")
         XCTAssertTrue(book(long).sessions.isEmpty)
         XCTAssertTrue(book(unnumbered).sessions.isEmpty)
-        let session = try XCTUnwrap(book(v8).sessions[SessionKey(.claude, "s1")])
+        let session = try XCTUnwrap(book(v9).sessions[SessionKey(.claude, "s1")])
         XCTAssertEqual(session.pid, 4242)
         XCTAssertEqual(session.landing, "tmux:%3")
-        XCTAssertEqual(block(book(v8), SessionKey(.claude, "s1"))?.tool, "Bash")
-        XCTAssertEqual(block(book(v8), SessionKey(.claude, "s1"))?.ask, "Bash: ls")
+        XCTAssertEqual(block(book(v9), SessionKey(.claude, "s1"))?.tool, "Bash")
+        XCTAssertEqual(block(book(v9), SessionKey(.claude, "s1"))?.ask, "Bash: ls")
     }
 
     /// A hand-written blocked line for an agent whose hooks cannot
@@ -306,7 +306,7 @@ final class PulseHookReceiverTests: XCTestCase {
 
     // MARK: - The protocol's own words
 
-    /// A line's kind is one of the v8 kinds, spelled as written — no alias,
+    /// A line's kind is one of the v9 kinds, spelled as written — no alias,
     /// no vendor word, no guess.
     func testTheLogReadsOnlyTheV8Kinds() {
         for kind in AttentionKind.allCases {
@@ -320,9 +320,9 @@ final class PulseHookReceiverTests: XCTestCase {
                           "Claude's idle_prompt is a 60 s timer after every finished turn — not a block")
     }
 
-    /// v8: fifteen columns — `seq ms agent kind event session sub cwd pid
-    /// front landing tool err took message` — and a record survives its own
-    /// line.
+    /// v9: seventeen columns — `seq ms agent kind event session sub cwd pid
+    /// front landing tool err took cat meta message` — and a record survives
+    /// its own line.
     func testAV8RecordRoundTrips() throws {
         let record = AttentionRecord(
             agent: .claude, kind: .permission, ms: 1_800_000_000_000,
@@ -334,7 +334,7 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(columns.count, AttentionProtocol.columnCount)
         XCTAssertEqual(columns.map(String.init), [
             "42", "1800000000000", "claude", "permission", "PermissionRequest", "s1", "agent-7", "/w", "4242", "0",
-            "tmux:%3;tty:/dev/ttys004", "Bash", "", "", "Bash: npm test",
+            "tmux:%3;tty:/dev/ttys004", "Bash", "", "", "", "", "Bash: npm test",
         ])
         XCTAssertEqual(AttentionRecord(line: record.line), record)
         let step = AttentionRecord(agent: .pi, kind: .tool, ms: 1, message: "swift test", session: "p1", tool: "bash", seq: 3, failed: true, tookMs: 1500)
@@ -342,20 +342,21 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(stepColumns[12], "1", "err")
         XCTAssertEqual(stepColumns[13], "1500", "took")
         XCTAssertEqual(AttentionRecord(line: step.line), step)
-        XCTAssertEqual(AttentionRecord(line: "1\t1\tpi\ttool\t\tp\t\t/p\t\t\t\tbash\tyes\t-4\tls")?.failed, false, "only 1 is a failure")
-        XCTAssertEqual(AttentionRecord(line: "1\t1\tpi\ttool\t\tp\t\t/p\t\t\t\tbash\tyes\t-4\tls")?.tookMs, 0, "a duration is positive")
+        XCTAssertEqual(AttentionRecord(line: "1\t1\tpi\ttool\t\tp\t\t/p\t\t\t\tbash\tyes\t-4\t\t\tls")?.failed, false, "only 1 is a failure")
+        XCTAssertEqual(AttentionRecord(line: "1\t1\tpi\ttool\t\tp\t\t/p\t\t\t\tbash\tyes\t-4\t\t\tls")?.tookMs, 0, "a duration is positive")
+        XCTAssertNil(AttentionRecord(line: "1\t1\tpi\ttool\t\tp\t\t/p\t\t\t\tbash\t\t\tShell\t\tls")?.category, "a category is spelled as the protocol spells it")
         let unknown = AttentionRecord(agent: .codex, kind: .turn, ms: 1, seq: 1)
         XCTAssertEqual(AttentionRecord(line: unknown.line), unknown, "empty columns stay empty")
         XCTAssertNil(AttentionRecord(line: AttentionRecord(agent: .codex, kind: .turn, ms: 1).line), "a line with no seq is not read")
-        XCTAssertNil(AttentionRecord(line: "1\t1\tclaude\tpermission\t\ts\t\t/p\t\t\t\t\t\tx"), "a fourteen-column line is not read")
-        XCTAssertNil(AttentionRecord(line: "1\t1\tgoose\tpermission\t\ts\t\t/p\t\t\t\t\t\t\tx"), "an unknown agent is not read")
-        XCTAssertEqual(AttentionRecord(line: "1\t1\tcursor-agent\tturn\tstop\ts\t\t/p\t\t\t\t\t\t\t")?.agent, .cursor, "an alias reads as its agent")
+        XCTAssertNil(AttentionRecord(line: "1\t1\tclaude\tpermission\t\ts\t\t/p\t\t\t\t\t\t\t\tx"), "a sixteen-column line is not read")
+        XCTAssertNil(AttentionRecord(line: "1\t1\tgoose\tpermission\t\ts\t\t/p\t\t\t\t\t\t\t\t\tx"), "an unknown agent is not read")
+        XCTAssertEqual(AttentionRecord(line: "1\t1\tcursor-agent\tturn\tstop\ts\t\t/p\t\t\t\t\t\t\t\t\t")?.agent, .cursor, "an alias reads as its agent")
         let header = AttentionProtocol.Header(next: 43, gen: "g42")
-        XCTAssertTrue(header.line.hasPrefix("# pulse-events v8 next=43 gen=g42 "))
+        XCTAssertTrue(header.line.hasPrefix("# pulse-events v9 next=43 gen=g42 "))
         XCTAssertTrue(header.line.hasSuffix("\n"))
         XCTAssertEqual(AttentionProtocol.Header(line: header.line.trimmingCharacters(in: .newlines)), header)
-        XCTAssertNil(AttentionProtocol.Header(line: "# pulse-events v7 next=43 gen=g42 (seq)"), "a v7 log has no v8 header")
-        XCTAssertNil(AttentionProtocol.Header(line: "# pulse-events v8 gen=g42"), "a header names its next seq")
+        XCTAssertNil(AttentionProtocol.Header(line: "# pulse-events v8 next=43 gen=g42 (seq)"), "a v8 log has no v9 header")
+        XCTAssertNil(AttentionProtocol.Header(line: "# pulse-events v9 gen=g42"), "a header names its next seq")
         XCTAssertEqual(AttentionProtocol.kind("tool"), .tool)
         XCTAssertFalse(AttentionKind.tool.isOpen)
         XCTAssertTrue(AttentionKind.failed.isOpen)
@@ -382,7 +383,7 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(record.landing, "tmux:%3;tty:/dev/ttys004")
     }
 
-    /// One vendor event in, one line out, per agent: the v8 kind it writes
+    /// One vendor event in, one line out, per agent: the v9 kind it writes
     /// and its words — or an `ignored` line, and why, for an event Pulse does
     /// not install (a gating one, Codex's early PermissionRequest, the
     /// protocol's own word), and for a notice that is not the session's
@@ -765,7 +766,7 @@ final class PulseHookReceiverTests: XCTestCase {
 
     /// Cursor's `after*` events are its steps: the shell command (and how
     /// long it ran), the edited file relative to its workspace, the MCP
-    /// tool as "server · tool". A reply names no tool: its text is the
+    /// tool by its name (the payload names no server). A reply names no tool: its text is the
     /// turn's last words so far. `stop` says how the turn ended.
     func testCursorAfterEventsAreStepsAndItsReplyIsTheLastWords() throws {
         deliver("cursor", "afterShellExecution", #"{"conversation_id":"cu3","workspace_roots":["/Users/me/app"],"command":"npm test","output":"ok","duration":1200}"#)
@@ -781,7 +782,8 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(lines[0].tookMs, 1200)
         XCTAssertEqual(lines[1].tool, "Edit")
         XCTAssertEqual(lines[1].message, "src/login.ts", "short: relative to the workspace")
-        XCTAssertEqual(lines[2].tool, "linear · create_issue")
+        XCTAssertEqual(lines[2].tool, "create_issue", "the payload names its tool, not a server")
+        XCTAssertEqual(lines[2].category, .mcp)
         XCTAssertEqual(lines[3].tool, "", "a reply names no tool")
         XCTAssertEqual(lines[3].message, "All tests pass. Done.")
         XCTAssertFalse(try String(contentsOf: log, encoding: .utf8).contains("old_string"), "an edit's text is never read")
@@ -1903,7 +1905,7 @@ struct ProtocolKindTests {
         #expect(lines.map { String($0[4]) } == ["Stop", "UserPromptSubmit"], "the vendor's event")
         #expect(lines.map { String($0[0]) } == ["1", "2"], "numbered")
         #expect(lines.allSatisfy { $0.count == AttentionProtocol.columnCount })
-        #expect(String(lines[0][14]) == "All tests pass.")
+        #expect(String(lines[0][16]) == "All tests pass.")
     }
 
     @Test func everyKindHasOneMeaning() {
@@ -1923,6 +1925,224 @@ struct ProtocolKindTests {
 
 /// The event log: one append-only file of numbered lines, read from an
 /// offset.
+/// v9's two new columns: a step's category, as its own adapter names the
+/// tool, and the small facts a line carries (`meta`), each bounded and
+/// escaped so no value can shift a column or another key.
+@Suite("Protocol v9 facts")
+struct LineFactsTests {
+    let t0: Int64 = 1_800_000_000_000
+
+    private func line(_ agent: AgentID, _ event: String, _ payload: [String: Any]) -> AttentionRecord {
+        var full = payload
+        if full["session_id"] == nil, full["sessionId"] == nil, full["sessionID"] == nil { full["session_id"] = "s1" }
+        return PulseHookReceiver.record(agent: agent, event: event, payload: full, nowMs: t0)
+    }
+
+    @Test func metaRoundTripsEscapedAndBounded() {
+        let meta = LineMeta(
+            plan: LineMeta.Plan(done: 2, total: 5), planNow: "Fix a;b|c%d", err: "Exit code 1",
+            src: "resume", why: "prompt_input_exit", agentType: "Explore", files: ["src/a;b.ts", "src/c|d.ts"], name: "Login rewrite"
+        )
+        let field = meta.field
+        #expect(field == "plan=2/5;planNow=Fix a%3Bb%7Cc%25d;err=Exit code 1;src=resume;why=prompt_input_exit;type=Explore;files=src/a%3Bb.ts|src/c%7Cd.ts;name=Login rewrite")
+        #expect(LineMeta(field: field) == meta)
+        let flat = AttentionProtocol.flatten(field)
+        #expect(flat == field, "one line, no tab")
+        #expect(LineMeta(field: "").isEmpty)
+        #expect(LineMeta(field: "plan=7/3;plan=x;color=red;err").plan == nil, "a plan is done <= total; an unknown key is skipped")
+        #expect(LineMeta(field: "src=two words").src == "", "a source is a word")
+        let long = LineMeta(err: String(repeating: "x", count: 400), files: (0..<40).map { "file\($0).swift" })
+        let reread = LineMeta(field: long.field)
+        #expect(reread.err.count == LineMeta.errLimit)
+        #expect(reread.files.count <= LineMeta.maxFiles)
+        #expect(LineMeta.progress([]).plan == nil, "an empty plan has no progress")
+        let progress = LineMeta.progress([(status: "completed", text: "a"), (status: "in_progress", text: "b\nmore"), (status: "pending", text: "c")])
+        #expect(progress.plan == LineMeta.Plan(done: 1, total: 3))
+        #expect(progress.now == "b")
+    }
+
+    @Test func aV9RecordCarriesItsCategoryAndFacts() {
+        let record = AttentionRecord(
+            agent: .codex, kind: .tool, ms: t0, message: "src/a.rs (+1)", session: "x1", tool: "apply_patch", seq: 9,
+            category: .edit, meta: LineMeta(files: ["src/a.rs", "src/b.rs"])
+        )
+        let columns = record.line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+        #expect(columns.count == AttentionProtocol.columnCount)
+        #expect(columns[14] == "edit")
+        #expect(columns[15] == "files=src/a.rs|src/b.rs")
+        #expect(columns[16] == "src/a.rs (+1)", "the message is last")
+        #expect(AttentionRecord(line: record.line) == record)
+        #expect(AttentionProtocol.columnNames.count == AttentionProtocol.columnCount)
+        #expect(AttentionProtocol.headerPrefix == "# pulse-events v9 ")
+    }
+
+    /// A category is written only on a line that names a tool, as its
+    /// adapter names the tool: never on a block, a status that names none,
+    /// a reply, or a lifecycle line.
+    @Test func onlyALineThatNamesAToolHasACategory() {
+        #expect(line(.claude, "PostToolUse", ["tool_name": "Edit", "tool_input": ["file_path": "/w/a.swift"]]).category == .edit)
+        #expect(line(.claude, "PostToolUse", ["tool_name": "mcp__github__create_issue"]).category == .mcp)
+        #expect(line(.claude, "PostToolUse", ["tool_name": "SomethingNew"]).category == .other)
+        #expect(line(.claude, "PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "ls"]]).category == nil)
+        #expect(line(.claude, "UserPromptSubmit", ["prompt": "hi"]).category == nil)
+        #expect(line(.copilot, "errorOccurred", ["sessionId": "c1", "recoverable": true]).category == nil)
+        #expect(line(.cursor, "afterAgentResponse", ["conversation_id": "c1", "text": "Done"]).category == nil)
+        #expect(line(.cursor, "afterShellExecution", ["conversation_id": "c1", "command": "ls"]).category == .shell)
+        #expect(line(.pi, "tool_execution_start", ["tool_name": "grep", "tool_input": ["pattern": "TODO"]]).category == .search)
+        #expect(line(.opencode, "session.tool.success", ["sessionID": "o1", "tool_name": "task", "target": "explore"]).category == .agent)
+        #expect(line(.codex, "PostToolUse", ["tool_name": "spawn_agent"]).category == .agent)
+        #expect(line(.copilot, "postToolUse", ["sessionId": "c1", "toolName": "update_todo"]).category == .plan)
+    }
+
+    /// Claude: how long a tool ran, a failed tool's first error line, a
+    /// TodoWrite's progress, a start's source, an end's reason, a
+    /// subagent's type and the session's custom title.
+    @Test func claudeSaysItsStepFacts() {
+        let failed = line(.claude, "PostToolUseFailure", [
+            "tool_name": "Bash", "tool_input": ["command": "npm test"], "error": "Exit code 1\nFAIL login.test.ts", "duration_ms": 4187.4,
+        ])
+        #expect(failed.failed)
+        #expect(failed.tookMs == 4187)
+        #expect(failed.meta.err == "Exit code 1")
+        let todo = line(.claude, "PostToolUse", ["tool_name": "TodoWrite", "tool_input": ["todos": [
+            ["content": "Read", "status": "completed", "activeForm": "Reading"],
+            ["content": "Fix", "status": "in_progress", "activeForm": "Fixing"],
+        ]]])
+        #expect(todo.meta.plan == LineMeta.Plan(done: 1, total: 2))
+        #expect(todo.meta.planNow == "Fix")
+        #expect(todo.category == .plan)
+        let start = line(.claude, "SessionStart", ["source": "compact", "session_title": "Auth refactor"])
+        #expect(start.kind == .start)
+        #expect(start.meta.src == "compact")
+        #expect(start.message == "Auth refactor")
+        #expect(line(.claude, "SessionEnd", ["reason": "logout"]).meta.why == "logout")
+        let sub = line(.claude, "SubagentStart", ["agent_id": "a1", "agent_type": "Explore"])
+        #expect(sub.sub == "a1")
+        #expect(sub.meta.agentType == "Explore")
+        let prompt = line(.claude, "UserPromptSubmit", ["prompt": "Next step", "session_title": "Auth refactor"])
+        #expect(prompt.kind == .working)
+        #expect(prompt.message == "Next step")
+        #expect(prompt.meta.name == "Auth refactor")
+        let skill = line(.claude, "PostToolUse", ["tool_name": "Skill", "tool_input": ["skill": "review"]])
+        #expect(skill.category == .skill)
+        #expect(skill.message == "review")
+    }
+
+    /// Cursor and VS Code run Claude's settings hooks with their own
+    /// payloads: an ignored line that says so, never a Claude row.
+    @Test func anotherHostRunningClaudesHookIsNotClaude() {
+        let reason = PulseHookReceiver.Ignored.otherHost.rawValue
+        let cursor = line(.claude, "PostToolUse", ["conversation_id": "c1", "generation_id": "g1", "tool_name": "Shell"])
+        #expect(cursor.kind == .ignored)
+        #expect(cursor.message == reason)
+        let versioned = line(.claude, "Stop", ["cursor_version": "2.1.0"])
+        #expect(versioned.message == reason)
+        let vscode = line(.claude, "Stop", ["timestamp": "2026-10-20T09:15:02.123Z", "hook_event_name": "Stop"])
+        #expect(vscode.message == reason)
+        let casing = line(.claude, "UserPromptSubmit", ["hook_event_name": "beforeSubmitPrompt", "prompt": "hi"])
+        #expect(casing.message == reason)
+        let claude = line(.claude, "Stop", ["hook_event_name": "Stop", "last_assistant_message": "Done."])
+        #expect(claude.kind == .turn, "Claude's own payload is Claude")
+        var book = SessionBook()
+        book.apply(cursor, nowMs: t0)
+        book.apply(vscode, nowMs: t0)
+        #expect(book.sessions.isEmpty, "no row")
+        #expect(Connection.reasonText(reason, lang: .en) != L10n.t(.ignoredOther, .en))
+    }
+
+    /// Codex: an `apply_patch` names its files from the patch's own
+    /// headers; `update_plan` its progress; a subagent's start its type.
+    @Test func codexSaysItsPatchAndPlan() {
+        let patch = "*** Begin Patch\n*** Update File: a.rs\n*** Move to: b.rs\n@@\n-x\n+y\n*** Add File: c.rs\n+z\n*** End Patch"
+        #expect(Codex.patchFiles(patch) == ["a.rs", "b.rs", "c.rs"])
+        #expect(Codex.patchFiles("not a patch").isEmpty)
+        let edit = line(.codex, "PostToolUse", ["tool_name": "apply_patch", "tool_input": ["command": patch]])
+        #expect(edit.category == .edit)
+        #expect(edit.message == "a.rs (+2)")
+        #expect(edit.meta.files == ["a.rs", "b.rs", "c.rs"])
+        let plan = line(.codex, "PostToolUse", ["tool_name": "update_plan", "tool_input": ["plan": [
+            ["step": "One", "status": "completed"], ["step": "Two", "status": "in_progress"], ["step": "Three", "status": "pending"],
+        ]]])
+        #expect(plan.meta.plan == LineMeta.Plan(done: 1, total: 3))
+        #expect(plan.meta.planNow == "Two")
+        #expect(plan.message == "")
+        let start = line(.codex, "SubagentStart", ["agent_id": "thread-2", "agent_type": "worker"])
+        #expect(start.kind == .start)
+        #expect(start.sub == "thread-2")
+        #expect(start.meta.agentType == "worker")
+        #expect(line(.codex, "PostCompact", ["trigger": "auto"]).kind == .status)
+        #expect(line(.codex, "PostCompact", ["trigger": "manual"]).kind == .ignored)
+    }
+
+    /// Cursor's failed tool is a failed step with its failure type; an
+    /// interrupted one is a stop; a session's end says why.
+    @Test func cursorSaysItsFailuresAndItsEnd() {
+        let failed = line(.cursor, "postToolUseFailure", [
+            "conversation_id": "c1", "tool_name": "shell", "tool_input": ["command": "npm run e2e"],
+            "failure_type": "timeout", "duration": 30000, "is_interrupt": false,
+        ])
+        #expect(failed.kind == .tool)
+        #expect(failed.failed)
+        #expect(failed.tookMs == 30000)
+        #expect(failed.meta.err == "timeout")
+        #expect(failed.message == "npm run e2e")
+        #expect(line(.cursor, "postToolUseFailure", ["conversation_id": "c1", "is_interrupt": true]).kind == .stopped)
+        let end = line(.cursor, "sessionEnd", ["conversation_id": "c1", "reason": "error", "error_message": "Provider down\nretry"])
+        #expect(end.kind == .end)
+        #expect(end.meta.why == "error")
+        #expect(end.meta.err == "Provider down")
+        let mcp = line(.cursor, "afterMCPExecution", ["conversation_id": "c1", "tool_name": "search_issues", "server": "github"])
+        #expect(mcp.tool == "search_issues", "the payload names no server")
+        #expect(mcp.category == .mcp)
+    }
+
+    /// Copilot's recoverable error says its name; a failed tool its first
+    /// error line; and its own `disableAllHooks` is read, never written.
+    @Test func copilotSaysItsErrors() {
+        let error = line(.copilot, "errorOccurred", ["sessionId": "c1", "recoverable": true, "error": ["message": "Rate limited", "name": "RateLimitError"]])
+        #expect(error.kind == .status)
+        #expect(error.meta.err == "RateLimitError")
+        let failed = line(.copilot, "postToolUseFailure", ["sessionId": "c1", "toolName": "bash", "error": "exit 2\nmore"])
+        #expect(failed.meta.err == "exit 2")
+        let switches = AgentID.copilot.spec.hooks.offSwitches
+        let off = Connection.offBy(switches, read: { $0 == ".copilot/settings.json" ? #"{"disableAllHooks": true}"# : nil }, list: { _ in [] })
+        #expect(off == .turnedOff)
+        let on = Connection.offBy(switches, read: { _ in #"{"disableAllHooks": false}"# }, list: { _ in [] })
+        #expect(on == nil)
+    }
+
+    /// OpenCode: a to-do list's progress, a batch of changed files, an
+    /// archived session's end, a child's step marked as its own.
+    @Test func openCodeSaysItsPlanDiffAndChildren() {
+        let todo = line(.opencode, "todo.updated", ["sessionID": "o1", "todos": [
+            ["status": "completed", "content": "A"], ["status": "in_progress", "content": "B"], ["status": "cancelled", "content": "C"],
+        ]])
+        #expect(todo.kind == .status)
+        #expect(todo.meta.plan == LineMeta.Plan(done: 1, total: 3))
+        #expect(todo.meta.planNow == "B")
+        let diff = line(.opencode, "session.diff", ["sessionID": "o1", "files": ["a.ts", "b.ts"], "count": 5])
+        #expect(diff.kind == .status)
+        #expect(diff.meta.files == ["a.ts", "b.ts"])
+        #expect(diff.message == "5 files changed")
+        #expect(line(.opencode, "session.diff", ["sessionID": "o1", "files": [String](), "count": 0]).kind == .ignored)
+        let archived = line(.opencode, "session.updated", ["sessionID": "o1", "archived": true])
+        #expect(archived.kind == .end)
+        #expect(archived.meta.why == "archived")
+        #expect(line(.opencode, "session.updated", ["sessionID": "o1", "session_name": "Port"]).kind == .title)
+        let childStep = line(.opencode, "session.tool.success", ["sessionID": "o1", "tool_name": "read", "target": "a.ts", "subagent_id": "ses_k"])
+        #expect(childStep.sub == "ses_k")
+        #expect(childStep.category == .read)
+    }
+
+    /// Pi: a start's source and a shutdown's reason, forwarded by its
+    /// extension, each a word.
+    @Test func piSaysWhyItStartedAndEnded() {
+        #expect(line(.pi, "session_start", ["source": "resume"]).meta.src == "resume")
+        #expect(line(.pi, "session_shutdown", ["reason": "quit"]).meta.why == "quit")
+        #expect(line(.pi, "session_shutdown", ["reason": "a sentence, not a word"]).meta.why == "")
+    }
+}
+
 @Suite("Event log")
 struct EventLogTests {
     let t0: Int64 = 1_800_000_000_000
@@ -2041,7 +2261,7 @@ struct EventLogTests {
     /// field (a writer that did not clean it) never splits a record. And the
     /// receiver cleans every kind of line break out of a field.
     @Test func aLineBreakInsideAFieldNeverSplitsARecord() throws {
-        let odd = "1\t\(t0)\tclaude\tpermission\tPermissionRequest\ts1\t\t/w\t\t\t\tBash\t\t\tBash: a\u{2028}b\u{85}c\rd\n"
+        let odd = "1\t\(t0)\tclaude\tpermission\tPermissionRequest\ts1\t\t/w\t\t\t\tBash\t\t\t\t\tBash: a\u{2028}b\u{85}c\rd\n"
         let data = Data((AttentionProtocol.Header(next: 2, gen: "g1").line + odd).utf8)
         let parsed = EventLog.parse(data, from: 0)
         #expect(parsed.records.count == 1)
@@ -2091,7 +2311,7 @@ struct EventLogTests {
         EventLog.ensureExists(at: home.log, nowMs: t0)
         let header = try #require(chunk.header)
         let again = try #require(EventLog.read(at: home.log, after: nil))
-        #expect(again.header == header, "ensureExists leaves a v8 log alone")
+        #expect(again.header == header, "ensureExists leaves a v9 log alone")
     }
 
     /// A compaction keeps what a replay rebuilds a session's own facts
@@ -2272,7 +2492,7 @@ struct EventLogTests {
         EventLog.append(record(.working, t0), at: home.log, nowMs: t0)
         let first = try #require(EventLog.read(at: home.log, after: nil))
         let header = try #require(first.header)
-        let stale = EventLog.Cursor(header: "# pulse-events v8 next=1 gen=gOLD", offset: first.end, gen: "gOLD", seq: 1)
+        let stale = EventLog.Cursor(header: "# pulse-events v9 next=1 gen=gOLD", offset: first.end, gen: "gOLD", seq: 1)
         let again = try #require(EventLog.read(at: home.log, after: stale))
         #expect(again.records == first.records, "read whole")
         #expect(again.unapplied(after: stale).count == 1, "another log: every line is new")
@@ -2282,12 +2502,12 @@ struct EventLogTests {
         #expect(shorter.unapplied(after: past).isEmpty, "and nothing it already applied is applied again")
     }
 
-    /// A log that is not v8 — an older header, or none — is never read and
+    /// A log that is not v9 — an older header, or none — is never read and
     /// never migrated: a read finds it empty, and the next writer (the
-    /// launch's `ensureExists`, or an append) starts a fresh v8 log.
-    @Test func aLogThatIsNotV7IsTreatedAsAbsentAndStartedOver() throws {
+    /// launch's `ensureExists`, or an append) starts a fresh v9 log.
+    @Test func aLogThatIsNotV9IsTreatedAsAbsentAndStartedOver() throws {
         let home = Home()
-        let old = "# pulse-events v6 g1 (agent)\nclaude\tpermission\t\(t0)\tBash: make\ts1\t/w\t\t\t\tBash\n"
+        let old = "# pulse-events v8 next=2 gen=g1 (seq)\n1\t\(t0)\tclaude\tpermission\tPermissionRequest\ts1\t\t/w\t\t\t\tBash\t\t\tBash: make\n"
         try Data(old.utf8).write(to: home.log)
         let unread = try #require(EventLog.read(at: home.log, after: nil))
         #expect(unread == EventLog.Chunk.empty)

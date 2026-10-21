@@ -271,7 +271,7 @@ struct SessionBookTests {
             "turn", "working", "idle",
         ])
         let session = run.book.sessions[SessionKey(.opencode, "s1")]
-        #expect(session?.lastStep == SessionBook.Step(tool: "bash", target: "redis-cli ping", ms: t0 + 4 * minute, tookMs: 800))
+        #expect(session?.lastStep == SessionBook.Step(tool: "bash", target: "redis-cli ping", ms: t0 + 4 * minute, tookMs: 800, category: .shell))
         #expect(session?.name == "Port the cache")
     }
 
@@ -280,20 +280,20 @@ struct SessionBookTests {
     /// summary, Cursor's command — and its own prompt event becomes the
     /// title. Cursor's reply and OpenCode's busy name no tool: no step.
     @Test func everyAgentsStepsComeFromItsOwnHook() {
-        let cases: [(AgentID, String, [String: Any], String, String)] = [
-            (.claude, "PostToolUse", ["tool_name": "Bash", "tool_input": ["command": "swift test"]], "Bash", "swift test"),
-            (.codex, "PostToolUse", ["tool_name": "shell", "tool_input": ["command": "cargo build"]], "shell", "cargo build"),
-            (.copilot, "postToolUse", ["toolName": "bash", "toolArgs": #"{"command":"npm test"}"#], "bash", "npm test"),
-            (.pi, "tool_execution_end", ["tool_name": "edit", "tool_input": ["path": "src/x.ts"]], "edit", "src/x.ts"),
-            (.opencode, "message.part.updated", ["phase": "done", "tool_name": "read", "target": "src/x.ts"], "read", "src/x.ts"),
-            (.opencode, "session.tool.success", ["tool_name": "grep", "target": "TODO"], "grep", "TODO"),
-            (.cursor, "afterShellExecution", ["command": "make test"], "Shell", "make test"),
+        let cases: [(AgentID, String, [String: Any], String, String, StepCategory)] = [
+            (.claude, "PostToolUse", ["tool_name": "Bash", "tool_input": ["command": "swift test"]], "Bash", "swift test", .shell),
+            (.codex, "PostToolUse", ["tool_name": "shell", "tool_input": ["command": "cargo build"]], "shell", "cargo build", .shell),
+            (.copilot, "postToolUse", ["toolName": "bash", "toolArgs": #"{"command":"npm test"}"#], "bash", "npm test", .shell),
+            (.pi, "tool_execution_end", ["tool_name": "edit", "tool_input": ["path": "src/x.ts"]], "edit", "src/x.ts", .edit),
+            (.opencode, "message.part.updated", ["phase": "done", "tool_name": "read", "target": "src/x.ts"], "read", "src/x.ts", .read),
+            (.opencode, "session.tool.success", ["tool_name": "grep", "target": "TODO"], "grep", "TODO", .search),
+            (.cursor, "afterShellExecution", ["command": "make test"], "Shell", "make test", .shell),
         ]
-        for (agent, event, payload, tool, target) in cases {
+        for (agent, event, payload, tool, target, category) in cases {
             var book = SessionBook()
             for line in HookFeed.write(agent, event, payload, at: t0).lines { book.apply(line, nowMs: t0) }
             let step = book.sessions[SessionKey(agent, "s1")]?.lastStep
-            #expect(step == SessionBook.Step(tool: tool, target: target, ms: t0), "\(agent.rawValue)")
+            #expect(step == SessionBook.Step(tool: tool, target: target, ms: t0, category: category), "\(agent.rawValue)")
         }
         let quiet: [(AgentID, String, [String: Any])] = [(.cursor, "afterAgentResponse", [:]), (.opencode, "session.status", ["status": "busy"])]
         for (agent, event, payload) in quiet {
@@ -1603,6 +1603,69 @@ struct SessionBookTests {
         #expect(book.sessions[key]?.runningSteps.isEmpty == true)
         feed("message_start", ["prompt": "Again"], at: t0 + 20 * second)
         #expect(HookFeed.word(book.sessions[key]?.state) == "working")
+    }
+
+    /// v9's facts are kept, never turned into state: the main agent's plan
+    /// progress, why the session started and ended, each subagent's type,
+    /// the files a batch changed, a step's category and its error. A
+    /// subagent's plan is not the session's; the state reads exactly as it
+    /// did without them.
+    @Test func theBookKeepsEachLinesFacts() throws {
+        let run = play(.claude, [
+            ("SessionStart", ["source": "resume"]),
+            ("UserPromptSubmit", ["prompt": "Fix the login test"]),
+            ("PostToolUse", ["tool_name": "TodoWrite", "tool_input": ["todos": [
+                ["content": "Read", "status": "completed"], ["content": "Fix", "status": "in_progress"],
+            ]]]),
+            ("SubagentStart", ["agent_id": "a1", "agent_type": "Explore"]),
+            ("PostToolUse", ["agent_id": "a1", "tool_name": "TodoWrite", "tool_input": ["todos": [
+                ["content": "Sub", "status": "pending"],
+            ]]]),
+            ("PostToolUseFailure", ["tool_name": "Bash", "tool_input": ["command": "npm test"], "error": "Exit code 1\nmore", "duration_ms": 900]),
+            ("Stop", [:]),
+            ("SessionEnd", ["reason": "logout"]),
+        ])
+        #expect(run.states == ["idle", "working", "working", "working", "working", "working", "turn", "ended"])
+        let session = try #require(run.book.sessions[SessionKey(.claude, "s1")])
+        #expect(session.plan == SessionBook.PlanProgress(done: 1, total: 2, now: "Fix", ms: t0 + 2 * minute))
+        #expect(session.startSource == "resume")
+        #expect(session.endReason == "logout")
+        #expect(session.subagentTypes == [SessionBook.SubagentType(sub: "a1", type: "Explore")])
+        let step = try #require(session.lastStep)
+        #expect(step.category == .shell)
+        #expect(step.failed)
+        #expect(step.error == "Exit code 1")
+        #expect(step.tookMs == 900)
+        let heard = session.timeline.first { $0.event == "SubagentStart" }
+        #expect(heard?.meta.agentType == "Explore")
+
+        var book = SessionBook()
+        let diff = AttentionRecord(
+            agent: .opencode, kind: .status, ms: t0, message: "2 files changed", session: "s1", event: "session.diff", seq: 1,
+            meta: LineMeta(files: ["a.ts", "b.ts"])
+        )
+        book.apply(AttentionRecord(agent: .opencode, kind: .start, ms: t0 - 1, session: "s1", seq: 0), nowMs: t0)
+        book.apply(diff, nowMs: t0)
+        #expect(book.sessions[SessionKey(.opencode, "s1")]?.changedFiles == ["a.ts", "b.ts"])
+        #expect(HookFeed.word(book.sessions[SessionKey(.opencode, "s1")]?.state) == "idle", "a batch of files after the turn moves nothing")
+    }
+
+    /// A custom name wins over the first prompt — Claude's `session_title`,
+    /// on its start or riding on a later prompt.
+    @Test func claudesCustomTitleWinsOverThePrompt() {
+        let named = play(.claude, [
+            ("SessionStart", ["source": "startup"]),
+            ("UserPromptSubmit", ["prompt": "Fix the login test"]),
+            ("UserPromptSubmit", ["prompt": "Now the refresh path", "session_title": "Auth rewrite"]),
+        ])
+        let session = named.book.sessions[SessionKey(.claude, "s1")]
+        #expect(session?.title == "Fix the login test")
+        #expect(session?.shownTitle == "Auth rewrite")
+        let resumed = play(.claude, [
+            ("SessionStart", ["source": "resume", "session_title": "Auth rewrite"]),
+            ("UserPromptSubmit", ["prompt": "Fix the login test"]),
+        ])
+        #expect(resumed.book.sessions[SessionKey(.claude, "s1")]?.shownTitle == "Auth rewrite")
     }
 }
 

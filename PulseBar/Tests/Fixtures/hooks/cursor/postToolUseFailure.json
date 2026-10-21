@@ -1,0 +1,21 @@
+{
+  "conversation_id": "fx-cursor-conv-1",
+  "generation_id": "gen-1",
+  "workspace_roots": [
+    "/Users/me/code/app"
+  ],
+  "cursor_version": "2.0.0",
+  "model": "gpt-5",
+  "hook_event_name": "postToolUseFailure",
+  "transcript_path": "/Users/me/.cursor/projects/app/fx-cursor-conv-1.jsonl",
+  "tool_name": "shell",
+  "tool_input": {
+    "command": "npm run e2e"
+  },
+  "tool_use_id": "t7",
+  "cwd": "/Users/me/code/app",
+  "error_message": "Command timed out after 30s",
+  "failure_type": "timeout",
+  "duration": 30000,
+  "is_interrupt": false
+}
