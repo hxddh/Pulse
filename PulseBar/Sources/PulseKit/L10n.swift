@@ -497,7 +497,7 @@ extension L10n.Key {
         case .settingsShortcut: return ("Open the tray with %@", "用 %@ 打开托盘")
         case .settingsShortcutTaken: return ("Another app holds %@ — Pulse could not take it", "%@ 已被别的应用占用——Pulse 没能使用它")
         case .settingsMuteTitle: return ("Banners from", "这些 Agent 的横幅")
-        case .settingsMuteHint: return ("A muted agent still turns the lamp red and shows in the tray — only its banner is not posted.", "静音的 Agent 仍会让灯变红、出现在托盘里——只是不发横幅。")
+        case .settingsMuteHint: return ("A muted agent still turns the lamp red and shows in the tray — only its banner is not posted.", "静音的 Agent 仍会点亮红灯、出现在托盘里——只是不发横幅。")
         case .settingsTestConnection: return ("Test connection", "测试连接")
         case .settingsTestRunning: return ("Testing…", "正在测试…")
         case .settingsTestOK: return ("Connected — a hook reaches this Pulse · %@", "连接正常——hook 能找到这个 Pulse · %@")
