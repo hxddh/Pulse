@@ -71,7 +71,9 @@ final class WaitNotifier {
         for row in due { ledger.markFrontDue(row.key) }
         // A wait raised in front of the person is not owed a banner until
         // its hold is over (`due`).
-        let edges = state.newlyBlocked.filter { $0.wait?.inFront != true } + due
+        // A muted agent's wait is in the lamp and the tray, never a banner.
+        let edges = (state.newlyBlocked.filter { $0.wait?.inFront != true } + due)
+            .filter { !model.settings.isMuted($0.agent) }
         // Owed banners are rebuilt from this projection's rows: a wait that
         // resolved has no open record, so it can neither linger in a queue
         // nor bring back a banner for a prompt that is gone.
@@ -159,6 +161,20 @@ final class WaitNotifier {
                 }
             )
         }
+    }
+
+    /// The one banner a watched session's finished turn was asked for
+    /// (`TurnWatch`). The person asked, so a muted agent still posts it.
+    func postTurnDone(_ row: AgentRow) {
+        guard let model, model.notifyAuthorized == true else { return }
+        PulseNotify.postWaiting(
+            id: TurnWatch.bannerID(row.key),
+            banner: TurnWatch.banner(row, lang: model.lang),
+            agent: row.agent.rawValue,
+            session: row.session,
+            rowKey: row.key.description
+        )
+        DebugLog.write("turn done banner key=\(row.key)")
     }
 
     /// Commit the banner only once Notification Center has said whether it

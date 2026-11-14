@@ -2692,3 +2692,19 @@ struct CodexHooksDetectionTests {
         #expect(HooksInstaller.installedEvents(.codex, text: "{}") == [])
     }
 }
+
+/// `pulse-hook --ping` (Settings' "Test connection"): the receiver answers
+/// in its folder and writes no event line — it is not an agent speaking.
+@Suite("Hook ping")
+struct HookPingTests {
+    @Test func aPingIsAnsweredBesideTheLogAndWritesNoLine() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("pulse-ping-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let log = dir.appendingPathComponent(EventLog.fileName)
+        let status = PulseHookReceiver.run(arguments: ["PulseBar", "--hook", HookPing.argument], logURL: log, nowMs: 1_800_000_000_123)
+        #expect(status == 0)
+        #expect(HookPing.answeredMs(in: dir) == 1_800_000_000_123)
+        #expect(!FileManager.default.fileExists(atPath: log.path), "no event line")
+    }
+}

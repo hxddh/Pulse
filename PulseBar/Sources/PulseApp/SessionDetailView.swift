@@ -20,7 +20,8 @@ struct SessionDetailView: View {
         TimelineView(.periodic(from: .now, by: TrayChrome.clock)) { context in
             SessionDetailFace(
                 model: store.detailModel(row, at: context.date, disclosed: ui.keys.disclosed),
-                maxHeight: CGFloat(ui.maxListHeight)
+                maxHeight: CGFloat(ui.maxListHeight),
+                showsEvents: ui.optionHeld
             ) { action in
                 ui.send(action, row: row)
             }
@@ -41,6 +42,8 @@ struct SessionDetailFace: View {
     /// Off for a fixture capture, which measures the whole page.
     var scrolls = true
     var maxHeight: CGFloat = TrayChrome.maxListHeight
+    /// ⌥ held: the vendor's event names beside each entry.
+    var showsEvents = false
     var send: (DetailModel.Action) -> Void = { _ in }
 
     private func t(_ key: L10n.Key) -> String { L10n.t(key, model.lang) }
@@ -135,8 +138,22 @@ struct SessionDetailFace: View {
             }
             if !model.timeline.isEmpty {
                 section(t(.timelineHeading)) {
-                    TimelineGrid(entries: model.timeline, stepsShown: model.stepsShown, lang: model.lang) {
-                        send(.toggleSteps)
+                    VStack(alignment: .leading, spacing: PulseTheme.Space.xs) {
+                        TimelineGrid(
+                            entries: model.visibleTimeline, stepsShown: model.stepsShown,
+                            showsEvents: showsEvents, lang: model.lang
+                        ) {
+                            send(.toggleSteps)
+                        }
+                        if model.hiddenEntries > 0 {
+                            Button(String(format: t(.timelineShowAll), model.timeline.count)) { send(.toggleSteps) }
+                                .buttonStyle(.link)
+                                .font(PulseTheme.Font.caption)
+                        } else if model.expanded, model.timeline.count > DetailModel.timelinePreview {
+                            Button(t(.timelineShowLess)) { send(.toggleSteps) }
+                                .buttonStyle(.link)
+                                .font(PulseTheme.Font.caption)
+                        }
                     }
                 }
             }
@@ -158,6 +175,11 @@ struct SessionDetailFace: View {
                 }
             }
             FactGrid(facts: model.facts)
+            if model.canWatchTurn {
+                Toggle(t(.watchTurn), isOn: Binding(get: { model.watchingTurn }, set: { _ in send(.watchTurn) }))
+                    .toggleStyle(.checkbox)
+                    .font(PulseTheme.Font.caption)
+            }
             if model.canCopySummary {
                 Button(t(.copyTurnSummary)) { send(.copySummary) }
                     .buttonStyle(.bordered)
@@ -239,6 +261,8 @@ struct FactGrid: View {
 struct TimelineGrid: View {
     let entries: [DetailModel.Entry]
     var stepsShown = false
+    /// The vendor's event column, shown while ⌥ is held.
+    var showsEvents = false
     var lang: ResolvedLanguage = .en
     var toggle: () -> Void = {}
 
@@ -249,10 +273,12 @@ struct TimelineGrid: View {
                     Text(entry.time)
                         .foregroundStyle(.secondary)
                         .gridColumnAlignment(.trailing)
-                    Text(entry.event)
-                        .font(PulseTheme.Font.code)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    if showsEvents {
+                        Text(entry.event)
+                            .font(PulseTheme.Font.code)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                     effect(entry)
                 }
                 if stepsShown, entry.discloses {
@@ -297,7 +323,7 @@ struct TimelineGrid: View {
     private func stepRow(_ text: String, style: AnyShapeStyle) -> some View {
         GridRow {
             Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
-            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+            if showsEvents { Color.clear.gridCellUnsizedAxes([.horizontal, .vertical]) }
             Text(text)
                 .foregroundStyle(style)
                 .lineLimit(1)

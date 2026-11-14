@@ -47,7 +47,8 @@ extension StatusStore {
         let build = PulseVersion.buildLine
         let login = SettingsModel.loginLine(asked: settings.launchAtLogin, state: loginItem)
         let connections = self.connections
-        return SettingsModel(
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        var model = SettingsModel(
             lang: lang,
             launchAtLogin: login.isOn,
             loginNote: login.note,
@@ -66,6 +67,14 @@ extension StatusStore {
             buildWarning: warning,
             focus: settingsFocus.target.map(SettingsModel.section(for:))
         )
+        model.globalShortcut = settings.globalShortcut
+        model.shortcutNote = SettingsModel.shortcutNote(on: settings.globalShortcut, registered: shortcutRegistered, lang: lang)
+        model.muteCandidates = SettingsModel.muteCandidates(present: presentAgents)
+        model.mutedAgents = Set(settings.mutedAgents)
+        let ping = SettingsModel.pingLine(hookPing, nowMs: nowMs, lang: lang)
+        model.pingLine = ping?.text
+        model.pingWarning = ping?.warning ?? false
+        return model
     }
 
     func performSettings(_ action: SettingsModel.Action) {
@@ -79,6 +88,9 @@ extension StatusStore {
         case .copyReport: copyReport()
         case .openReleases:
             if let url = URL(string: SettingsModel.releasesURL) { NSWorkspace.shared.open(url) }
+        case .setGlobalShortcut(let on): setGlobalShortcut(on)
+        case .setMuted(let agent, let muted): setMuted(agent, muted)
+        case .testConnection: testHookConnection()
         }
     }
 
@@ -173,6 +185,12 @@ struct SettingsFace: View {
             case nil:
                 EmptyView()
             }
+            Toggle(String(format: t(.settingsShortcut), "⌃⌥⌘P"), isOn: binding(model.globalShortcut) { .setGlobalShortcut($0) })
+            if let note = model.shortcutNote {
+                Label(note, systemImage: "exclamationmark.triangle")
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(PulseTheme.warning)
+            }
         case .notifications:
             switch model.notifications {
             case .notAsked:
@@ -193,6 +211,24 @@ struct SettingsFace: View {
                     Button(t(.openNotificationSettings)) { send(.openNotificationSettings) }
                 } label: {
                     Text(t(.notifyAllowed))
+                    Text(t(.notifyFocusNote))
+                }
+            }
+            if !model.muteCandidates.isEmpty {
+                VStack(alignment: .leading, spacing: PulseTheme.Space.xs) {
+                    Text(t(.settingsMuteTitle))
+                    HStack(spacing: PulseTheme.Space.m) {
+                        ForEach(model.muteCandidates, id: \.self) { agent in
+                            let muted = model.mutedAgents.contains(agent)
+                            Toggle(isOn: binding(!muted) { .setMuted(agent, !$0) }) {
+                                Label { Text(agent.displayName) } icon: { AgentIconView(id: agent) }
+                            }
+                            .toggleStyle(.checkbox)
+                        }
+                    }
+                    Text(t(.settingsMuteHint))
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         case .hooks:
@@ -242,6 +278,18 @@ struct SettingsFace: View {
             if let absent = SettingsModel.absentLine(model.absentAgents, lang: model.lang) {
                 Text(absent)
                     .foregroundStyle(.secondary)
+            }
+            LabeledContent {
+                Button(t(.settingsTestConnection)) { send(.testConnection) }
+                    .disabled(model.hooksBusy)
+            } label: {
+                if let ping = model.pingLine {
+                    Text(ping)
+                        .foregroundStyle(model.pingWarning ? AnyShapeStyle(PulseTheme.warning) : AnyShapeStyle(.secondary))
+                } else {
+                    Text(t(.settingsTestConnection))
+                        .foregroundStyle(.secondary)
+                }
             }
             LabeledContent {
                 Button(t(.copyReport)) { send(.copyReport) }

@@ -177,6 +177,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         store.trayDidAppear()
     }
 
+    /// The tray is on screen.
+    var isTrayShown: Bool { popover.isShown }
+
     func close() {
         guard popover.isShown else { return }
         popover.performClose(nil)
@@ -215,6 +218,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             NSEvent.removeMonitor(keyMonitor)
             self.keyMonitor = nil
         }
+        ui.optionHeld = false
         store.trayDidDisappear()
         // Hand the keyboard back to the app that had it — unless another app
         // already took it, or Pulse has a window of its own up (Settings).
@@ -228,8 +232,15 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// (`TrayKeys.reduce`), whatever view has focus.
     private func installKeyMonitor() {
         guard keyMonitor == nil else { return }
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-            guard let self, event.window === self.hosting.view.window,
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+            guard let self else { return event }
+            // ⌥ held shows the vendor's event names on the detail page.
+            if event.type == .flagsChanged {
+                let held = event.modifierFlags.contains(.option)
+                if self.ui.optionHeld != held { self.ui.optionHeld = held }
+                return event
+            }
+            guard event.window === self.hosting.view.window,
                   let key = TrayKeys.key(
                       keyCode: event.keyCode,
                       characters: event.charactersIgnoringModifiers ?? "",

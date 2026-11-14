@@ -271,7 +271,7 @@ struct TrayInteractionTests {
         turn.status = .yourTurn(sinceMs: now - minute)
         let model = TrayHeaderModel.make(counts: TrayState.Counts(rows: [blocked("w1"), blocked("w2"), session("r"), stalled, turn]), lang: .en)
         let labels = model.counts.map { "\($0.count) \($0.label)" }
-        #expect(labels == ["2 need you", "1 running", "1 stalled", "1 your turn"])
+        #expect(labels == ["2 need you", "1 running", "1 quiet", "1 done"])
         let tones = model.counts.map { $0.tone }
         #expect(tones == [Lamp.waiting, .running, .stalled, .idle])
     }
@@ -1579,9 +1579,9 @@ struct RowWordsTests {
         func label(_ rows: [AgentRow], _ lang: ResolvedLanguage = .en) -> String {
             TrayState.assemble(rows: rows, context: .init(nowMs: now, lang: lang)).snapshot.accessibilityLabel
         }
-        #expect(label([turn]) == "Your turn")
-        #expect(label([turn], .zh) == "轮到你")
-        #expect(label([process]) == "Process only")
+        #expect(label([turn]) == "Done")
+        #expect(label([turn], .zh) == "好了")
+        #expect(label([process]) == "Detected")
         #expect(label([]) == "Idle")
         #expect(label([stalled()]) == L10n.t(.lampRuleStalled, .en))
     }
@@ -1660,9 +1660,9 @@ struct RowWordsTests {
     @Test func yourTurnIsQuietAndSaysSo() {
         let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowTurn(), lang: .zh)
         #expect(model.lamp == .idle)
-        #expect(model.turnLabel == "轮到你")
+        #expect(model.turnLabel == "好了")
         #expect(model.secondLine == nil)
-        #expect(model.accessibilityLabel.contains("轮到你"))
+        #expect(model.accessibilityLabel.contains("好了"))
     }
 
     @Test func aProcessOnlyRowIsQuietGrey() {
@@ -2102,5 +2102,25 @@ struct TurnWordsTests {
         let finished = TurnSummary.text(row: done.row, facts: done.facts, lang: .en, nowMs: SurfaceFixtures.nowMs)
         #expect(finished.contains("Last message: Jitter is configurable.\n"))
         #expect(finished.contains("This turn: 12 steps (1 failed)"))
+    }
+}
+
+/// The detail page shows the newest few entries of its timeline; → (or
+/// "Show all") shows every one with the steps behind each run.
+@Suite("Detail timeline preview")
+struct DetailTimelinePreviewTests {
+    @Test func theTimelineIsPreviewedUntilExpanded() {
+        let folded = SurfaceFixtures.detailTimeline(lang: .en)
+        if folded.timeline.count > DetailModel.timelinePreview {
+            #expect(folded.visibleTimeline.count == DetailModel.timelinePreview)
+            #expect(folded.hiddenEntries == folded.timeline.count - DetailModel.timelinePreview)
+        } else {
+            #expect(folded.hiddenEntries == 0)
+        }
+        #expect(!folded.expanded)
+        var open = folded
+        open.expanded = true
+        #expect(open.visibleTimeline == open.timeline)
+        #expect(open.hiddenEntries == 0)
     }
 }
