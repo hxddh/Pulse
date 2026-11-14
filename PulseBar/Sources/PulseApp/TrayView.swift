@@ -487,6 +487,8 @@ struct TrayRowFace: View {
 final class TrayUI {
     let store: StatusStore
     var keys = TrayKeys.State()
+    /// ⌥ is held: the detail page's timeline shows the vendor's event names.
+    var optionHeld = false
     /// The order the rows had when the tray opened, newcomers appended.
     var frozen: [SessionKey] = []
     /// Every row that has been on screen this glance. While the tray is open
@@ -649,6 +651,7 @@ final class TrayUI {
             next.disclosed = next.detail != nil && !next.disclosed
             if keys != next { keys = next }
         case .copySummary: store.copyTurnSummary(row)
+        case .watchTurn: store.toggleTurnWatch(row)
         }
     }
 

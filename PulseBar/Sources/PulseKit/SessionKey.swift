@@ -15,8 +15,8 @@ import Foundation
 /// Everything inside Pulse keys by this value. A string is made only where
 /// one must leave the process (a banner's id and user info): `description`,
 /// `agent|<id>`, `agent|hook:<hash>`, `agent|pid:<pid>`.
-package struct SessionKey: Hashable, Comparable, Sendable, CustomStringConvertible {
-    package enum Scope: Hashable, Sendable {
+package struct SessionKey: Hashable, Comparable, Sendable, CustomStringConvertible, Codable {
+    package enum Scope: Hashable, Sendable, Codable {
         /// The vendor's session id.
         case session(String)
         /// A session-less event's folder, as `SessionKey.stableHash` of its

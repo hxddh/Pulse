@@ -41,6 +41,12 @@ package struct SettingsModel: Equatable {
         case copyReport
         /// The footer's "Releases…": Pulse's releases page, in the browser.
         case openReleases
+        /// The global shortcut, on or off.
+        case setGlobalShortcut(Bool)
+        /// One agent's banners, muted or not.
+        case setMuted(AgentID, Bool)
+        /// Run the installed launcher once (`HookPing`).
+        case testConnection
     }
 
     /// Where "Releases…" goes. Pulse itself never asks the network.
@@ -69,6 +75,18 @@ package struct SettingsModel: Equatable {
     package var buildWarning: String?
     /// Where a deep link asked the page to scroll.
     package var focus: Section?
+    // Added in 34: the shortcut, muting, the connection test.
+    /// The global shortcut's toggle.
+    package var globalShortcut = true
+    /// Said under it when macOS refused the chord.
+    package var shortcutNote: String?
+    /// Agents whose banners can be muted: those on this Mac that report
+    /// waits, in roster order.
+    package var muteCandidates: [AgentID] = []
+    package var mutedAgents: Set<AgentID> = []
+    /// The last connection test, in words; nil not run.
+    package var pingLine: String?
+    package var pingWarning = false
 
     package init(
         lang: ResolvedLanguage,
@@ -96,6 +114,31 @@ package struct SettingsModel: Equatable {
         self.version = version
         self.buildWarning = buildWarning
         self.focus = focus
+    }
+
+    /// The shortcut's line: the toggle, and why it is not working when
+    /// macOS refused the chord.
+    package static func shortcutNote(on: Bool, registered: Bool?, lang: ResolvedLanguage) -> String? {
+        guard on, registered == false else { return nil }
+        return String(format: L10n.t(.settingsShortcutTaken, lang), "⌃⌥⌘P")
+    }
+
+    /// The agents whose banners can be muted: on this Mac and able to
+    /// report a wait.
+    package static func muteCandidates(present: Set<AgentID>) -> [AgentID] {
+        AgentID.priority.filter { present.contains($0) && $0.waitingSource != .none }
+    }
+
+    /// What the connection test found, in words, and whether it is a
+    /// warning.
+    package static func pingLine(_ result: HookPing.Result?, nowMs: Int64, lang: ResolvedLanguage) -> (text: String, warning: Bool)? {
+        switch result {
+        case nil: return nil
+        case .running?: return (L10n.t(.settingsTestRunning, lang), false)
+        case .ok(let ms)?: return (String(format: L10n.t(.settingsTestOK, lang), L10n.ago(min(ms, nowMs), nowMs: nowMs, lang)), false)
+        case .noLauncher?: return (L10n.t(.settingsTestNoLauncher, lang), true)
+        case .noAnswer?: return (L10n.t(.settingsTestNoAnswer, lang), true)
+        }
     }
 
     /// One agent's connection, as the Hooks section says it, in one order:

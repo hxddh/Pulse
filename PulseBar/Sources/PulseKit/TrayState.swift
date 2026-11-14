@@ -38,7 +38,7 @@ package struct TrayState: Equatable {
     /// same ask said twice — Claude raises one approval as both a
     /// `PermissionRequest` and a `Notification`, in an order that is not
     /// ours — unless the session did something in between.
-    package static let reraiseSlackMs: Int64 = 20_000
+    package static let reraiseSlackMs: Int64 = SessionBook.sameAskMs
 
     /// Outside-world facts, captured once per projection.
     package struct Context {

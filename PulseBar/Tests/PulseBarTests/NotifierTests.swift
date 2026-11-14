@@ -626,3 +626,60 @@ struct BannerIntentTests {
         #expect(record.event == AttentionRecord.dismissEvent)
     }
 }
+
+/// "Tell me when this turn is done": one banner, only when asked, only when
+/// the turn is over; a session that is gone drops its watch.
+@Suite("Turn watch")
+struct TurnWatchTests {
+    private func row(_ key: SessionKey, _ status: AgentRow.Status) -> AgentRow {
+        var row = AgentRow(key: key)
+        row.status = status
+        return row
+    }
+
+    @Test func aWatchedTurnThatEndedIsDueAndAGoneOneDrops() {
+        let rows = [
+            row("claude|run", .running(stalled: false)),
+            row("claude|wait", .needsYou(Block(kind: .permission))),
+            row("claude|done", .yourTurn(sinceMs: 1)),
+            row("claude|ended", .recent(.ended(atMs: 1))),
+            row("claude|unwatched", .yourTurn(sinceMs: 1)),
+        ]
+        let watching: Set<SessionKey> = ["claude|run", "claude|wait", "claude|done", "claude|ended", "claude|gone"]
+        let result = TurnWatch.finished(watching: watching, rows: rows)
+        #expect(result.done.map(\.key) == ["claude|done", "claude|ended"])
+        #expect(result.gone == ["claude|gone"])
+        #expect(TurnWatch.finished(watching: [], rows: rows).done.isEmpty, "nothing asked, nothing said")
+    }
+
+    @Test func onlyALiveTurnCanBeWatched() {
+        #expect(TurnWatch.canWatch(row("claude|a", .running(stalled: true))))
+        #expect(TurnWatch.canWatch(row("claude|a", .needsYou(Block(kind: .question)))))
+        #expect(!TurnWatch.canWatch(row("claude|a", .yourTurn(sinceMs: 1))))
+        #expect(!TurnWatch.canWatch(row("claude|a", .processOnly)))
+    }
+
+    @Test func theBannerSaysDoneInItsOwnThread() {
+        let done = row("claude|s1", .yourTurn(sinceMs: 1))
+        let banner = TurnWatch.banner(done, lang: .zh)
+        #expect(banner.body == L10n.t(.turnDoneBanner, .zh))
+        #expect(banner.threadID != WaitingBanner.thread(done.key), "never stacked with its waits")
+        #expect(TurnWatch.bannerID(done.key) != WaitLedger.bannerID(done.key))
+    }
+
+    /// The store's side: a watch is set only on a live row, and the
+    /// projection that finds its turn over clears it.
+    @MainActor
+    @Test func theStoreClearsAWatchWhenItsTurnEnds() {
+        let store = StatusStore()
+        let live = row("claude|s1", .running(stalled: false))
+        store.toggleTurnWatch(live)
+        #expect(store.turnWatches == ["claude|s1"])
+        store.toggleTurnWatch(row("claude|s2", .yourTurn(sinceMs: 1)))
+        #expect(store.turnWatches == ["claude|s1"], "a finished turn cannot be watched")
+        var state = TrayState()
+        state.rows = [row("claude|s1", .yourTurn(sinceMs: 2))]
+        store.land(state, nowMs: 10)
+        #expect(store.turnWatches.isEmpty)
+    }
+}

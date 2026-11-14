@@ -27,7 +27,7 @@ import Foundation
 ///   JSON object, a blocked event from an agent that cannot report one — and
 ///   says why in `message`. The reducer changes no state for it — it goes
 ///   on its session's timeline; it is there to be read.
-package enum AttentionKind: String, Sendable, CaseIterable {
+package enum AttentionKind: String, Sendable, CaseIterable, Codable {
     case permission, question, waiting
     case turn, failed, idle
     case done, dismiss
@@ -51,7 +51,7 @@ package enum AttentionKind: String, Sendable, CaseIterable {
     package var isResolution: Bool { self == .done || self == .dismiss }
 }
 
-/// One v9 record: seventeen tab-separated columns.
+/// One v10 record: seventeen tab-separated columns.
 ///
 /// `seq  ms  agent  kind  event  session  sub  cwd  pid  front  landing  tool  err  took  cat  meta  message`
 ///
@@ -197,7 +197,7 @@ package struct AttentionRecord: Equatable, Sendable {
         ].joined(separator: "\t")
     }
 
-    /// A complete v9 record, or nil for anything else: a comment, a blank
+    /// A complete v10 record, or nil for anything else: a comment, a blank
     /// line, a line with another column count, a `seq` that is not a
     /// positive number, an agent or a kind the protocol does not know.
     package init?<S: StringProtocol>(line: S) {
@@ -244,7 +244,7 @@ package enum EventName {
     }
 }
 
-/// Attention Protocol v9 — every hook event of every supported agent, read
+/// Attention Protocol v10 — every hook event of every supported agent, read
 /// by its adapter in `pulse-hook` (the app's `--hook`), as one numbered line
 /// of one append-only event log (`events.tsv`, `EventLog`).
 ///
@@ -252,12 +252,12 @@ package enum EventName {
 /// `EventLog.append`. Reader: `SessionBook` (the app), every line in `seq`
 /// order. Spec: `docs/attention-protocol.md`.
 package enum AttentionProtocol {
-    package static let version = 9
+    package static let version = 10
 
     /// What every `events.tsv` header begins with. A file whose first line
-    /// does not is not a v9 log: it is emptied and a fresh one started, never
+    /// does not is not a v10 log: it is emptied and a fresh one started, never
     /// read (`EventLog`).
-    package static let headerPrefix = "# pulse-events v9 "
+    package static let headerPrefix = "# pulse-events v10 "
 
     /// The columns, in order — what the header's legend says.
     package static let columnNames = [
@@ -265,12 +265,12 @@ package enum AttentionProtocol {
         "err", "took", "cat", "meta", "message",
     ]
 
-    /// Column count of a complete v9 record.
+    /// Column count of a complete v10 record.
     package static let columnCount = 17
 
     /// The first line of `events.tsv`: the protocol, the `seq` the next line
     /// gets when nothing in the file has a larger one, and the log's `gen` —
-    /// chosen when the log is started (created, or a log that is not v9
+    /// chosen when the log is started (created, or a log that is not v10
     /// started over) and kept by every compaction, so a reader knows whether
     /// a rewritten file continues the numbering it applied.
     package struct Header: Equatable, Sendable {
@@ -282,7 +282,7 @@ package enum AttentionProtocol {
             self.gen = gen
         }
 
-        /// A v9 header line, or nil for anything else.
+        /// A v10 header line, or nil for anything else.
         package init?<S: StringProtocol>(line: S) {
             let text = String(line)
             guard AttentionProtocol.isHeader(text) else { return nil }
@@ -303,12 +303,12 @@ package enum AttentionProtocol {
         }
     }
 
-    /// Whether a file's first line is a v9 header.
+    /// Whether a file's first line is a v10 header.
     package static func isHeader<S: StringProtocol>(_ line: S) -> Bool {
         line.hasPrefix(headerPrefix)
     }
 
-    /// The columns of one v9 record, or nil for a blank line, a comment or
+    /// The columns of one v10 record, or nil for a blank line, a comment or
     /// header, or a line without exactly `columnCount` columns. Only the
     /// line's own break (`\n`, `\r`) is trimmed: a record's trailing columns
     /// are often empty, so trailing tabs are part of it.
@@ -323,7 +323,7 @@ package enum AttentionProtocol {
     }
 
     /// The typed kind of a line's `kind` column, or nil when it is not one
-    /// of the v9 kinds, spelled as written (`AttentionKind.rawValue`). No
+    /// of the v10 kinds, spelled as written (`AttentionKind.rawValue`). No
     /// other spelling is read: every writer is Pulse's own, so a word the
     /// protocol does not know is never guessed into a state, and never into
     /// Waiting.
@@ -398,7 +398,7 @@ package enum AttentionProtocol {
 /// own reading): no vendor's tool name is spelled outside `Agents/`. Only a
 /// line that names a tool carries one; anything else leaves the column
 /// empty. A word the protocol does not know reads as none.
-package enum StepCategory: String, Sendable, CaseIterable, Hashable {
+package enum StepCategory: String, Sendable, CaseIterable, Hashable, Codable {
     /// A file was written, edited or patched.
     case edit
     /// A file (or an image) was read.
@@ -431,9 +431,9 @@ package enum StepCategory: String, Sendable, CaseIterable, Hashable {
 /// escaped (`%25`, `%3B`, `%7C`); an unknown key is skipped, a malformed
 /// value is none. Writers redact credentials before they build one
 /// (`PulseHookReceiver.cleanMeta`). Pure.
-package struct LineMeta: Hashable, Sendable {
+package struct LineMeta: Hashable, Sendable, Codable {
     /// A plan's progress: how many of its items are done, of how many.
-    package struct Plan: Hashable, Sendable {
+    package struct Plan: Hashable, Sendable, Codable {
         package var done: Int
         package var total: Int
 

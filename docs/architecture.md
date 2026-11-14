@@ -36,10 +36,13 @@ format's flavor — never by the agent.
 - **`ScanEngine`** (`@MainActor`, not observed): the `SessionBook`, the
   event-log cursor (the header read, the byte offset, the log's `gen` and the
   last `seq` applied), the last good process list, the previous projection's
-  open waits (the next edge baseline), one backing-off log retry and the two
-  cheap timers. It reads the log and the process table off the main thread,
-  applies the lines numbered past the cursor, calls `TrayState.project`, and
-  hands the result to `StatusStore.land`. It holds no UI state.
+  open waits (the next edge baseline), one backing-off log retry, the two
+  cheap timers and the book's snapshot (`BookSnapshot`: restored at
+  `start()` before the launch replay, written at most every 15 s off the
+  main thread and once at `stop()`). It reads the log and the process table
+  off the main thread, applies the lines numbered past the cursor, calls
+  `TrayState.project`, and hands the result to `StatusStore.land`. It holds
+  no UI state.
 - **`WaitNotifier`** (`@MainActor`, not observed): banner planning
   (`WaitingDelivery`), posting (`PulseNotify`), rate limiting, withdrawal and
   clicks. Its bookkeeping is the pure `WaitLedger`, in memory only.
@@ -62,7 +65,7 @@ format's flavor — never by the agent.
 
 ## Provenance and connections
 
-Every line keeps its vendor event (the v9 `event` column) through the
+Every line keeps its vendor event (the `event` column) through the
 reducer: a session holds the event that put it in its current state (a
 re-raise inside the grace keeps the first raise's, a held turn lands with
 its own, a process exit has none) and its last `SessionBook.maxTimeline`
@@ -72,9 +75,9 @@ seen, stopped, named, steps (`StepRun`: one step with its target and
 `took`, or consecutive steps of one speaker merged as they are heard —
 each tool and its count, how many failed — so the ring covers a turn), a
 subagent's own lifecycle, an `ignored` line's reason — and which subagent
-said it (`Heard.sub`, the v9 `sub` column; the detail page marks it
+said it (`Heard.sub`, the `sub` column; the detail page marks it
 "Subagent · …"), its step's category and the facts it carried (`Heard`
-`category` / `meta`, the v9 `cat` and `meta` columns). The session also
+`category` / `meta`, the `cat` and `meta` columns). The session also
 counts the current turn's steps and failures, keeps whether its last turn
 failed and whether the person stopped it, and keeps the latest of the
 facts lines carry (`SessionFacts`: the main agent's plan progress, why the
@@ -95,8 +98,8 @@ the "server · tool" label) — those three whoever touched them. Bounded: 32
 files, 16 tools, skills, servers and subagents. A subagent is *live* only
 when its start was heard and its end was not. The plan shown is the main
 agent's latest only when it was reported no earlier than the turn's start
-(`SessionFacts.turnPlan`); a compaction keeps the line it came from
-(`SessionBook.Anchors.plan`). The detail page draws it through
+(`SessionFacts.turnPlan`); the snapshot keeps it across a relaunch
+(`BookSnapshot`). The detail page draws it through
 `TrayRowModel.turnFacts`, Now through `nowItems` (every entry of
 `runningSteps` with its own clock, never `nowLine`, and the live
 subagents), and "Copy this turn's summary" through `TurnSummary.text` — the
@@ -107,7 +110,10 @@ exactly that; Settings' "Copy report" stays content-free.
 steps behind it beside its effect (`Heard.steps`: the newest eight, each
 with target, duration and failure; never in the effect, so what an entry
 *did* compares as before). The ring holds `SessionBook.maxTimeline` (40)
-entries. The detail page discloses every run's steps at once —
+entries; the detail page shows the newest five (`DetailModel.timelinePreview`)
+until it is expanded, and the vendor's event column only while ⌥ is held
+(`TrayUI.optionHeld`). Expanding shows every entry and discloses every
+run's steps at once —
 `TrayKeys.State.disclosed`, set by → / Space or a click on a run, cleared by
 ← (before ← goes back), Esc or leaving the page; `DetailModel.stepsShown`
 carries it to the face. The why says what
@@ -176,7 +182,7 @@ every surface is a value with a fixture in
 
 ## Landing — how ↩, a click or a banner reaches the prompt
 
-The hook records where its session lives (the v9 `landing` column, most
+The hook records where its session lives (the `landing` column, most
 specific first, whole fields within the column's 240 characters):
 `detached:1;tmux:%3;tmuxsock:<socket>;zellij:<ZELLIJ_PANE_ID>;zellijsession:<ZELLIJ_SESSION_NAME>;wezterm:<WEZTERM_PANE>;weztermsock:<WEZTERM_UNIX_SOCKET>;kitty:<KITTY_WINDOW_ID>;kittysock:<KITTY_LISTEN_ON>;iterm:w0t1p0:<uuid>;tty:/dev/ttys004;term:<TERM_PROGRAM>;app:<__CFBundleIdentifier>;host:<HostAppKind | other>`
 (an unknown key is ignored). `host:` is the nearest app on the hook's

@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`33.0.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v33.0.0) · macOS 14+
+**版本：`34.0.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v34.0.0) · macOS 14+
 
 开着 Claude Code 写代码，切去开会，回来发现它二十分钟前就停在一个授权提示上。Pulse 把这件事变成余光可见：
 
@@ -10,12 +10,12 @@ macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还�
 | --- | --- |
 | 🔴 实心红 | **需要你** —— 阻塞在授权或提问上。点一下：能落到确切的终端就落过去，否则打开这一行的详情 |
 | 🟢 绿环 | 运行中 |
-| 🟠 橙环 | 停滞 —— 会报告工具开始的 agent（Pi、OpenCode）没有工具在跑，却久无新事件 |
-| ⚪️ 灰 | 空闲、轮到你、最近，或只看到进程（虚线圈） |
+| 🟠 橙环 | 没动静 —— 会报告工具开始的 agent（Pi、OpenCode）没有工具在跑，却久无新事件 |
+| ⚪️ 灰 | 好了、最近、空闲，或已发现但还没收到事件（虚线圈） |
 
-回合做完是「轮到你」：托盘头部安静地计数，不变红、不发通知。每个真正的「需要你」只发一条横幅，直接说出被请求
+回合做完是「好了」：托盘头部安静地计数，不变红、默认不发通知（想等某一轮结束时，在它的详情页勾选「这一轮好了时提醒我」）。每个真正的「需要你」只发一条横幅，直接说出被请求
 的那件事（`Bash: npm run build`）；回答、忽略或会话结束时横幅自动撤回。点菜单栏，或在 Spotlight / Raycast 里
-再打开 Pulse，托盘就打开并选中最久的那个等待，一个 ↩ 就到提示。
+再打开 Pulse，或按 **⌃⌥⌘P**，托盘就打开并选中最久的那个等待，一个 ↩ 就到提示。
 
 Pulse **只做灯**：不在托盘里回答授权，不派活、不跑检查、不替你打字，不显示 token、费用或模型。
 完整行为见 [`EXPERIENCE.md`](EXPERIENCE.md)。
@@ -66,7 +66,7 @@ macOS 拦下而丢失。把 Pulse 换到别的位置时，打开一次新位置�
 | Codex | `PostToolUse` | 有 | 有 | **不会** —— 它的 PermissionRequest 在自己的自动审查之前触发，装了就是假等待 |
 | Cursor（编辑器与 `cursor-agent`） | `afterShellExecution` / `afterFileEdit` / `afterMCPExecution` | 有 | — | **不会** —— 没有不拦截的等待事件 |
 
-不会报告等待的两个只显示「运行中」与「轮到你」，Pulse 在设置 → Hooks 和详情页如实这样写（「这个 Agent 不报告等待」），不伪造红灯。每个事件装在哪、变成什么、出处在哪，
+不会报告等待的两个只显示「运行中」与「好了」，Pulse 在设置 → Hooks 和详情页如实这样写（「这个 Agent 不报告等待」），不伪造红灯。每个事件装在哪、变成什么、出处在哪，
 见 [`docs/vendor-formats.md`](docs/vendor-formats.md)。
 
 Pi 的扩展装在 `~/.pi/agent/extensions/`。如果你用 `PI_CODING_AGENT_DIR` 让 Pi 读别的文件夹，Pulse 看不到这个
@@ -87,8 +87,9 @@ Copilot CLI 的 hook 装在 `~/.copilot/hooks/pulse.json`，直接运行启动�
 
 - **不连网络。** Pulse 不检查更新、不上报任何东西；设置里的「版本发布…」只是在浏览器里打开 Releases 页。
 - **只读事件。** 状态与一行说的一切都来自 hook 写进本地事件日志
-  `~/Library/Application Support/Pulse/events.tsv` 的行（0600，超过 1 MiB 自动压缩）。它装着你敲过的提示，
-  所以只有你能读。Pulse 不读各 Agent 的会话文件或 transcript，不读受保护的应用数据。
+  `~/Library/Application Support/Pulse/events.tsv` 的行（0600，超过 1 MiB 时整份挪到 `events.1.tsv`）。它装着你敲过的提示，
+  所以只有你能读。Pulse 自己只额外保存一份归约好的会话状态 `snapshot.json`（同样 0600），让重启后标题和时钟还在；
+  它只是事件的缓存。Pulse 不读各 Agent 的会话文件或 transcript，不读受保护的应用数据。
 - 进程用 libproc 查看，只为找出还没报过事件的会话和知道会话何时退出；完整命令行不会进入界面。
 - 「复制报告」只在你点击时写进剪贴板，不含路径、提示或项目。
 

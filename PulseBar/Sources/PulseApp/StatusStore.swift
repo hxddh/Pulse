@@ -65,6 +65,14 @@ final class StatusStore {
     var rowActionNotices: [SessionKey: RowNotice] = [:]
     /// Where Settings should scroll when it opens from a deep link.
     private(set) var settingsFocus = SettingsFocus()
+    /// The global shortcut as macOS answered: registered, refused (another
+    /// app holds the chord), or nil — off, or not started.
+    var shortcutRegistered: Bool?
+    /// Settings' "Test connection", its last answer; nil not run.
+    var hookPing: HookPing.Result?
+    /// Sessions whose end of turn the person asked to hear about, on the
+    /// detail page — one banner each, in memory only.
+    var turnWatches: Set<SessionKey> = []
 
     // MARK: Not observed
 
@@ -126,6 +134,8 @@ final class StatusStore {
         appliedLaunchAtLogin = settings.launchAtLogin
         refreshLoginItem()
         notifier.start()
+        GlobalShortcut.shared.onPress = { [weak self] in self?.shortcutPressed() }
+        applyShortcut()
         engine.start()
         DebugLog.write("start armed")
     }
@@ -144,7 +154,67 @@ final class StatusStore {
     func land(_ state: TrayState, nowMs: Int64, baseline: Bool = false) {
         land(\.rows, state.rows)
         notifier.scanLanded(state, nowMs: nowMs, baseline: baseline)
+        let watched = TurnWatch.finished(watching: turnWatches, rows: state.rows)
+        for row in watched.done { notifier.postTurnDone(row) }
+        land(\.turnWatches, turnWatches.subtracting(watched.gone).subtracting(watched.done.map(\.key)))
         land(\.snapshot, state.snapshot)
+    }
+
+    // MARK: - The shortcut, muting, the connection test, turn watches
+
+    /// Register the chord when the setting is on; drop it when off.
+    func applyShortcut() {
+        guard started else { return }
+        let on = settings.globalShortcut
+        let registered = GlobalShortcut.shared.set(enabled: on)
+        land(\.shortcutRegistered, on ? registered : nil)
+    }
+
+    func setGlobalShortcut(_ on: Bool) {
+        set(\.globalShortcut, on)
+        applyShortcut()
+    }
+
+    /// The chord: the tray on the oldest wait, or closed when it is open.
+    func shortcutPressed() {
+        if let tray = StatusItemController.shared, tray.isTrayShown {
+            tray.close()
+        } else {
+            requestTrayReveal(key: rows.first(where: \.isBlocked)?.key)
+        }
+    }
+
+    func setMuted(_ agent: AgentID, _ muted: Bool) {
+        set(\.mutedAgents, settings.muting(agent, muted).mutedAgents)
+    }
+
+    /// Run the installed launcher with `--ping` off the main thread and
+    /// read whether a Pulse answered after the click (`HookPing`).
+    func testHookConnection() {
+        guard hookPing != .running else { return }
+        let launcher = HooksInstaller.launcherURL.path
+        guard FileManager.default.isExecutableFile(atPath: launcher) else {
+            land(\.hookPing, .noLauncher)
+            return
+        }
+        land(\.hookPing, .running)
+        let since = Self.ms(Date()) - 1_000
+        Task { @MainActor [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                ConnectionTest.run(launcher: launcher, since: since)
+            }.value
+            self?.land(\.hookPing, result)
+            DebugLog.write("hook ping \(result)")
+        }
+    }
+
+    /// The detail page's "Tell me when this turn is done", on and off.
+    func toggleTurnWatch(_ row: AgentRow) {
+        if turnWatches.contains(row.key) {
+            land(\.turnWatches, turnWatches.subtracting([row.key]))
+        } else if TurnWatch.canWatch(row) {
+            land(\.turnWatches, turnWatches.union([row.key]))
+        }
     }
 
     /// What a session said lately — its steps, last words, error and
@@ -309,7 +379,8 @@ final class StatusStore {
         DetailModel.make(
             row: row, facts: facts(for: row.key), lang: lang,
             nowMs: Self.ms(date), notice: rowActionNotices[row.key],
-            connected: connected(row.agent), disclosed: disclosed
+            connected: connected(row.agent), disclosed: disclosed,
+            watching: turnWatches.contains(row.key)
         )
     }
 
@@ -393,11 +464,24 @@ final class StatusStore {
     /// app alone says so (and where macOS's Automation permission is when a
     /// script was tried), and nothing reached says so and re-reads — the
     /// next row either carries a handle that works or stops offering one.
-    /// Returns whether it reached anything.
+    ///
+    /// The landing runs off the main thread: each step may wait on a child
+    /// process (osascript, tmux, a terminal's CLI) and the first AppleScript
+    /// waits while macOS shows its Automation question. The menu bar and the
+    /// tray never freeze behind it.
+    func focusTerminal(_ row: AgentRow) {
+        Task { @MainActor [weak self] in
+            _ = await self?.land(row)
+        }
+    }
+
+    /// Runs the row's plan off the main actor; reports on it.
     @discardableResult
-    func focusTerminal(_ row: AgentRow) -> Bool {
+    func land(_ row: AgentRow) async -> Bool {
         markTurnSeen(row)
-        switch TerminalFocus.land(row.landingPlan) {
+        let plan = row.landingPlan
+        let outcome = await Task.detached(priority: .userInitiated) { TerminalFocus.land(plan) }.value
+        switch outcome {
         case .exact:
             return true
         case .appOnly:
@@ -414,18 +498,24 @@ final class StatusStore {
     /// else, when it can be focused — the tray does not pop up over it. With
     /// no handle (or one that failed) the tray opens on the row's detail; a
     /// row that is gone opens the tray on the oldest wait. `BannerRoute`
-    /// decides.
+    /// decides. A row with no handle is routed at once; one with a handle
+    /// is routed when its landing answers.
     func focusAgent(idRaw: String, session: String = "", rowKey: String = "") {
         let row = BannerRoute.target(in: rows, idRaw: idRaw, session: session, rowKey: rowKey)
-        var focused = false
-        if let row {
-            if row.canFocusTerminal {
-                focused = focusTerminal(row)
-            } else {
-                markTurnSeen(row)
-            }
+        guard let row, row.canFocusTerminal else {
+            if let row { markTurnSeen(row) }
+            route(target: row?.key, focused: false)
+            return
         }
-        switch BannerRoute.decide(target: row?.key, focused: focused) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let focused = await self.land(row)
+            self.route(target: row.key, focused: focused)
+        }
+    }
+
+    private func route(target: SessionKey?, focused: Bool) {
+        switch BannerRoute.decide(target: target, focused: focused) {
         case .terminal:
             return
         case .detail(let key):

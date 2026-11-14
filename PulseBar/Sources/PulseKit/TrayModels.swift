@@ -307,9 +307,10 @@ package enum TrayKeys {
             )
         }
 
-        /// A timeline entry is a run of two or more steps.
+        /// The timeline is longer than its preview, or an entry is a run of
+        /// two or more steps: → has something to show.
         package static func hasRun(_ facts: SessionFacts) -> Bool {
-            facts.timeline.contains { heard in
+            facts.timeline.count > DetailModel.timelinePreview || facts.timeline.contains { heard in
                 if case .steps(let run) = heard.effect { return run.count > 1 }
                 return false
             }

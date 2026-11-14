@@ -7,7 +7,7 @@ import Foundation
 /// for the two modules, as the last argument). Each agent's adapter
 /// (`Agents/`) maps its own event names and payload onto a `HookAction`;
 /// nothing else is read — not the protocol's kind words, not plain text.
-/// Every event it hears is one v9 line in the event log (`EventLog` — the
+/// Every event it hears is one v10 line in the event log (`EventLog` — the
 /// only file it writes), and it exits 0 at once. An event it does not turn
 /// into state — one Pulse does not install, a payload that is not a JSON
 /// object, a blocked event from an agent whose hooks cannot report one
@@ -69,6 +69,12 @@ package enum PulseHookReceiver {
         argumentsOf: (AgentID, Int32) -> [String]? = HookLanding.agentArguments
     ) -> Int32 {
         let args = Array(arguments.drop(while: { $0 != "--hook" }).dropFirst())
+        // Settings' "Test connection": the launcher found this Pulse and it
+        // can write in its folder. No event line — it is not an agent
+        // speaking.
+        if args.first == HookPing.argument {
+            return HookPing.answer(nowMs: nowMs, at: logURL.map { $0.deletingLastPathComponent() }) ? 0 : 1
+        }
         let agentRaw = (args.first ?? "claude").lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         // Not one of the six — or another tool running this agent's hooks
         // as its own: there is no agent to write a line for.
@@ -130,7 +136,7 @@ package enum PulseHookReceiver {
         return claimed == parent ? claimed : 0
     }
 
-    /// The v9 line one vendor event becomes, before the hook's own facts
+    /// The v10 line one vendor event becomes, before the hook's own facts
     /// (front, pid, landing) and its `seq` are added — a state, or an
     /// `ignored` line saying why not. Pure.
     package static func record(agent: AgentID, event rawEvent: String, payload: [String: Any], nowMs: Int64) -> AttentionRecord {
@@ -479,7 +485,7 @@ package enum PulseHookReceiver {
         return ""
     }
 
-    /// One field of a v9 line: credentials redacted, every tab and line
+    /// One field of a v10 line: credentials redacted, every tab and line
     /// break — `\n`, `\r`, VT, FF, NEL, U+2028, U+2029 — a space
     /// (`AttentionProtocol.flatten`), bounded.
     package static func cleanField(_ value: String, limit: Int) -> String {
@@ -522,5 +528,43 @@ package struct HookContext: Equatable {
             if name.hasSuffix(".jsonl") { name = String(name.dropLast(".jsonl".count)) }
             session = String(name.prefix(80))
         }
+    }
+}
+
+
+/// The launcher's round trip, for Settings' "Test connection": the app runs
+/// the installed `pulse-hook --ping`; the launcher finds a Pulse and runs
+/// it with `--hook --ping`; that Pulse writes the time to `hook-ping` beside
+/// the event log. The app then reads the file: a time at or after the click
+/// proves the whole path a hook takes — launcher, runner, folder — without
+/// writing an event line or pretending to be an agent.
+package enum HookPing {
+    package static let argument = "--ping"
+    package static let fileName = "hook-ping"
+
+    package static func url(in directory: URL? = nil) -> URL {
+        (directory ?? EventLog.directory).appendingPathComponent(fileName)
+    }
+
+    /// The receiver's side: write `nowMs`.
+    package static func answer(nowMs: Int64, at directory: URL? = nil) -> Bool {
+        PrivateFile.write(Data(String(nowMs).utf8), to: url(in: directory))
+    }
+
+    /// The app's side: the time the last ping was answered; nil none.
+    package static func answeredMs(in directory: URL? = nil) -> Int64? {
+        guard let data = SafeRead.regularFile(atPath: url(in: directory).path, limit: 64) else { return nil }
+        return Int64(String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// What a test found.
+    package enum Result: Equatable, Sendable {
+        case running
+        /// The launcher reached a Pulse that wrote its answer.
+        case ok(atMs: Int64)
+        /// There is no launcher (nothing installed yet).
+        case noLauncher
+        /// The launcher ran and no Pulse answered: it found none.
+        case noAnswer
     }
 }

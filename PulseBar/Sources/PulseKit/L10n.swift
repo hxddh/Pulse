@@ -267,6 +267,21 @@ package enum L10n {
         case endError
         case timelineEarlierSteps
         case timelineShowSteps
+        case turnDoneBanner
+        case watchTurn
+        case watchingTurn
+        case settingsShortcut
+        case settingsShortcutTaken
+        case settingsMuteTitle
+        case settingsMuteHint
+        case settingsTestConnection
+        case settingsTestRunning
+        case settingsTestOK
+        case settingsTestNoLauncher
+        case settingsTestNoAnswer
+        case notifyFocusNote
+        case timelineShowAll
+        case timelineShowLess
         case timelineHideSteps
         case copyTurnSummary
     }
@@ -327,12 +342,12 @@ extension L10n.Key {
         case .moreActions: return ("More actions", "更多操作")
         case .agoFormat: return ("%@ ago", "%@前")
         case .now: return ("now", "刚刚")
-        case .stalled: return ("Stalled", "停滞")
+        case .stalled: return ("Quiet", "没动静")
         case .notifFocus: return ("Go", "前往")
         case .buildPreview: return ("Preview build · ad-hoc signed · not notarized", "预览版 · ad-hoc 签名 · 未公证")
         case .releases: return ("Releases…", "版本发布…")
         case .notifyAllowed: return ("Allowed — macOS decides how banners look and when they show.", "已允许——横幅的样式和时机由 macOS 决定。")
-        case .yourTurn: return ("Your turn", "轮到你")
+        case .yourTurn: return ("Done", "好了")
         case .settingsHooksTitle: return ("Agent hooks", "Agent 的 hooks")
         case .settingsHookAbsent: return ("Not on this Mac: %@", "这台 Mac 上没有：%@")
         case .settingsReportHint: return ("A plain-text report of each connection, what each agent reports, the latest events, notifications and this build — no paths, prompts or sessions", "一份纯文本报告：每个连接、每个 Agent 报告什么、最近的事件、通知与这个版本——不含路径、提示词或会话")
@@ -361,9 +376,9 @@ extension L10n.Key {
         case .settingsHookConfigDir: return ("Pulse installs to ~/%@, which isn't there yet — a %@ set to another folder (%@) won't load it", "Pulse 装在 ~/%@，这个文件夹还不存在——若 %@ 用了别的文件夹（%@），就不会加载它")
         case .waitingBannerFailed: return ("macOS did not show the last “needs you” banner — check Notifications", "macOS 没有显示上一条「需要你」通知——请检查通知设置")
         case .lampRuleBlocked: return ("Red: an agent is waiting on you.", "红：有 Agent 在等你。")
-        case .lampRuleStalled: return ("Orange: a running session has gone quiet.", "橙：有运行中的会话停滞了。")
+        case .lampRuleStalled: return ("Orange: a running session has gone quiet.", "橙：有运行中的会话很久没动静了。")
         case .lampRuleRunning: return ("Green: agents are working and nothing needs you.", "绿：Agent 在工作，没有需要你的事。")
-        case .lampRuleTurn: return ("Gray: a turn ended — your move when you are ready.", "灰：有回合结束了，轮到你（不急）。")
+        case .lampRuleTurn: return ("Gray: a turn is done — look when you are ready.", "灰：有回合好了，有空再看。")
         case .lampRuleRecent: return ("Gray: nothing running; recent sessions are listed.", "灰：没有在运行的；列出的是最近的会话。")
         case .lampRuleIdle: return ("Gray: no coding agent is running.", "灰：没有在运行的编码 Agent。")
         case .details: return ("Details", "详情")
@@ -376,11 +391,11 @@ extension L10n.Key {
         case .explainStalledUnknown: return ("Running, but its last step has no time", "在运行，但不知道它上一步的时间")
         case .explainRunningNoClock: return ("Working — no step reported yet", "在工作——还没有报告任何一步")
         case .detailFolder: return ("Folder", "目录")
-        case .processOnly: return ("Process only", "仅进程")
-        case .processOnlyN: return ("process only", "仅进程")
+        case .processOnly: return ("Detected", "已发现")
+        case .processOnlyN: return ("detected", "已发现")
         case .waiting1: return ("needs you", "需要你")
-        case .stalledN: return ("stalled", "停滞")
-        case .yourTurnN: return ("your turn", "轮到你")
+        case .stalledN: return ("quiet", "没动静")
+        case .yourTurnN: return ("done", "好了")
         case .lampRuleProcessOnly: return ("Gray: an agent is running that Pulse can see only as a process.", "灰：有 Agent 在运行，但 Pulse 只看到进程。")
         case .copyReport: return ("Copy report", "复制报告")
         case .noticeNotificationsDenied: return ("Notifications are off for Pulse — an agent that needs you cannot reach you", "Pulse 的通知被关闭了——需要你的 Agent 没法提醒你")
@@ -476,6 +491,21 @@ extension L10n.Key {
         case .endError: return ("Ended on an error", "因出错结束")
         case .timelineEarlierSteps: return ("%d earlier", "更早的 %d 步")
         case .timelineShowSteps: return ("Show each step", "展开每一步")
+        case .turnDoneBanner: return ("Done — the turn you were waiting on ended", "好了——你在等的这一轮结束了")
+        case .watchTurn: return ("Tell me when this turn is done", "这一轮好了时提醒我")
+        case .watchingTurn: return ("Pulse will tell you when this turn is done", "这一轮好了时 Pulse 会提醒你")
+        case .settingsShortcut: return ("Open the tray with %@", "用 %@ 打开托盘")
+        case .settingsShortcutTaken: return ("Another app holds %@ — Pulse could not take it", "%@ 已被别的应用占用——Pulse 没能使用它")
+        case .settingsMuteTitle: return ("Banners from", "这些 Agent 的横幅")
+        case .settingsMuteHint: return ("A muted agent still turns the lamp red and shows in the tray — only its banner is not posted.", "静音的 Agent 仍会点亮红灯、出现在托盘里——只是不发横幅。")
+        case .settingsTestConnection: return ("Test connection", "测试连接")
+        case .settingsTestRunning: return ("Testing…", "正在测试…")
+        case .settingsTestOK: return ("Connected — a hook reaches this Pulse · %@", "连接正常——hook 能找到这个 Pulse · %@")
+        case .settingsTestNoLauncher: return ("Nothing installed yet — install the hooks first", "还没有安装——先安装 hooks")
+        case .settingsTestNoAnswer: return ("A hook could not reach Pulse — move Pulse to Applications and open it once", "hook 找不到 Pulse——把 Pulse 放进「应用程序」并打开一次")
+        case .notifyFocusNote: return ("In a Focus, macOS may hold these banners; allow Pulse in the Focus's settings to let them through.", "专注模式下 macOS 可能会压住这些横幅；在专注模式设置里允许 Pulse 才能收到。")
+        case .timelineShowAll: return ("Show all %d · hold ⌥ for event names", "显示全部 %d 条 · 按住 ⌥ 看事件名")
+        case .timelineShowLess: return ("Show less", "收起")
         case .timelineHideSteps: return ("Hide the steps", "收起每一步")
         case .copyTurnSummary: return ("Copy this turn's summary", "复制本轮摘要")
         }

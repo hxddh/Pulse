@@ -132,3 +132,42 @@ package struct WaitingBanner: Equatable {
         text.count > 120 ? String(text.prefix(119)) + "…" : text
     }
 }
+
+/// "Tell me when this turn is done": the person asked, on one session's
+/// detail page, for one banner when its turn ends. Never on by default —
+/// a finished turn is quiet unless someone asked to hear it. Pure.
+package enum TurnWatch {
+    /// The watched rows whose turn is over now: no longer running or
+    /// blocked (done, recent, ended). A watched row that is gone drops its
+    /// watch silently — its session ended unseen.
+    package static func finished(watching: Set<SessionKey>, rows: [AgentRow]) -> (done: [AgentRow], gone: Set<SessionKey>) {
+        guard !watching.isEmpty else { return ([], []) }
+        let byKey = Dictionary(rows.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+        var done: [AgentRow] = []
+        var gone: Set<SessionKey> = []
+        for key in watching.sorted() {
+            guard let row = byKey[key] else {
+                gone.insert(key)
+                continue
+            }
+            if !row.isRunning, !row.isBlocked, !row.isProcessOnly { done.append(row) }
+        }
+        return (done, gone)
+    }
+
+    /// Whether a row can be watched: a session that is working now.
+    package static func canWatch(_ row: AgentRow) -> Bool {
+        row.isRunning || row.isBlocked
+    }
+
+    /// The banner's id: one per session, apart from its wait's.
+    package static func bannerID(_ key: SessionKey) -> String { "pulse.done." + key.description }
+
+    /// "Claude · app" / the task / "Done".
+    package static func banner(_ row: AgentRow, lang: ResolvedLanguage) -> WaitingBanner {
+        var banner = WaitingBanner.make(row, lang: lang)
+        banner.body = L10n.t(.turnDoneBanner, lang)
+        banner.threadID = "pulse.done." + row.key.description
+        return banner
+    }
+}

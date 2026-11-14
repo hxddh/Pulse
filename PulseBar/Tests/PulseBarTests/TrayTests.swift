@@ -271,7 +271,7 @@ struct TrayInteractionTests {
         turn.status = .yourTurn(sinceMs: now - minute)
         let model = TrayHeaderModel.make(counts: TrayState.Counts(rows: [blocked("w1"), blocked("w2"), session("r"), stalled, turn]), lang: .en)
         let labels = model.counts.map { "\($0.count) \($0.label)" }
-        #expect(labels == ["2 need you", "1 running", "1 stalled", "1 your turn"])
+        #expect(labels == ["2 need you", "1 running", "1 quiet", "1 done"])
         let tones = model.counts.map { $0.tone }
         #expect(tones == [Lamp.waiting, .running, .stalled, .idle])
     }
@@ -1087,9 +1087,15 @@ struct TerminalTabScriptTests {
 
     @Test(arguments: [TerminalFocus.terminalTabScript(tty: "ttys003"), TerminalFocus.iTermTabScript(tty: "ttys003")])
     func aTabSearchActivatesOnlyOnAMatch(script: String) throws {
-        let match = try #require(script.range(of: "if ttyName contains"))
+        let match = try #require(script.range(of: "if ttyName is \"/dev/ttys003\" or ttyName is \"ttys003\""))
         let activate = try #require(script.range(of: "activate"))
         #expect(activate.lowerBound > match.upperBound, "activating before the search brought an unrelated window forward")
+    }
+
+    /// `ttys1` must not land on `ttys10`'s tab.
+    @Test(arguments: [TerminalFocus.terminalTabScript(tty: "ttys1"), TerminalFocus.iTermTabScript(tty: "ttys1")])
+    func aTabSearchMatchesTheWholeDeviceName(script: String) {
+        #expect(!script.contains("contains"))
     }
 
     @Test func theITermSessionSearchActivatesOnlyOnItsUniqueID() throws {
@@ -1573,9 +1579,9 @@ struct RowWordsTests {
         func label(_ rows: [AgentRow], _ lang: ResolvedLanguage = .en) -> String {
             TrayState.assemble(rows: rows, context: .init(nowMs: now, lang: lang)).snapshot.accessibilityLabel
         }
-        #expect(label([turn]) == "Your turn")
-        #expect(label([turn], .zh) == "轮到你")
-        #expect(label([process]) == "Process only")
+        #expect(label([turn]) == "Done")
+        #expect(label([turn], .zh) == "好了")
+        #expect(label([process]) == "Detected")
         #expect(label([]) == "Idle")
         #expect(label([stalled()]) == L10n.t(.lampRuleStalled, .en))
     }
@@ -1654,9 +1660,9 @@ struct RowWordsTests {
     @Test func yourTurnIsQuietAndSaysSo() {
         let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowTurn(), lang: .zh)
         #expect(model.lamp == .idle)
-        #expect(model.turnLabel == "轮到你")
+        #expect(model.turnLabel == "好了")
         #expect(model.secondLine == nil)
-        #expect(model.accessibilityLabel.contains("轮到你"))
+        #expect(model.accessibilityLabel.contains("好了"))
     }
 
     @Test func aProcessOnlyRowIsQuietGrey() {
@@ -1992,7 +1998,7 @@ struct TurnWordsTests {
     @Test func aFinishedTurnAndManyFiles() {
         var sample = SurfaceFixtures.rowTurnDigest()
         sample.row.status = .recent(.ended(atMs: SurfaceFixtures.nowMs - 60_000))
-        sample.facts.endReason = "prompt_input_exit"
+        sample.facts.endReason = "exitAtPrompt"
         for index in 0..<4 { sample.facts.digest.addFiles(["/Users/me/code/app/Sources/F\(index).swift"]) }
         let detail = SurfaceFixtures.detail(sample, lang: .en)
         #expect(detail.turnHeading == "Last turn")
@@ -2003,7 +2009,7 @@ struct TurnWordsTests {
         #expect(files?.value.split(separator: "\n").last == "+2")
         let ended = detail.turn.first { $0.label == "Ended" }
         #expect(ended?.value == "Exited at its prompt")
-        #expect(TrayRowModel.startSourceText("startup", lang: .en) == nil, "a plain start is not said")
+        #expect(TrayRowModel.startSourceText("", lang: .en) == nil, "a plain start is not said"); #expect(StartSource.normalize("startup") == "")
         #expect(TrayRowModel.startSourceText("clear", lang: .zh) == "/clear 之后")
     }
 
@@ -2096,5 +2102,48 @@ struct TurnWordsTests {
         let finished = TurnSummary.text(row: done.row, facts: done.facts, lang: .en, nowMs: SurfaceFixtures.nowMs)
         #expect(finished.contains("Last message: Jitter is configurable.\n"))
         #expect(finished.contains("This turn: 12 steps (1 failed)"))
+    }
+}
+
+/// The detail page shows the newest few entries of its timeline; → (or
+/// "Show all") shows every one with the steps behind each run.
+@Suite("Detail timeline preview")
+struct DetailTimelinePreviewTests {
+    @Test func theTimelineIsPreviewedUntilExpanded() {
+        let folded = SurfaceFixtures.detailTimeline(lang: .en)
+        if folded.timeline.count > DetailModel.timelinePreview {
+            #expect(folded.visibleTimeline.count == DetailModel.timelinePreview)
+            #expect(folded.hiddenEntries == folded.timeline.count - DetailModel.timelinePreview)
+        } else {
+            #expect(folded.hiddenEntries == 0)
+        }
+        #expect(!folded.expanded)
+        var open = folded
+        open.expanded = true
+        #expect(open.visibleTimeline == open.timeline)
+        #expect(open.hiddenEntries == 0)
+    }
+}
+
+/// The copy's two standing rules, over every key in both languages: a why
+/// is said in plain words (never "hook"), and a step is a past step (never
+/// "running" or "正在"). Tested on the strings, not grepped from source.
+@Suite("Copy rules")
+struct CopyRuleTests {
+    @Test func aWhyNeverSaysHookAndAStepNeverSaysRunning() {
+        for key in L10n.Key.allCases {
+            let name = String(describing: key)
+            let values = [L10n.t(key, .en), L10n.t(key, .zh)]
+            if name.hasPrefix("explain") || name.hasPrefix("step") {
+                for value in values {
+                    #expect(!value.lowercased().contains("hook"), "\(name): \(value)")
+                }
+            }
+            if name.hasPrefix("step") {
+                for value in values {
+                    #expect(!value.contains("running") && !value.contains("Running") && !value.contains("正在"), "\(name): \(value)")
+                }
+            }
+        }
     }
 }

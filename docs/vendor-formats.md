@@ -136,7 +136,7 @@ nothing Pulse shows ("ignored" below), activity or a prompt that names no
 session, and a blocked event from Codex or Cursor. The `ignored` line's
 message says which (`PulseHookReceiver.Ignored`); the reducer skips it.
 
-**Step categories and facts (v9).** A line that names a tool carries its
+**Step categories and facts.** A line that names a tool carries its
 category (`cat`: edit, read, shell, search, web, mcp, agent, skill, plan,
 other), read from the adapter's own table of its vendor's tool names
 (`AgentSpec.toolCategories`; an `mcp__` tool is `mcp`) unless the adapter

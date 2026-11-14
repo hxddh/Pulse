@@ -18,7 +18,7 @@ import Foundation
 // Order is meaningful. `Agents.all` is `AgentID.allCases` order, which is
 // also process-rule precedence (the first matching rule wins).
 
-package enum AgentID: String, CaseIterable, Identifiable, Hashable, Sendable {
+package enum AgentID: String, CaseIterable, Identifiable, Hashable, Sendable, Codable {
     case claude, codex, cursor, pi, copilot, opencode
 
     package var id: String { rawValue }
@@ -583,7 +583,47 @@ package struct AgentSpec: Sendable {
         if reading.action == .end, reading.meta.why.isEmpty {
             reading.meta.why = LineMeta.token(PulseHookReceiver.string(payload, keys: ["reason"]))
         }
+        reading.meta.src = StartSource.normalize(reading.meta.src)
+        reading.meta.why = EndReason.normalize(reading.meta.why)
         return reading
+    }
+}
+
+/// Why a session started, in Pulse's words. The vendors' own words are
+/// mapped here, inside `Agents/`, so nothing past the adapters spells one;
+/// a plain start is "" and a word Pulse does not know is kept as said.
+package enum StartSource: String, CaseIterable, Sendable {
+    case resume, clear, compact, fork
+
+    package static func normalize(_ raw: String) -> String {
+        switch raw.lowercased() {
+        case "", "startup", "new", "start", "init": return ""
+        case "resume", "resumed": return resume.rawValue
+        case "clear": return clear.rawValue
+        case "compact": return compact.rawValue
+        case "fork": return fork.rawValue
+        default: return raw
+        }
+    }
+}
+
+/// Why a session ended, in Pulse's words; a word Pulse does not know is
+/// kept as said.
+package enum EndReason: String, CaseIterable, Sendable {
+    case clear, logout, exitAtPrompt, quit, closed, archived, error
+
+    package static func normalize(_ raw: String) -> String {
+        switch raw.lowercased() {
+        case "": return ""
+        case "clear": return clear.rawValue
+        case "logout": return logout.rawValue
+        case "prompt_input_exit", "exitatprompt": return exitAtPrompt.rawValue
+        case "quit", "exit": return quit.rawValue
+        case "user_close", "closed": return closed.rawValue
+        case "archived": return archived.rawValue
+        case "error": return error.rawValue
+        default: return raw
+        }
     }
 }
 

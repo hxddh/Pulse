@@ -69,7 +69,7 @@ package struct Connection: Equatable, Sendable {
     }
 
     /// The newest line an agent's hook wrote: its vendor event and when.
-    package struct Heard: Equatable, Sendable {
+    package struct Heard: Equatable, Sendable, Codable {
         package var event: String
         package var ms: Int64
 
@@ -81,7 +81,7 @@ package struct Connection: Equatable, Sendable {
 
     /// The newest `ignored` line: its vendor event, the receiver's reason
     /// (`PulseHookReceiver.Ignored` raw value) and when.
-    package struct Ignored: Equatable, Sendable {
+    package struct Ignored: Equatable, Sendable, Codable {
         package var event: String
         package var reason: String
         package var ms: Int64

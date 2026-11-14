@@ -1,53 +1,50 @@
 import Darwin
 import Foundation
 
-/// The one event log: `events.tsv`, append-only, one numbered v9 line per
+/// The one event log: `events.tsv`, append-only, one numbered v10 line per
 /// hook event (`AttentionRecord`), in the order the hooks wrote them.
 ///
-/// - **Only a v9 log is read.** A file whose first line is not a v9 header
-///   (`AttentionProtocol.Header`) is treated as absent: a read finds it
-///   empty, and the next writer (`append`, `ensureExists` at launch) empties
-///   it and starts a fresh v9 log — a new `gen`, numbering from 1 — under the
-///   same lock. It is never read and never migrated.
+/// - **Only a v10 log is read.** A file whose first line is not a v10
+///   header (`AttentionProtocol.Header`) is treated as absent: a read finds
+///   it empty, and the next writer (`append`, `ensureExists` at launch)
+///   empties it and starts a fresh v10 log — a new `gen`, numbering from 1 —
+///   under the same lock. It is never read and never migrated.
 /// - **Writers append** under an exclusive `flock` (`append`): the hook
 ///   receiver and the app's own `dismiss`. The appender numbers the line —
 ///   one past the last line's `seq` (or the header's `next`) — so the
-///   numbering is the order the lock granted. The file is created 0600
-///   (`PrivateFile.tighten`).
-/// - **It is bounded**: an append that would take the file past `maxBytes`
-///   compacts it first (`compact`) and rewrites it under a header with the
-///   same `gen` and a new `next`. Every kept line keeps its `seq`. Per
-///   session (or per agent + folder for a session-less one) it keeps the
-///   last `linesPerSession` lines, every line of the last `recentWindowMs`
-///   and the lines a replay rebuilds its title and clocks from; it never
-///   drops an open block — as a replay through `SessionBook` holds it —
-///   nor anything after it in that session (the lines that answer it), nor
-///   the line being appended.
+///   numbering is the order the lock granted. A line is at most
+///   `maxLineBytes` (its message is cut to fit), so the last `seq` is always
+///   inside the tail an appender reads. The file is created 0600.
+/// - **It is bounded by rotation, never by meaning.** An append that would
+///   take the file past `maxBytes` first moves its bytes, unread, to
+///   `events.1.tsv` (replacing the one before), then empties the live file
+///   under a header with the same `gen` and the next `seq`. Same inode, same
+///   lock: a writer waiting on the lock appends to the fresh file. The hook
+///   never parses the log and never runs the reducer.
 /// - **Readers read from an offset** (`read(after:)`) under a shared lock,
 ///   only complete lines, split on `\n` bytes alone. A cursor whose header
-///   is not the file's (a compaction, a log started over), or one past the
-///   end, reads the whole file again; either way the reader applies only
-///   the lines numbered past the last it applied (`Chunk.unapplied`) — or
-///   every line, when the file is another log (`gen`). A missing file is an
-///   empty log; a failed read returns nil and changes nothing.
+///   is not the file's (a rotation, a log started over), or one past the
+///   end, reads the rotated file of the same `gen` and the live file whole;
+///   either way the reader applies only the lines numbered past the last it
+///   applied (`Chunk.unapplied`) — or every line, when the file is another
+///   log (`gen`). A missing file is an empty log; a failed read returns nil
+///   and changes nothing.
+/// - **What outlives the log is the app's snapshot** (`BookSnapshot`): the
+///   reduced book, written by the app, so a session older than both files
+///   keeps its title and clocks across a relaunch.
 package enum EventLog {
     package static let fileName = "events.tsv"
-    /// An append that would pass this compacts the file first.
+    package static let rotatedFileName = "events.1.tsv"
+    /// An append that would pass this rotates the file first.
     package static let maxBytes = 1 << 20
-    /// What a compaction aims for, so the next one is far away.
-    package static let targetBytes = maxBytes / 2
     /// The most a whole-file read takes from the end of an oversized file
     /// (one grown past the bound by hand): its tail, from a line boundary.
     package static let readLimit = 4 << 20
-    /// Lines kept per session by a compaction (at least; see `compact`).
-    package static let linesPerSession = 64
-    /// Every line this recent survives a compaction.
-    package static let recentWindowMs: Int64 = 2 * 60 * 60 * 1000
-    /// A session whose newest line is older than this is dropped whole by a
-    /// compaction — `SessionBook` forgets it after the same day.
-    package static let retentionMs: Int64 = 24 * 60 * 60 * 1000
-    /// How far from the end an append looks for the last line's `seq`.
-    static let tailWindow = 16 * 1024
+    /// The longest line an appender writes, in UTF-8 bytes.
+    package static let maxLineBytes = 8 * 1024
+    /// How far from the end an append looks for the last line's `seq`:
+    /// several whole lines, so a torn last line never hides the number.
+    static let tailWindow = 8 * maxLineBytes
 
     package static var defaultDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -69,6 +66,12 @@ package enum EventLog {
         directory.appendingPathComponent(fileName)
     }
 
+    /// Where `url`'s rotated bytes go: `events.1.tsv` beside it.
+    package static func rotatedURL(for url: URL) -> URL {
+        let base = url.deletingPathExtension().lastPathComponent
+        return url.deletingLastPathComponent().appendingPathComponent(base + ".1." + (url.pathExtension.isEmpty ? "tsv" : url.pathExtension))
+    }
+
     /// Where a reader is: the header line it read (so a rewrite is seen),
     /// the byte after the last complete line it read, the log it read
     /// (`gen`) and the last `seq` it applied.
@@ -88,8 +91,8 @@ package enum EventLog {
 
     /// One read.
     package struct Chunk: Equatable, Sendable {
-        /// The file's header; nil when there is no v9 log (a missing or
-        /// empty file, or one that is not v9) — an empty log.
+        /// The file's header; nil when there is no v10 log (a missing or
+        /// empty file, or one that is not v10) — an empty log.
         package var header: AttentionProtocol.Header?
         /// The header line exactly as read.
         package var headerLine: String
@@ -136,53 +139,85 @@ package enum EventLog {
 
     /// Append one record, numbered under the lock (its `seq` is ignored and
     /// assigned). Creates the file with its header — and starts it over when
-    /// it is not a v9 log; compacts it first when the line would take it past
+    /// it is not a v10 log; rotates it first when the line would take it past
     /// `maxBytes`. Returns whether the line is in the file. `url` nil is the
     /// real log; a test passes its own file.
     @discardableResult
     package static func append(_ record: AttentionRecord, at url: URL? = nil, nowMs: Int64) -> Bool {
-        withExclusiveLock(at: url ?? path) { fd in
+        let target = url ?? path
+        return withExclusiveLock(at: target) { fd in
             var size = Int(lseek(fd, 0, SEEK_END))
             guard size >= 0 else { return false }
             let header = size > 0 ? currentHeader(fd, size: size) : nil
             if size > 0, header == nil {
-                DebugLog.write("events: not a v9 log — started over")
+                DebugLog.write("events: not a v10 log — started over")
                 guard ftruncate(fd, 0) == 0 else { return false }
                 size = 0
             }
-            var line = record
+            var line = fitted(record)
             line.seq = max(header?.next ?? 1, (header == nil ? 0 : lastSeq(fd, size: size)) + 1)
             let text = line.line
-            if let header, size + text.utf8.count + 1 > maxBytes {
-                // Read whole or not at all: a rewrite from a partial copy
-                // would drop lines nobody has read.
-                if let data = readRange(fd, from: 0, count: size), data.count == size {
-                    // The record being appended is always kept: the append
-                    // reports success only when its line is in the file.
-                    var kept = compact(parse(data, from: 0).records + [line], nowMs: nowMs)
-                    if kept.last != line { kept.append(line) }
-                    let body = AttentionProtocol.Header(next: line.seq + 1, gen: header.gen).line
-                        + kept.map { $0.line + "\n" }.joined()
-                    guard ftruncate(fd, 0) == 0 else { return false }
-                    let ok = writeAll(fd, body)
-                    fsync(fd)
-                    return ok
-                }
-                DebugLog.write("events compaction skipped: short read")
-            }
             var out = ""
-            if size == 0 {
+            if let header, size + text.utf8.count + 1 > maxBytes {
+                // Rotate: the bytes go unread to events.1.tsv; the live file
+                // starts again under the same gen, numbering on.
+                guard let data = readRange(fd, from: 0, count: size), data.count == size,
+                      writeRotated(data, to: rotatedURL(for: target)),
+                      ftruncate(fd, 0) == 0
+                else {
+                    DebugLog.write("events rotation failed; appending past the bound")
+                    return writeAll(fd, separator(fd, size: size) + text + "\n")
+                }
+                out = AttentionProtocol.Header(next: line.seq + 1, gen: header.gen).line
+            } else if size == 0 {
                 out = AttentionProtocol.Header(next: line.seq + 1, gen: generation(nowMs: nowMs)).line
-            } else if let last = readRange(fd, from: size - 1, count: 1), last.first != 0x0A {
-                // A writer died mid-line: never glue this record onto it.
-                out = "\n"
+            } else {
+                out = separator(fd, size: size)
             }
             out += text + "\n"
             return writeAll(fd, out)
         } ?? false
     }
 
-    /// Create the file with its header if it is missing, empty or not a v9
+    /// A line break before the new line when a writer died mid-line: never
+    /// glue a record onto it.
+    private static func separator(_ fd: Int32, size: Int) -> String {
+        guard size > 0, let last = readRange(fd, from: size - 1, count: 1), last.first != 0x0A else { return "" }
+        return "\n"
+    }
+
+    /// The record cut to `maxLineBytes`: its message first, then its folder
+    /// and facts, at a character boundary. Pure.
+    package static func fitted(_ record: AttentionRecord) -> AttentionRecord {
+        var line = record
+        line.seq = max(line.seq, 1)
+        func over() -> Int { line.line.utf8.count - maxLineBytes }
+        if over() > 0 { line.message = cut(line.message, by: over()) }
+        if over() > 0 { line.meta = LineMeta() }
+        if over() > 0 { line.cwd = cut(line.cwd, by: over()) }
+        if over() > 0 { line.tool = cut(line.tool, by: over()) }
+        return line
+    }
+
+    /// `text` shortened by at least `bytes` UTF-8 bytes, whole characters.
+    private static func cut(_ text: String, by bytes: Int) -> String {
+        var budget = max(0, text.utf8.count - bytes)
+        var out = ""
+        for character in text {
+            let size = character.utf8.count
+            if size > budget { break }
+            budget -= size
+            out.append(character)
+        }
+        return out
+    }
+
+    /// The rotated file, written whole and private, then moved into place.
+    private static func writeRotated(_ data: Data, to url: URL) -> Bool {
+        PrivateFile.write(data, to: url)
+    }
+
+    /// Create the file with its header if it is missing, empty or not a v10
     /// log (then it is emptied first, unread) — what the watcher needs
     /// before it can open it.
     package static func ensureExists(at url: URL? = nil, nowMs: Int64) {
@@ -191,25 +226,29 @@ package enum EventLog {
             guard size >= 0 else { return false }
             if size > 0 {
                 if currentHeader(fd, size: size) != nil { return true }
-                DebugLog.write("events: not a v9 log — started over")
+                DebugLog.write("events: not a v10 log — started over")
                 guard ftruncate(fd, 0) == 0 else { return false }
             }
             return writeAll(fd, AttentionProtocol.Header(next: 1, gen: generation(nowMs: nowMs)).line)
         }
     }
 
-    /// The open file's v9 header, or nil.
+    /// The open file's v10 header, or nil.
     private static func currentHeader(_ fd: Int32, size: Int) -> AttentionProtocol.Header? {
         guard let head = readRange(fd, from: 0, count: min(size, 512)) else { return nil }
         return AttentionProtocol.Header(line: headerLine(head))
     }
 
-    /// The `seq` of the last record in the file's tail; 0 when none reads.
+    /// The `seq` of the last record in the file; 0 when none reads. The
+    /// tail holds whole lines (`maxLineBytes`); a file grown by hand past
+    /// that is read whole rather than numbered backwards.
     private static func lastSeq(_ fd: Int32, size: Int) -> Int64 {
-        let count = min(size, tailWindow)
-        guard let tail = readRange(fd, from: size - count, count: count) else { return 0 }
-        for line in tail.split(separator: 0x0A).reversed() {
-            if let record = AttentionRecord(line: String(decoding: line, as: UTF8.self)) { return record.seq }
+        for window in [min(size, tailWindow), size] {
+            guard let tail = readRange(fd, from: size - window, count: window) else { return 0 }
+            for line in tail.split(separator: 0x0A).reversed() {
+                if let record = AttentionRecord(line: String(decoding: line, as: UTF8.self)) { return record.seq }
+            }
+            if window == size { break }
         }
         return 0
     }
@@ -218,7 +257,7 @@ package enum EventLog {
 
     /// The records after `cursor`, or the whole file when the cursor is
     /// nil, names another header, or is past the end. A missing file, or one
-    /// that is not a v9 log, is an empty log (`Chunk.empty`). Nil when the
+    /// that is not a v10 log, is an empty log (`Chunk.empty`). Nil when the
     /// file could not be read — the caller keeps what it had.
     package static func read(at url: URL? = nil, after cursor: Cursor?) -> Chunk? {
         let target = url ?? path
@@ -251,7 +290,18 @@ package enum EventLog {
             return nil
         }
         let parsed = parse(data, from: start, skipFirstLine: partialFirst)
-        return Chunk(header: header, headerLine: line, records: parsed.records, end: parsed.end)
+        // A whole read starts with the rotated file of the same log: the
+        // lines a rotation moved before this reader saw them.
+        let rotated = whole && !partialFirst ? readRotated(of: target, gen: header.gen) : []
+        return Chunk(header: header, headerLine: line, records: rotated + parsed.records, end: parsed.end)
+    }
+
+    /// The complete records of `url`'s rotated file when it belongs to the
+    /// log `gen`; none otherwise.
+    private static func readRotated(of url: URL, gen: String) -> [AttentionRecord] {
+        guard let data = try? Data(contentsOf: rotatedURL(for: url)), data.count <= readLimit else { return [] }
+        guard let header = AttentionProtocol.Header(line: headerLine(data.prefix(512))), header.gen == gen else { return [] }
+        return parse(data, from: 0).records
     }
 
     /// The first line when it is a `#` header, without its line break.
@@ -268,7 +318,7 @@ package enum EventLog {
     /// and the byte after the last complete line. Lines end at `\n` bytes
     /// only — a U+2028 or a lone `\r` inside a field never splits a record.
     /// Lossy: one invalid byte never hides the file. Comments, blanks and
-    /// lines that are not v9 records are skipped.
+    /// lines that are not v10 records are skipped.
     package static func parse(_ data: Data, from start: Int, skipFirstLine: Bool = false) -> (records: [AttentionRecord], end: Int) {
         let bytes = [UInt8](data)
         guard let lastBreak = bytes.lastIndex(of: 0x0A) else { return ([], start) }
@@ -291,95 +341,7 @@ package enum EventLog {
         return (records, start + lastBreak + 1)
     }
 
-    // MARK: - Compaction
-
-    /// The records a compaction keeps, in their order, each with its `seq`.
-    /// Pure.
-    ///
-    /// Records are grouped by session — `SessionKey`, so a session-less one
-    /// is grouped by agent **and** folder, never by agent alone — and a
-    /// session-less `done` or `dismiss` naming no folder belongs to every
-    /// session-less group of its agent before it. A group whose newest line
-    /// is older than `retentionMs` goes whole. The records are replayed
-    /// through `SessionBook`, so its own rules say what a session needs:
-    /// each group keeps its last `linesPerSession` lines, every line newer
-    /// than `recentWindowMs`, and — whatever the budget — the lines its first
-    /// clock, title, turn clock, latest prompt, vendor name and latest plan
-    /// came from (`SessionBook.Anchors`, none of them a block) and, while the book
-    /// holds it blocked, the raise that turned it red with everything after
-    /// it — so a block is never kept without the lines that answer it and
-    /// never dropped while it is open. Over `budget`, the per-session count
-    /// and the window halve until it fits (or reach one line and nothing).
-    package static func compact(_ records: [AttentionRecord], nowMs: Int64, budget: Int = targetBytes) -> [AttentionRecord] {
-        var groupsOf: [[SessionKey]] = []
-        var sessionless: [AgentID: Set<SessionKey>] = [:]
-        for record in records {
-            let session = record.session.trimmingCharacters(in: .whitespacesAndNewlines)
-            let key = SessionKey(record.agent, session, cwd: record.cwd)
-            if session.isEmpty, record.kind.isResolution, record.cwd.isEmpty {
-                let all = (sessionless[record.agent] ?? []).sorted()
-                groupsOf.append(all.isEmpty ? [key] : all)
-            } else {
-                if session.isEmpty { sessionless[record.agent, default: []].insert(key) }
-                groupsOf.append([key])
-            }
-        }
-        var members: [SessionKey: [Int]] = [:]
-        var newest: [SessionKey: Int64] = [:]
-        for (position, groups) in groupsOf.enumerated() {
-            for group in groups {
-                members[group, default: []].append(position)
-                newest[group] = max(newest[group] ?? .min, records[position].ms)
-            }
-        }
-
-        // The replay, each line numbered by its position (1-based: 0 is
-        // "none" to the book).
-        var book = SessionBook()
-        for (position, record) in records.enumerated() {
-            var line = record
-            line.seq = Int64(position) + 1
-            book.apply(line, nowMs: nowMs)
-        }
-        var anchors: [SessionKey: [Int]] = [:]
-        var openFrom: [SessionKey: Int] = [:]
-        for (key, session) in book.sessions {
-            anchors[key] = session.anchors.lines.map { Int($0) - 1 }
-            if case .blocked = session.state, session.anchors.block > 0 { openFrom[key] = Int(session.anchors.block) - 1 }
-        }
-        let live = Set(members.keys.filter { nowMs - (newest[$0] ?? 0) <= retentionMs })
-
-        func select(perSession: Int, windowMs: Int64) -> Set<Int> {
-            var keep = Set<Int>()
-            for group in live {
-                guard let positions = members[group] else { continue }
-                keep.formUnion(anchors[group] ?? [])
-                keep.formUnion(positions.suffix(perSession))
-                if let open = openFrom[group] { keep.formUnion(positions.filter { $0 >= open }) }
-            }
-            if windowMs > 0 {
-                for (position, groups) in groupsOf.enumerated()
-                where nowMs - records[position].ms <= windowMs && groups.contains(where: { live.contains($0) }) {
-                    keep.insert(position)
-                }
-            }
-            return keep
-        }
-        let sizes = records.map { $0.line.utf8.count + 1 }
-        func bytes(_ keep: Set<Int>) -> Int {
-            keep.reduce(0) { $0 + sizes[$1] }
-        }
-
-        var perSession = linesPerSession
-        var windowMs = recentWindowMs
-        var keep = select(perSession: perSession, windowMs: windowMs)
-        while bytes(keep) > budget, perSession > 1 || windowMs > 0 {
-            perSession = max(1, perSession / 2)
-            windowMs = windowMs / 2 < 60_000 ? 0 : windowMs / 2
-            keep = select(perSession: perSession, windowMs: windowMs)
-        }
-        return keep.sorted().map { records[$0] }
-    }
+    // MARK: - Completeness
 
     /// Whether `records` — one whole read of a log — are every line the log
     /// was ever given: numbered 1, 2, 3… with none missing. A compaction

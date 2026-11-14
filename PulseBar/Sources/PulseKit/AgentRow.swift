@@ -59,7 +59,7 @@ package enum Lamp: String, CaseIterable, Equatable, Sendable {
 /// What a blocked session is blocked on: always a hook's blocked event — the
 /// only source of a wait. The book holds it while the session is blocked; a
 /// row in need of you carries the same value.
-package struct Block: Hashable, Sendable {
+package struct Block: Hashable, Sendable, Codable {
     /// `.permission`, `.question` or `.waiting`.
     package var kind: AttentionKind
     /// What the agent asked, in its own words (sanitized); "" when unknown.
@@ -93,7 +93,7 @@ package struct Block: Hashable, Sendable {
 /// own members) and hands them out when a row or the detail page is drawn
 /// (`SessionBook.facts`), never through the projection, so a burst of tool
 /// lines lands nothing.
-package struct SessionFacts: Equatable, Sendable {
+package struct SessionFacts: Equatable, Sendable, Codable {
     /// The first line of the agent's latest message, as its turn carried it.
     package var lastWords = ""
     /// The text of the latest turn that ended on an error; cleared by the

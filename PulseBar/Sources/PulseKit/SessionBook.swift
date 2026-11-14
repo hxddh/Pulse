@@ -4,7 +4,7 @@ import Foundation
 /// what its events said about it — from the agents' own hook events.
 ///
 /// Pulse reads no vendor session file. Each supported agent's hook appends
-/// one v9 line to the event log (`EventLog`) when a session starts, takes a
+/// one v10 line to the event log (`EventLog`) when a session starts, takes a
 /// prompt, runs a tool, is blocked, finishes its turn or ends; a process exit
 /// ends a session. This is the reducer those lines feed, in `seq` order — a
 /// pure value, `apply` in, `sessions` out — and `TrayState.project` turns it
@@ -90,343 +90,16 @@ import Foundation
 ///   by the launch replay like everything else here.
 /// - **An exit ends a session**: a process exit (kqueue) or a pid found dead
 ///   ends every live session that pid ran. Nothing here guesses "running".
-package struct SessionBook: Equatable {
-    /// What a session is doing, as its events said.
-    package enum State: Equatable, Sendable {
-        /// Started, or its turn was seen: alive at its prompt, nothing owed.
-        case idle
-        /// It took a prompt, or reported work since its last state.
-        case working
-        /// It cannot go on until the person answers — the red lamp.
-        case blocked(Block)
-        /// It finished its turn and nobody has looked since — quiet.
-        case yourTurn(sinceMs: Int64)
-        /// It ended, or its process exited.
-        case ended(atMs: Int64)
-    }
-
-    /// A turn that arrived within `stopGraceMs` of a block: held, never
-    /// dropped.
-    package struct HeldTurn: Equatable, Sendable {
-        package var ms: Int64
-        package var front: Bool
-        /// The vendor event of the held turn — the why's when it lands.
-        package var event = ""
-    }
-
-    /// The state a block interrupted when no turn was live, with its clock,
-    /// its vendor event and whether the person had stopped the run.
-    package struct Interrupted: Equatable, Sendable {
-        package var state: State
-        package var sinceMs: Int64
-        package var event: String
-        package var stopped: Bool
-    }
-
-    /// The block a dismissal in Pulse (a `dismiss` line) cleared last, and
-    /// when.
-    package struct ClearedBlock: Equatable, Sendable {
-        package var kind: AttentionKind
-        package var ask: String
-        package var sinceMs: Int64
-        package var clearedMs: Int64
-    }
-
-    /// One tool step, as its `tool` line said it: the tool (`Bash`), its
-    /// target (`swift test`, sanitized; "" when the hook did not say) and
-    /// when it was reported. A past step — never a claim that it still runs.
-    package struct Step: Hashable, Sendable {
-        package var tool: String
-        package var target: String
-        package var ms: Int64
-        /// The tool reported it failed (`err`).
-        package var failed = false
-        /// How long it ran, in ms (`took`); 0 unknown.
-        package var tookMs: Int64 = 0
-        /// The subagent that ran it; "" for the main agent.
-        package var sub = ""
-        /// What kind of step it is (`cat`), as its adapter named the tool;
-        /// nil when the line said none.
-        package var category: StepCategory?
-        /// A failed step's error, its first line (`meta` `err`); "" none.
-        package var error = ""
-    }
-
-    /// A plan's progress as the main agent last reported it (`meta`
-    /// `plan` / `planNow`): how many items are done, of how many, the one
-    /// in progress, and when it said so.
-    package struct PlanProgress: Hashable, Sendable {
-        package var done: Int
-        package var total: Int
-        package var now: String
-        package var ms: Int64
-
-        package init(done: Int, total: Int, now: String = "", ms: Int64) {
-            self.done = done
-            self.total = total
-            self.now = now
-            self.ms = ms
-        }
-    }
-
-    /// A subagent's type as its own lines said it (`meta` `type`).
-    package struct SubagentType: Hashable, Sendable {
-        package var sub: String
-        package var type: String
-
-        package init(sub: String, type: String) {
-            self.sub = sub
-            self.type = type
-        }
-    }
-
-    /// One line a session heard, as its timeline says it: when, the
-    /// vendor's own event name (`AttentionRecord.event`, unsanitized —
-    /// `EventName.display` cleans it where it is drawn) and what the line
-    /// did to the session.
-    package struct Heard: Hashable, Sendable {
-        package var ms: Int64
-        package var event: String
-        package var effect: Effect
-        /// The subagent the line came from; "" for the main agent.
-        package var sub: String
-        /// How long a single step ran, in ms (`took`); 0 unknown, and 0
-        /// for anything that is not one step.
-        package var tookMs: Int64
-        /// A single step's category (`cat`); nil for anything else, and for
-        /// a run of steps.
-        package var category: StepCategory?
-        /// The facts the line carried (`meta`); empty for a run of steps.
-        package var meta: LineMeta
-        /// The steps behind a steps entry, oldest first: the step itself,
-        /// or the newest `maxStepsPerEntry` of a run — each with its target,
-        /// duration and failure, what the detail page discloses under the
-        /// run's "Edit ×4". Empty for anything that is not steps. Kept
-        /// beside the effect, never in it: what the entry *did* stays the
-        /// effect's.
-        package var steps: [Step]
-
-        package init(
-            ms: Int64, event: String, effect: Effect, sub: String = "", tookMs: Int64 = 0,
-            category: StepCategory? = nil, meta: LineMeta = LineMeta(), steps: [Step] = []
-        ) {
-            self.ms = ms
-            self.event = event
-            self.effect = effect
-            self.sub = sub
-            self.tookMs = tookMs
-            self.category = category
-            self.meta = meta
-            self.steps = steps
-        }
-    }
-
-    /// Steps of one speaker, said as one timeline entry: a single step
-    /// (its tool and target), or consecutive ones ("Edit ×4 · Bash ×2") —
-    /// each tool once, in the order it first ran, with how many times; how
-    /// many steps in all and how many failed. So the timeline's
-    /// `maxTimeline` entries cover a whole turn, not its last dozen tool
-    /// calls.
-    package struct StepRun: Hashable, Sendable {
-        package struct Tally: Hashable, Sendable {
-            package var tool: String
-            package var count: Int
-
-            package init(tool: String, count: Int) {
-                self.tool = tool
-                self.count = count
-            }
-        }
-
-        package var tools: [Tally]
-        package var count: Int
-        package var failed: Int
-        /// A single step's target ("" when it said none); "" for a run.
-        package var target: String
-
-        package init(tools: [Tally] = [], count: Int = 0, failed: Int = 0, target: String = "") {
-            self.tools = tools
-            self.count = count
-            self.failed = failed
-            self.target = target
-        }
-
-        /// One step.
-        package init(tool: String, target: String, failed: Bool) {
-            self.init(tools: [Tally(tool: tool, count: 1)], count: 1, failed: failed ? 1 : 0, target: target)
-        }
-
-        /// One more step of `tool`: a run, which names no target.
-        package mutating func add(_ tool: String, failed stepFailed: Bool) {
-            count += 1
-            if stepFailed { failed += 1 }
-            target = ""
-            if let index = tools.firstIndex(where: { $0.tool == tool }) {
-                tools[index].count += 1
-            } else {
-                tools.append(Tally(tool: tool, count: 1))
-            }
-        }
-    }
-
-    /// What one heard line did, decided by the reducer as it applied it —
-    /// never guessed from the event's name. How each is said, and how loud,
-    /// is `Effect.text`, `.tone` and `.reportWord`.
-    package enum Effect: Hashable, Sendable {
-        /// The session started or resumed (`start`).
-        case started
-        /// A prompt started a turn (`working`).
-        case prompt
-        /// A tool ran (`step`), or consecutive steps of one speaker, as one
-        /// entry — the timeline's grouping, decided as it is heard.
-        case steps(StepRun)
-        /// Activity that named no tool.
-        case working
-        /// Work goes on, no tool ran (`status`).
-        case status
-        /// A block was raised: the lamp went red.
-        case raised(AttentionKind)
-        /// The same block said again (a re-raise inside the grace, or the
-        /// echo of a dismissed one): nothing new.
-        case again
-        /// The line ended the block: it was answered in the vendor's prompt.
-        case answered
-        /// The turn ended and nobody watched: your turn.
-        case yourTurn
-        /// The turn ended in front of the person (or at its prompt with
-        /// nothing owed).
-        case turnEnded
-        /// The turn ended on an error.
-        case failed
-        /// A turn inside a block's grace: held, lands when the grace ends.
-        case held
-        /// It sat at its prompt; nothing new (`idle` after a seen turn).
-        case atPrompt
-        /// The vendor said its prompt closed (`done`).
-        case resolved
-        /// Set aside in Pulse (`pulse.dismiss`).
-        case dismissed
-        /// Its finished turn was looked at from Pulse (`pulse.seen`).
-        case seen
-        /// The person stopped the run at its prompt (`stopped`).
-        case stopped
-        /// The vendor named the session (`title`).
-        case named
-        /// A subagent's own lifecycle — its start, prompt, end of turn or
-        /// end: the session's state did not move.
-        case subagent
-        /// The session ended.
-        case ended
-        /// Heard, and not turned into state — the receiver's reason
-        /// (`PulseHookReceiver.Ignored` raw value).
-        case skipped(reason: String)
-
-        /// One step: its tool, its target, whether it failed.
-        package static func step(tool: String, target: String, failed: Bool = false) -> Effect {
-            .steps(StepRun(tool: tool, target: target, failed: failed))
-        }
-    }
-
-    /// The lines a replay rebuilds a session's own facts from, by the `seq`
-    /// each was applied with (0 none) — what a compaction keeps whatever its
-    /// budget (`EventLog.compact`). None of `lines` raises anything.
-    package struct Anchors: Equatable, Sendable {
-        /// Its first line that raises nothing and can introduce it
-        /// (`introduces`) — its first clock.
-        package var first: Int64 = 0
-        /// The prompt its title came from.
-        package var title: Int64 = 0
-        /// The line that started the current turn — its clock.
-        package var turn: Int64 = 0
-        /// The latest prompt that said something.
-        package var prompt: Int64 = 0
-        /// The line its vendor name came from.
-        package var name: Int64 = 0
-        /// The line the main agent's latest plan came from — the current
-        /// turn's plan, when it reported one this turn.
-        package var plan: Int64 = 0
-        /// The raise that turned it red, while it is blocked — the open
-        /// block's first line.
-        package var block: Int64 = 0
-
-        /// Every anchor but the block.
-        package var lines: [Int64] { [first, title, turn, prompt, name, plan].filter { $0 > 0 } }
-    }
-
-    /// One session: who it is, where it runs, the one state it is in and
-    /// the reducer's own bookkeeping; what it said lately is its `facts`,
-    /// read and written through the session's own members
-    /// (`session.lastEventMs` is `session.facts.lastEventMs`).
-    @dynamicMemberLookup
-    package struct Session: Equatable, Sendable {
-        /// Decided by the first event, never changed.
-        package var key: SessionKey
-        package var agent: AgentID { key.agent }
-        /// The session exactly as the events spell it ("" for a
-        /// folder-keyed one) — what a `dismiss` must carry.
-        package var session: String
-        package var cwd = ""
-        /// The agent process the hook ran under; 0 unknown.
-        package var pid: Int32 = 0
-        /// The first event that named the current `pid` — a process that
-        /// started after it is not that process (a reused pid).
-        package var pidSinceMs: Int64 = 0
-        /// Where the session can be reached (`tmux:…;tty:…;term:…`).
-        package var landing = ""
-        package var state: State = .idle
-        /// When the current state began, by the event's clock.
-        package var stateSinceMs: Int64 = 0
-        /// The first event seen.
-        package var startedMs: Int64 = 0
-        /// The newest tool event — the only evidence a silence can be a stall.
-        package var toolMs: Int64 = 0
-        /// The first prompt that says something — the session's title when
-        /// the vendor has not named it.
-        package var title = ""
-        /// The vendor's own name for the session (a `title` line, or a
-        /// `start` that carries one); "" none.
-        package var name = ""
-        /// A turn waiting out the grace of the current block.
-        package var heldTurn: HeldTurn?
-        /// Where the session was when the current block was raised while no
-        /// turn was live (your turn, at its prompt): answered, it goes back
-        /// there. Nil for a block raised during a turn.
-        package var interrupted: Interrupted?
-        /// The block the last dismissal in Pulse cleared: the same block
-        /// said again right after (Claude's `Notification` about six seconds
-        /// after its `PermissionRequest`) with no work since is not raised
-        /// again. A vendor's own "resolved" `done` sets none — the same ask
-        /// after it is a new ask.
-        package var clearedBlock: ClearedBlock?
-        /// What it said lately — its last words, step, clocks, events and
-        /// timeline (`SessionFacts`).
-        package var facts = SessionFacts()
-        /// The lines its facts and its open block came from.
-        package var anchors = Anchors()
-
-        package subscript<T>(dynamicMember path: WritableKeyPath<SessionFacts, T>) -> T {
-            get { facts[keyPath: path] }
-            set { facts[keyPath: path] = newValue }
-        }
-
-        package subscript<T>(dynamicMember path: KeyPath<SessionFacts, T>) -> T {
-            facts[keyPath: path]
-        }
-
-        package var isEnded: Bool {
-            if case .ended = state { return true }
-            return false
-        }
-
-        /// What the row calls the session: the vendor's name, else the
-        /// first prompt that said something.
-        package var shownTitle: String { name.isEmpty ? title : name }
-    }
-
+package struct SessionBook: Equatable, Codable {
     package private(set) var sessions: [SessionKey: Session] = [:]
 
+    /// The one window for "the same ask, said twice": a re-raise inside it
+    /// is the same block, a turn ending inside it is held, a dismissed
+    /// block's echo inside it is not news, and the tray's newly-blocked
+    /// edge allows the same slack (`TrayState.reraiseSlackMs`).
+    package static let sameAskMs: Int64 = 20_000
     /// A turn ending this soon after a block does not clear it.
-    package static let stopGraceMs: Int64 = 20_000
+    package static let stopGraceMs: Int64 = sameAskMs
     /// How far an event's stamp may run ahead of now before it is refused.
     package static let clockFutureToleranceMs: Int64 = 5 * 60 * 1000
     /// A session nothing has said anything about for this long is dropped.
@@ -498,7 +171,7 @@ package struct SessionBook: Equatable {
             Self.applySubagent(record, sub: sub, at: ms, new: before == nil, into: &session)
             Self.digestFiles(record, into: &session)
             Self.hear(&session, Self.heard(record, effect: Self.effect(of: record, prior: prior, now: session), sub: sub))
-            return land(session, record: record, before: before)
+            return land(session, before: before)
         }
 
         switch kind {
@@ -510,7 +183,6 @@ package struct SessionBook: Equatable {
             let name = TitleHeuristics.firstLine(record.message)
             if !name.isEmpty {
                 session.name = name
-                session.anchors.name = record.seq
             }
         case .working:
             session.activityMs = max(session.activityMs, ms)
@@ -518,7 +190,6 @@ package struct SessionBook: Equatable {
             let named = TitleHeuristics.firstLine(record.meta.name)
             if !named.isEmpty {
                 session.name = named
-                session.anchors.name = record.seq
             }
             Self.prompt(record, at: ms, into: &session)
             // A prompt stamped no later than the session's end is from
@@ -559,7 +230,6 @@ package struct SessionBook: Equatable {
                     // the error of the last one is over, and its count is
                     // this line's step alone.
                     session.turnStartMs = ms
-                    session.anchors.turn = record.seq
                     session.lastError = ""
                     session.failedTurn = false
                     let step = kind == .tool ? Self.stepOf(record) : nil
@@ -577,7 +247,6 @@ package struct SessionBook: Equatable {
         case .title:
             // The vendor's name for the session; an empty one clears it.
             session.name = TitleHeuristics.firstLine(record.message)
-            session.anchors.name = record.seq
         case .turn, .failed:
             // A turn stamped no later than the session's end is from before
             // it (the lines were numbered out of order): heard, no state.
@@ -610,36 +279,16 @@ package struct SessionBook: Equatable {
         }
         Self.digestFiles(record, into: &session)
         Self.hear(&session, Self.heard(record, effect: Self.effect(of: record, prior: prior, now: session), sub: ""))
-        return land(session, record: record, before: before)
+        return land(session, before: before)
     }
 
-    /// The applied line's session goes back in the book, with its first
-    /// clock when this is it. Returns whether anything but the timeline and
-    /// the anchors changed.
-    private mutating func land(_ session: Session, record: AttentionRecord, before: Session?) -> Bool {
-        var session = session
-        if session.anchors.first == 0, Self.introduces(record) { session.anchors.first = record.seq }
+    /// The applied line's session goes back in the book. Returns whether
+    /// anything but the timeline changed.
+    private mutating func land(_ session: Session, before: Session?) -> Bool {
         sessions[session.key] = session
         guard var unheard = before else { return true }
         unheard.timeline = session.timeline
-        unheard.anchors = session.anchors
         return unheard != session
-    }
-
-    /// Whether a line can introduce a session without raising anything —
-    /// a session's first clock: a `start` or a prompt, or a turn, an idle or
-    /// activity that names its session. Never a block (an answered one kept
-    /// without its answer would be red again), a resolution, an `end`, a
-    /// title or an ignored line.
-    package static func introduces(_ record: AttentionRecord) -> Bool {
-        switch record.kind {
-        case .start, .working:
-            return true
-        case .turn, .failed, .idle, .tool, .status, .stopped:
-            return !record.session.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .permission, .question, .waiting, .done, .dismiss, .end, .title, .ignored:
-            return false
-        }
     }
 
     /// An `ignored` line: no state. When it names a session the book holds
@@ -728,111 +377,6 @@ package struct SessionBook: Equatable {
         }
     }
 
-    /// One heard line on the session's timeline; the oldest beyond
-    /// `maxTimeline` goes.
-    ///
-    /// A step heard right after a step (or a run of them) of the same
-    /// speaker joins it: one entry, "Edit ×4 · Bash ×2", at the newest
-    /// line's clock and event. A single step keeps its own words, target
-    /// and duration.
-    private static func hear(_ session: inout Session, _ heard: Heard) {
-        if let last = session.timeline.last, last.sub == heard.sub,
-           case .steps(var run) = last.effect, case .steps(let next) = heard.effect, next.count == 1,
-           let tool = next.tools.first?.tool {
-            run.add(tool, failed: next.failed > 0)
-            let steps = Array((last.steps + heard.steps).suffix(maxStepsPerEntry))
-            session.timeline[session.timeline.count - 1] = Heard(
-                ms: max(last.ms, heard.ms), event: heard.event, effect: .steps(run), sub: heard.sub, steps: steps
-            )
-            return
-        }
-        session.timeline.append(heard)
-        if session.timeline.count > maxTimeline { session.timeline.removeFirst(session.timeline.count - maxTimeline) }
-    }
-
-    /// How long a `tool` line's step ran (`took`), for its timeline entry;
-    /// 0 for any other line.
-    private static func took(_ record: AttentionRecord) -> Int64 {
-        record.kind == .tool ? max(0, record.tookMs) : 0
-    }
-
-    /// One applied line as its timeline entry: its effect, its speaker, its
-    /// step's duration and category, and the facts it carried.
-    private static func heard(_ record: AttentionRecord, effect: Effect, sub: String) -> Heard {
-        var steps: [Step] = []
-        if case .steps = effect, let step = stepOf(record) { steps = [step] }
-        return Heard(
-            ms: record.ms, event: record.event, effect: effect, sub: sub, tookMs: took(record),
-            category: record.category, meta: record.meta, steps: steps
-        )
-    }
-
-    /// The files a line that is not a step named (`meta` `files`: a
-    /// batch's diff) go in the turn's digest; a step's own went in with it
-    /// (`progress`).
-    private static func digestFiles(_ record: AttentionRecord, into session: inout Session) {
-        guard !record.meta.files.isEmpty, stepOf(record) == nil || record.kind != .tool else { return }
-        session.digest.addFiles(record.meta.files)
-    }
-
-    /// What one applied line did, from the state before it (`prior`, after
-    /// a held turn settled) and after it. Pure.
-    private static func effect(of record: AttentionRecord, prior: State, now session: Session) -> Effect {
-        var wasBlocked = false
-        if case .blocked = prior { wasBlocked = true }
-        var isBlocked = false
-        if case .blocked = session.state { isBlocked = true }
-        let answered = wasBlocked && !isBlocked
-        if !record.sub.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            // A subagent's own lifecycle moves nothing but its own ask.
-            switch record.kind {
-            case .start, .working, .turn, .failed, .idle, .stopped, .title, .end:
-                return answered ? .answered : .subagent
-            default:
-                break
-            }
-        }
-        switch record.kind {
-        case .start:
-            return .started
-        case .working:
-            return answered ? .answered : .prompt
-        case .tool:
-            if answered { return .answered }
-            guard let step = stepOf(record) else { return .working }
-            return .step(tool: step.tool, target: step.target, failed: step.failed)
-        case .status:
-            return .status
-        case .permission, .question, .waiting:
-            // Not raised: the echo of a dismissed block. A re-raise of the
-            // open block inside its grace (`raise` merges it): said again.
-            guard case .blocked = session.state else { return .again }
-            if case .blocked(let was) = prior, was.kind == record.kind,
-               abs(record.ms - was.sinceMs) < stopGraceMs {
-                return .again
-            }
-            return .raised(record.kind)
-        case .turn, .failed, .idle:
-            if isBlocked, session.heldTurn != nil { return .held }
-            if record.kind == .failed { return .failed }
-            if record.kind == .idle, session.state == prior { return .atPrompt }
-            if case .yourTurn = session.state { return .yourTurn }
-            return .turnEnded
-        case .done:
-            return .resolved
-        case .dismiss:
-            return record.event == AttentionRecord.seenEvent ? .seen : .dismissed
-        case .stopped:
-            return .stopped
-        case .title:
-            return .named
-        case .end:
-            return .ended
-        case .ignored:
-            return .skipped(reason: record.message)
-        }
-    }
-
     /// A session an event names for the first time — unless the event says
     /// nothing is going on (a `done` or an `end` for a session never seen).
     private func introduce(key: SessionKey, session: String, kind: AttentionKind, ms: Int64) -> Session? {
@@ -873,7 +417,6 @@ package struct SessionBook: Equatable {
         if speaker.isEmpty {
             if let plan = meta.plan, ms >= (session.plan?.ms ?? .min) {
                 session.plan = PlanProgress(done: plan.done, total: plan.total, now: meta.planNow, ms: ms)
-                session.anchors.plan = record.seq
             }
             if record.kind == .start, !meta.src.isEmpty { session.startSource = meta.src }
             if record.kind == .end, !meta.why.isEmpty { session.endReason = meta.why }
@@ -892,7 +435,6 @@ package struct SessionBook: Equatable {
     /// the last turn is over.
     private static func prompt(_ record: AttentionRecord, at ms: Int64, into session: inout Session) {
         session.turnStartMs = ms
-        session.anchors.turn = record.seq
         session.lastError = ""
         session.failedTurn = false
         session.turnSteps = 0
@@ -902,10 +444,8 @@ package struct SessionBook: Equatable {
         let text = TitleHeuristics.promptTitle(record.message)
         guard !text.isEmpty else { return }
         session.lastPrompt = text
-        session.anchors.prompt = record.seq
         if session.title.isEmpty, TitleHeuristics.isMeaningful(text) {
             session.title = text
-            session.anchors.title = record.seq
         }
     }
 
@@ -945,7 +485,7 @@ package struct SessionBook: Equatable {
     }
 
     /// The step a `tool` (or `status`) line names; nil when it names no tool.
-    private static func stepOf(_ record: AttentionRecord) -> Step? {
+    static func stepOf(_ record: AttentionRecord) -> Step? {
         let tool = record.tool.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !tool.isEmpty else { return nil }
         var target = TitleHeuristics.firstLine(record.message, limit: stepTargetLimit)
@@ -1032,8 +572,6 @@ package struct SessionBook: Equatable {
             // out of order); a raise after it is a new block.
             if let turn = session.heldTurn, turn.ms >= ms { held = turn }
         }
-        // The raise that turned it red; a raise over a block keeps it.
-        if case .blocked = session.state {} else { session.anchors.block = record.seq }
         Self.set(&session, .blocked(block), at: block.sinceMs, event: cause)
         session.heldTurn = held
         session.interrupted = interrupted

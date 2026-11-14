@@ -537,6 +537,8 @@ package struct DetailModel: Equatable {
         case toggleSteps
         /// Copy this turn's summary (`TurnSummary`) to the clipboard.
         case copySummary
+        /// "Tell me when this turn is done" (`TurnWatch`), on or off.
+        case watchTurn
     }
 
     package var lang: ResolvedLanguage
@@ -561,8 +563,24 @@ package struct DetailModel: Equatable {
     package var turn: [Fact] = []
     /// Up to `SessionBook.maxTimeline` heard lines, newest first.
     package var timeline: [Entry]
-    /// The steps behind each run are disclosed (`TrayKeys.State.disclosed`).
+    /// The whole timeline is shown (`TrayKeys.State.disclosed`, → or a
+    /// click on "Show all"); otherwise only its newest `timelinePreview`
+    /// entries.
+    package var expanded = false
+    /// The steps behind each run are disclosed — only on the whole
+    /// timeline.
     package var stepsShown = false
+
+    /// Entries shown before "Show all".
+    package static let timelinePreview = 5
+
+    /// What the page draws: the newest few, or every entry once expanded.
+    package var visibleTimeline: [Entry] {
+        expanded ? timeline : Array(timeline.prefix(Self.timelinePreview))
+    }
+
+    /// Entries "Show all" would add.
+    package var hiddenEntries: Int { timeline.count - visibleTimeline.count }
     package var lastMessage: String?
     package var error: String?
     /// The folder.
@@ -575,6 +593,10 @@ package struct DetailModel: Equatable {
     package var canDismiss: Bool
     /// There is a turn to summarize: "Copy this turn's summary".
     package var canCopySummary = false
+    /// The turn is live: "Tell me when this turn is done" can be asked.
+    package var canWatchTurn = false
+    /// It was asked.
+    package var watchingTurn = false
     /// What the last Go did when it did not land exactly (`RowNotice`) —
     /// the same words as the row.
     package var notice: RowNotice? = nil
@@ -586,7 +608,8 @@ package struct DetailModel: Equatable {
         nowMs: Int64,
         notice: RowNotice? = nil,
         connected: Bool = true,
-        disclosed: Bool = false
+        disclosed: Bool = false,
+        watching: Bool = false
     ) -> DetailModel {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         typealias Words = TrayRowModel
@@ -631,6 +654,7 @@ package struct DetailModel: Equatable {
             turnHeading: t(live ? .stepThisTurn : .detailLastTurn),
             turn: turn,
             timeline: timeline,
+            expanded: disclosed,
             stepsShown: disclosed && timeline.contains(where: \.discloses),
             lastMessage: fresh && !said.lastWords.isEmpty ? said.lastWords : nil,
             error: said.lastError.isEmpty ? nil : said.lastError,
@@ -640,6 +664,8 @@ package struct DetailModel: Equatable {
             focusTitle: Words.focusTitle(row, lang: lang),
             canDismiss: row.isBlocked,
             canCopySummary: summarizable,
+            canWatchTurn: TurnWatch.canWatch(row),
+            watchingTurn: watching && TurnWatch.canWatch(row),
             notice: notice
         )
     }
@@ -757,32 +783,32 @@ extension TrayRowModel {
     }
 
     /// How the session started, when it was not a plain start: "Resumed
-    /// session", "After /clear"…; another word as the vendor said it; nil
-    /// for a plain start or none.
+    /// session", "After /clear"…; a word the adapter did not know, as said;
+    /// nil for a plain start or none. The adapters normalized the word.
     package static func startSourceText(_ source: String, lang: ResolvedLanguage) -> String? {
-        switch source.lowercased() {
-        case "", "startup", "new", "start", "init": return nil
-        case "resume", "resumed": return L10n.t(.sourceResume, lang)
-        case "clear": return L10n.t(.sourceClear, lang)
-        case "compact": return L10n.t(.sourceCompact, lang)
-        case "fork": return L10n.t(.sourceFork, lang)
-        default: return source
+        if source.isEmpty { return nil }
+        switch StartSource(rawValue: source) {
+        case .resume: return L10n.t(.sourceResume, lang)
+        case .clear: return L10n.t(.sourceClear, lang)
+        case .compact: return L10n.t(.sourceCompact, lang)
+        case .fork: return L10n.t(.sourceFork, lang)
+        case nil: return source
         }
     }
 
-    /// Why the session ended, in words; another word as the vendor said
-    /// it; nil none.
+    /// Why the session ended, in words; a word the adapter did not know,
+    /// as said; nil none.
     package static func endReasonText(_ reason: String, lang: ResolvedLanguage) -> String? {
-        switch reason.lowercased() {
-        case "": return nil
-        case "clear": return L10n.t(.endClear, lang)
-        case "logout": return L10n.t(.endLogout, lang)
-        case "prompt_input_exit": return L10n.t(.endPromptExit, lang)
-        case "quit", "exit": return L10n.t(.endQuit, lang)
-        case "user_close": return L10n.t(.endUserClose, lang)
-        case "archived": return L10n.t(.endArchived, lang)
-        case "error": return L10n.t(.endError, lang)
-        default: return reason
+        if reason.isEmpty { return nil }
+        switch EndReason(rawValue: reason) {
+        case .clear: return L10n.t(.endClear, lang)
+        case .logout: return L10n.t(.endLogout, lang)
+        case .exitAtPrompt: return L10n.t(.endPromptExit, lang)
+        case .quit: return L10n.t(.endQuit, lang)
+        case .closed: return L10n.t(.endUserClose, lang)
+        case .archived: return L10n.t(.endArchived, lang)
+        case .error: return L10n.t(.endError, lang)
+        case nil: return reason
         }
     }
 

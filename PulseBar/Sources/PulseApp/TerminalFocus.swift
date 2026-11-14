@@ -158,8 +158,7 @@ enum TerminalFocus {
     }
 
     /// `open -b <bundle> <folder>` — no Automation TCC; lands on the folder in
-    /// that editor. Focus runs on the main thread from a click, so this call
-    /// needs a deadline: a host app slow to launch, or stuck behind its own
+    /// that editor. The call still needs a deadline: a host app slow to launch, or stuck behind its own
     /// dialog, would otherwise freeze the menu bar.
     private static func openFolder(_ path: String, bundleIDs: [String]) -> Bool {
         var isDir: ObjCBool = false
@@ -190,9 +189,11 @@ enum TerminalFocus {
         return false
     }
 
-    /// A tab search that has not answered in this long will not; the click
-    /// reports "not reached" instead of freezing the menu bar.
-    static let focusScriptTimeout: TimeInterval = 5
+    /// A tab search that has not answered in this long will not. Landing
+    /// runs off the main thread, so this can leave room for the person to
+    /// read and answer macOS's Automation question on the first click
+    /// (the script waits on it) without freezing anything.
+    static let focusScriptTimeout: TimeInterval = 45
 
     private static func isRunning(_ bundleID: String) -> Bool {
         !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
@@ -217,7 +218,7 @@ enum TerminalFocus {
             repeat with t in tabs of w
               try
                 set ttyName to (tty of t as text)
-                if ttyName contains "\(escaped)" then
+                if ttyName is "/dev/\(escaped)" or ttyName is "\(escaped)" then
                   set selected of t to true
                   set frontmost of w to true
                   activate
@@ -242,7 +243,7 @@ enum TerminalFocus {
               repeat with s in sessions of t
                 try
                   set ttyName to (tty of s as text)
-                  if ttyName contains "\(escaped)" then
+                  if ttyName is "/dev/\(escaped)" or ttyName is "\(escaped)" then
                     select w
                     select t
                     activate

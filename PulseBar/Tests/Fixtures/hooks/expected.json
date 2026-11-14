@@ -147,10 +147,10 @@
       "meta": "err=Exit code 1"
     },
     "claude/SessionEnd": {
-      "meta": "why=prompt_input_exit"
+      "meta": "why=exitAtPrompt"
     },
     "claude/SessionStart": {
-      "meta": "src=startup",
+      "meta": "",
       "message": ""
     },
     "claude/SessionStart@named": {
@@ -189,10 +189,10 @@
       "meta": "plan=1/3;planNow=Add a retry with backoff"
     },
     "codex/SessionEnd": {
-      "meta": "why=exit"
+      "meta": "why=quit"
     },
     "codex/SessionStart": {
-      "meta": "src=startup"
+      "meta": ""
     },
     "codex/SubagentStart": {
       "sub": "thread-2",
@@ -216,7 +216,7 @@
       "meta": "why=complete"
     },
     "copilot/sessionStart": {
-      "meta": "src=new"
+      "meta": ""
     },
     "cursor/afterFileEdit": {
       "tool": "Edit",
@@ -240,7 +240,7 @@
       "message": "npm run e2e"
     },
     "cursor/sessionEnd": {
-      "meta": "why=user_close"
+      "meta": "why=closed"
     },
     "cursor/sessionEnd@error": {
       "meta": "err=Model provider unavailable;why=error"
@@ -276,7 +276,7 @@
       "meta": "why=quit"
     },
     "pi/session_start": {
-      "meta": "src=startup"
+      "meta": ""
     },
     "pi/tool_execution_end": {
       "tool": "bash",

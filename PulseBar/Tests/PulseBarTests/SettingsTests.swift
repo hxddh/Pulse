@@ -36,6 +36,9 @@ struct PulseSettingsTests {
         var original = PulseSettings()
         original.launchAtLogin = true
         original.hooksNudgeOff = true
+        original.globalShortcut = false
+        original = original.muting(.codex, true).muting(.claude, true)
+        #expect(original.mutedAgents == [.claude, .codex], "roster order")
         let reparsed = try roundTrip(original)
         #expect(reparsed == original)
     }
@@ -44,16 +47,18 @@ struct PulseSettingsTests {
         let d = PulseSettings()
         #expect(!d.launchAtLogin)
         #expect(!d.hooksNudgeOff)
+        #expect(d.globalShortcut, "the shortcut is on until turned off")
+        #expect(d.mutedAgents.isEmpty)
         let reparsed = try roundTrip(d)
         #expect(reparsed == d)
     }
 
-    /// Only the two keys are written: nothing else is a setting.
+    /// Only the current keys are written: nothing else is a setting.
     @Test func onlyTheCurrentKeysAreWritten() throws {
         let data = try JSONEncoder().encode(PulseSettings())
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let keys = Set(object?.keys.map { $0 } ?? [])
-        #expect(keys == ["launchAtLogin", "hooksNudgeOff"])
+        #expect(keys == ["launchAtLogin", "hooksNudgeOff", "globalShortcut", "mutedAgents"])
     }
 
     // MARK: Tolerance
@@ -68,6 +73,14 @@ struct PulseSettingsTests {
         let decoded = try decode(#"{"someFutureKey": 42, "language": "zh", "hooksNudgeOff": true}"#)
         #expect(decoded.hooksNudgeOff)
         #expect(!decoded.launchAtLogin)
+    }
+
+    /// A muted agent Pulse does not know is dropped, the rest kept.
+    @Test func anUnknownMutedAgentIsDropped() throws {
+        let decoded = try decode(#"{"mutedAgents": ["codex", "someday"]}"#)
+        #expect(decoded.mutedAgents == [.codex])
+        #expect(decoded.isMuted(.codex))
+        #expect(!decoded.isMuted(.claude))
     }
 
     @Test func aWrongTypeCostsOnlyThatField() throws {
@@ -263,5 +276,37 @@ struct ReopenTests {
         #expect(opened == 1)
         let pending = store.takePendingReveal()
         #expect(pending == nil, "no row named: the tray selects the oldest wait itself")
+    }
+}
+
+/// The page's additions: the shortcut's line, the agents whose banners can
+/// be muted, and what the connection test found.
+@Suite("Settings — shortcut, muting, connection test")
+struct SettingsAdditionsTests {
+    @Test func theShortcutLineSaysWhenMacOSRefusedTheChord() {
+        #expect(SettingsModel.shortcutNote(on: true, registered: false, lang: .en)?.contains("⌃⌥⌘P") == true)
+        #expect(SettingsModel.shortcutNote(on: true, registered: true, lang: .en) == nil)
+        #expect(SettingsModel.shortcutNote(on: false, registered: false, lang: .en) == nil, "off says nothing")
+        #expect(SettingsModel.shortcutNote(on: true, registered: nil, lang: .en) == nil)
+    }
+
+    /// Only an agent that can report a wait has a banner to mute.
+    @Test func onlyAgentsThatReportWaitsCanBeMuted() {
+        let candidates = SettingsModel.muteCandidates(present: [.claude, .codex, .cursor, .pi])
+        #expect(candidates.contains(.claude))
+        #expect(candidates.contains(.pi))
+        #expect(!candidates.contains(.codex))
+        #expect(!candidates.contains(.cursor))
+        #expect(!candidates.contains(.copilot), "not on this Mac")
+    }
+
+    @Test func theConnectionTestSaysWhatItFound() {
+        let now: Int64 = 1_800_000_000_000
+        #expect(SettingsModel.pingLine(nil, nowMs: now, lang: .en) == nil)
+        let ok = SettingsModel.pingLine(.ok(atMs: now), nowMs: now, lang: .en)
+        #expect(ok?.warning == false)
+        #expect(ok?.text.hasPrefix("Connected") == true)
+        #expect(SettingsModel.pingLine(.noAnswer, nowMs: now, lang: .zh)?.warning == true)
+        #expect(SettingsModel.pingLine(.noLauncher, nowMs: now, lang: .en)?.warning == true)
     }
 }
