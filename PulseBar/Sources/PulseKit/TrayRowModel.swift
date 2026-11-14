@@ -757,32 +757,32 @@ extension TrayRowModel {
     }
 
     /// How the session started, when it was not a plain start: "Resumed
-    /// session", "After /clear"…; another word as the vendor said it; nil
-    /// for a plain start or none.
+    /// session", "After /clear"…; a word the adapter did not know, as said;
+    /// nil for a plain start or none. The adapters normalized the word.
     package static func startSourceText(_ source: String, lang: ResolvedLanguage) -> String? {
-        switch source.lowercased() {
-        case "", "startup", "new", "start", "init": return nil
-        case "resume", "resumed": return L10n.t(.sourceResume, lang)
-        case "clear": return L10n.t(.sourceClear, lang)
-        case "compact": return L10n.t(.sourceCompact, lang)
-        case "fork": return L10n.t(.sourceFork, lang)
-        default: return source
+        if source.isEmpty { return nil }
+        switch StartSource(rawValue: source) {
+        case .resume: return L10n.t(.sourceResume, lang)
+        case .clear: return L10n.t(.sourceClear, lang)
+        case .compact: return L10n.t(.sourceCompact, lang)
+        case .fork: return L10n.t(.sourceFork, lang)
+        case nil: return source
         }
     }
 
-    /// Why the session ended, in words; another word as the vendor said
-    /// it; nil none.
+    /// Why the session ended, in words; a word the adapter did not know,
+    /// as said; nil none.
     package static func endReasonText(_ reason: String, lang: ResolvedLanguage) -> String? {
-        switch reason.lowercased() {
-        case "": return nil
-        case "clear": return L10n.t(.endClear, lang)
-        case "logout": return L10n.t(.endLogout, lang)
-        case "prompt_input_exit": return L10n.t(.endPromptExit, lang)
-        case "quit", "exit": return L10n.t(.endQuit, lang)
-        case "user_close": return L10n.t(.endUserClose, lang)
-        case "archived": return L10n.t(.endArchived, lang)
-        case "error": return L10n.t(.endError, lang)
-        default: return reason
+        if reason.isEmpty { return nil }
+        switch EndReason(rawValue: reason) {
+        case .clear: return L10n.t(.endClear, lang)
+        case .logout: return L10n.t(.endLogout, lang)
+        case .exitAtPrompt: return L10n.t(.endPromptExit, lang)
+        case .quit: return L10n.t(.endQuit, lang)
+        case .closed: return L10n.t(.endUserClose, lang)
+        case .archived: return L10n.t(.endArchived, lang)
+        case .error: return L10n.t(.endError, lang)
+        case nil: return reason
         }
     }
 

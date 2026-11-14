@@ -1087,9 +1087,15 @@ struct TerminalTabScriptTests {
 
     @Test(arguments: [TerminalFocus.terminalTabScript(tty: "ttys003"), TerminalFocus.iTermTabScript(tty: "ttys003")])
     func aTabSearchActivatesOnlyOnAMatch(script: String) throws {
-        let match = try #require(script.range(of: "if ttyName contains"))
+        let match = try #require(script.range(of: "if ttyName is \"/dev/ttys003\" or ttyName is \"ttys003\""))
         let activate = try #require(script.range(of: "activate"))
         #expect(activate.lowerBound > match.upperBound, "activating before the search brought an unrelated window forward")
+    }
+
+    /// `ttys1` must not land on `ttys10`'s tab.
+    @Test(arguments: [TerminalFocus.terminalTabScript(tty: "ttys1"), TerminalFocus.iTermTabScript(tty: "ttys1")])
+    func aTabSearchMatchesTheWholeDeviceName(script: String) {
+        #expect(!script.contains("contains"))
     }
 
     @Test func theITermSessionSearchActivatesOnlyOnItsUniqueID() throws {
@@ -1992,7 +1998,7 @@ struct TurnWordsTests {
     @Test func aFinishedTurnAndManyFiles() {
         var sample = SurfaceFixtures.rowTurnDigest()
         sample.row.status = .recent(.ended(atMs: SurfaceFixtures.nowMs - 60_000))
-        sample.facts.endReason = "prompt_input_exit"
+        sample.facts.endReason = "exitAtPrompt"
         for index in 0..<4 { sample.facts.digest.addFiles(["/Users/me/code/app/Sources/F\(index).swift"]) }
         let detail = SurfaceFixtures.detail(sample, lang: .en)
         #expect(detail.turnHeading == "Last turn")
@@ -2003,7 +2009,7 @@ struct TurnWordsTests {
         #expect(files?.value.split(separator: "\n").last == "+2")
         let ended = detail.turn.first { $0.label == "Ended" }
         #expect(ended?.value == "Exited at its prompt")
-        #expect(TrayRowModel.startSourceText("startup", lang: .en) == nil, "a plain start is not said")
+        #expect(TrayRowModel.startSourceText("", lang: .en) == nil, "a plain start is not said"); #expect(StartSource.normalize("startup") == "")
         #expect(TrayRowModel.startSourceText("clear", lang: .zh) == "/clear 之后")
     }
 

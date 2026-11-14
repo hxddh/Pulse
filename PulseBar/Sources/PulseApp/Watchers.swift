@@ -45,8 +45,11 @@ final class AttentionWatcher: @unchecked Sendable {
         source = nil
     }
 
-    /// Arm (or re-arm) the watch on the log.
-    func arm() {
+    /// Arm (or re-arm) the watch on the log. A re-arm after a rename or a
+    /// delete (a rotation, a log started over) delivers once more: a line
+    /// appended to the new file before the new watch existed would
+    /// otherwise wait for the next write.
+    func arm(redeliver: Bool = false) {
         lock.lock()
         teardownLocked()
         let watchPath = path
@@ -73,7 +76,7 @@ final class AttentionWatcher: @unchecked Sendable {
             self.deliver()
             if flags.contains(.delete) || flags.contains(.rename) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                    self?.arm()
+                    self?.arm(redeliver: true)
                 }
             }
         }
@@ -84,6 +87,7 @@ final class AttentionWatcher: @unchecked Sendable {
         source = src
         lock.unlock()
         src.resume()
+        if redeliver { deliver() }
     }
 
     /// Leading edge now, one trailing edge for whatever the window absorbed.

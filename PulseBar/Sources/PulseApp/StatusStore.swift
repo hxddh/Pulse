@@ -393,11 +393,24 @@ final class StatusStore {
     /// app alone says so (and where macOS's Automation permission is when a
     /// script was tried), and nothing reached says so and re-reads — the
     /// next row either carries a handle that works or stops offering one.
-    /// Returns whether it reached anything.
+    ///
+    /// The landing runs off the main thread: each step may wait on a child
+    /// process (osascript, tmux, a terminal's CLI) and the first AppleScript
+    /// waits while macOS shows its Automation question. The menu bar and the
+    /// tray never freeze behind it.
+    func focusTerminal(_ row: AgentRow) {
+        Task { @MainActor [weak self] in
+            _ = await self?.land(row)
+        }
+    }
+
+    /// Runs the row's plan off the main actor; reports on it.
     @discardableResult
-    func focusTerminal(_ row: AgentRow) -> Bool {
+    func land(_ row: AgentRow) async -> Bool {
         markTurnSeen(row)
-        switch TerminalFocus.land(row.landingPlan) {
+        let plan = row.landingPlan
+        let outcome = await Task.detached(priority: .userInitiated) { TerminalFocus.land(plan) }.value
+        switch outcome {
         case .exact:
             return true
         case .appOnly:
@@ -414,18 +427,24 @@ final class StatusStore {
     /// else, when it can be focused — the tray does not pop up over it. With
     /// no handle (or one that failed) the tray opens on the row's detail; a
     /// row that is gone opens the tray on the oldest wait. `BannerRoute`
-    /// decides.
+    /// decides. A row with no handle is routed at once; one with a handle
+    /// is routed when its landing answers.
     func focusAgent(idRaw: String, session: String = "", rowKey: String = "") {
         let row = BannerRoute.target(in: rows, idRaw: idRaw, session: session, rowKey: rowKey)
-        var focused = false
-        if let row {
-            if row.canFocusTerminal {
-                focused = focusTerminal(row)
-            } else {
-                markTurnSeen(row)
-            }
+        guard let row, row.canFocusTerminal else {
+            if let row { markTurnSeen(row) }
+            route(target: row?.key, focused: false)
+            return
         }
-        switch BannerRoute.decide(target: row?.key, focused: focused) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let focused = await self.land(row)
+            self.route(target: row.key, focused: focused)
+        }
+    }
+
+    private func route(target: SessionKey?, focused: Bool) {
+        switch BannerRoute.decide(target: target, focused: focused) {
         case .terminal:
             return
         case .detail(let key):

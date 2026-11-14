@@ -114,7 +114,7 @@ package enum OpenCode {
         case "session.updated":
             // 1.x archives a session by its `time.archived` (the plugin
             // sends `archived`): it is over.
-            return payload["archived"] as? Bool == true ? HookReading(action: .end, meta: LineMeta(why: "archived")) : nil
+            return payload["archived"] as? Bool == true ? HookReading(action: .end, meta: LineMeta(why: EndReason.archived.rawValue)) : nil
         case "todo.updated":
             // `todos[{content, status}]` (SDK `Todo`): how many are done, of
             // how many, and the one in progress.

@@ -35,13 +35,25 @@ if ! git -C "$ROOT" diff --quiet HEAD 2>/dev/null; then
   GIT_COMMIT="${GIT_COMMIT}+"
 fi
 BUILD_DATE="$(date -u +%Y-%m-%d)"
-# Every build starts as `preview`; only a notarization that stapler validates
-# upgrades it to `stable`. Never stamp "stable" earlier — that mislabels a
-# build Gatekeeper blocks.
+# The channel is decided before signing, because Info.plist is sealed into
+# the signature: editing it after notarization changes the cdhash and voids
+# the stapled ticket. A build that asks for notarization is stamped `stable`
+# up front; if notarization or stapling fails the script exits (set -e), so
+# no `stable` artifact is ever written without a valid ticket.
 SIGN_IDENTITY="${PULSE_SIGN_IDENTITY:--}"
 NOTARY_PROFILE="${PULSE_NOTARY_PROFILE:-}"
-PULSE_NOTARIZED="false"
-DISTRIBUTION_CHANNEL="preview"
+if [[ -n "$NOTARY_PROFILE" && "$SIGN_IDENTITY" == "-" ]]; then
+  echo "error: notarization requires a Developer ID signature" >&2
+  exit 1
+fi
+if [[ -n "$NOTARY_PROFILE" ]]; then
+  PULSE_NOTARIZED="true"
+  DISTRIBUTION_CHANNEL="stable"
+else
+  PULSE_NOTARIZED="false"
+  DISTRIBUTION_CHANNEL="preview"
+fi
+ENTITLEMENTS="$ROOT/PulseBar/Packaging/Pulse.entitlements"
 
 echo "building PulseBar ${VERSION}..."
 # The product, not the package: a plain `swift build -c release` would also
@@ -161,6 +173,7 @@ ${ICON_NAME_PLIST}
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSAppleEventsUsageDescription</key><string>Pulse brings the terminal tab of the session you click to the front. 点按一个会话时，Pulse 把它所在的终端标签页带到前面。</string>
 </dict>
 </plist>
 PLIST
@@ -193,7 +206,7 @@ echo "running --selftest inside the packaged app..."
 if [[ "$SIGN_IDENTITY" == "-" ]]; then
   find "$APP/Contents" -type f -perm +111 -not -path "*/MacOS/PulseBar" -print0 2>/dev/null \
     | xargs -0 -I{} codesign --force --options runtime --sign - {}
-  codesign --force --options runtime --sign - "$APP"
+  codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign - "$APP"
   echo "warning:  ad-hoc signed — Gatekeeper will block this on other Macs."
   echo "          set PULSE_SIGN_IDENTITY to a Developer ID to distribute."
 else
@@ -203,14 +216,9 @@ else
   fi
   find "$APP/Contents" -type f -perm +111 -not -path "*/MacOS/PulseBar" -print0 2>/dev/null \
     | xargs -0 -I{} codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" {}
-  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP"
+  codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$SIGN_IDENTITY" "$APP"
 fi
 codesign --verify --deep --strict --verbose=2 "$APP"
-
-if [[ -n "$NOTARY_PROFILE" && "$SIGN_IDENTITY" == "-" ]]; then
-  echo "error: notarization requires a Developer ID signature" >&2
-  exit 1
-fi
 
 # Notarize and staple the app itself before putting it in the DMG. Submitting
 # only the DMG can pass Gatekeeper online but leaves the installed app without
@@ -225,14 +233,6 @@ if [[ -n "$NOTARY_PROFILE" ]]; then
   xcrun stapler validate "$APP"
   spctl -a -vv --type execute "$APP"
   rm -f "$APP_ZIP"
-  # Upgrade the channel only after stapler validates.
-  DISTRIBUTION_CHANNEL="stable"
-  PULSE_NOTARIZED="true"
-  /usr/libexec/PlistBuddy -c "Set :PulseDistributionChannel ${DISTRIBUTION_CHANNEL}" "$APP/Contents/Info.plist"
-  /usr/libexec/PlistBuddy -c "Set :PulseNotarized ${PULSE_NOTARIZED}" "$APP/Contents/Info.plist" \
-    || /usr/libexec/PlistBuddy -c "Add :PulseNotarized string ${PULSE_NOTARIZED}" "$APP/Contents/Info.plist"
-  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP"
-  codesign --verify --deep --strict --verbose=2 "$APP"
 fi
 
 DMG="$ROOT/zig-out/package/pulse-${VERSION}-macos-PulseBar.dmg"

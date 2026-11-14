@@ -147,7 +147,7 @@
       "meta": "err=Exit code 1"
     },
     "claude/SessionEnd": {
-      "meta": "why=prompt_input_exit"
+      "meta": "why=exitAtPrompt"
     },
     "claude/SessionStart": {
       "meta": "src=startup",
@@ -240,7 +240,7 @@
       "message": "npm run e2e"
     },
     "cursor/sessionEnd": {
-      "meta": "why=user_close"
+      "meta": "why=closed"
     },
     "cursor/sessionEnd@error": {
       "meta": "err=Model provider unavailable;why=error"
