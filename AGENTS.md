@@ -13,7 +13,7 @@ CHANGELOG.
 | [`README.md`](README.md) | You want to know what the product is |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You change anything the user sees — it is the behaviour spec |
 | [`docs/architecture.md`](docs/architecture.md) | You need who owns which state, how processes are read, how a click lands, or the version identity |
-| [`docs/attention-protocol.md`](docs/attention-protocol.md) | You touch the event log (`events.tsv`, Attention Protocol v9) or a hook's line |
+| [`docs/attention-protocol.md`](docs/attention-protocol.md) | You touch the event log (`events.tsv`, Attention Protocol v10) or a hook's line |
 | [`docs/vendor-formats.md`](docs/vendor-formats.md) | You touch a hook receiver, the installer or any per-agent fact — each contract has a pinned source (`vendor-formats.json`), a test and a weekly drift sentinel |
 
 The tests are the spec's proof: a behaviour is pinned by a test in the file of
@@ -38,7 +38,7 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
   that reports a tool start (`HookContract.silenceCanStall`: Pi, OpenCode)
   can stall; for the rest a long command and a stuck one look the same, so
   their rows never turn orange. Settings says nothing a process's start
-  time or a compacted log cannot prove.
+  time or a rotated log cannot prove.
 - **No fake Waiting.** Waiting comes only from the vendor's own hook / plugin /
   extension event that reports a block (`waiting: .hooks`). Codex and Cursor
   are `waiting: .none`: the receiver writes an `ignored` line instead of a
@@ -47,8 +47,11 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
   `dontAsk`, `claude -p` without a permission host) and a notice that may
   be another session's (Claude's `agent_needs_input`) are `ignored` lines
   too. **Red means blocked** —
-  `permission`, `question`, `waiting`. A finished turn (`turn`) is "your
-  turn": a quiet tray count, never red, never a banner, never a row of its own.
+  `permission`, `question`, `waiting`. A finished turn (`turn`) is "done"
+  (好了): a quiet tray count, never red, never a row of its own, and a banner
+  only when the person asked for that one turn on its detail page
+  (`TurnWatch`, in memory). Muting an agent (Settings) stops its banners
+  only — the lamp and the tray still say it.
 - **A subagent is not the person.** A line carries the vendor's subagent id
   (`sub`) when a subagent wrote it. It never answers a block the main agent
   (or another subagent) raised, never revives a turn that has ended, and its
@@ -70,29 +73,35 @@ Product decisions, not preferences. Breaking one is a bug even if it ships.
 - **No network.** Pulse makes no network connection; "Releases…" opens the
   releases page in the browser.
 - **Pulse keeps no record of its own.** The hooks write the one event log
-  (`events.tsv`, append-only, v9); beside it only `settings.json`, the
-  hook-install ledger and `debug.log` outlive a launch. The app appends only a
-  `dismiss` (a wait set aside, a finished turn looked at). Banner bookkeeping
-  (`WaitLedger`) is in memory. A log that is not v9 is treated as absent and
-  started over — never read or migrated.
+  (`events.tsv` and its one rotation `events.1.tsv`, append-only, v10);
+  beside it only `settings.json`, the hook-install ledger, `debug.log`, the
+  launcher's `hook-ping` and `snapshot.json` outlive a launch. The snapshot
+  (`BookSnapshot`) is a cache of the replay — every fact in it came from a
+  line, and a snapshot that does not decode is ignored. The app appends only
+  a `dismiss` (a wait set aside, a finished turn looked at). Banner
+  bookkeeping (`WaitLedger`) and turn watches are in memory. A log that is
+  not v10 is treated as absent and started over — never read or migrated.
 - **Every heard event is one line.** The receiver writes a state line, or an
   `ignored` line that says why not (an event not installed, a payload that is
   not JSON, a blocked event from an agent that cannot report one, a vendor
   prompt that does not block) — never the payload's words. The reducer changes no state for `ignored`; it goes on its
   session's timeline and Settings' "last not used" — it is there to be read.
-- **Replay before the first projection.** At launch `ScanEngine` applies the
-  whole log, in order, to `SessionBook`, and only then projects; that
-  projection is the banner baseline. Every line carries a `seq` assigned
-  under the append lock; after the replay only the bytes past the cursor are
-  read, and only lines numbered past the last applied are applied. A
-  rewritten log (a compaction keeps the log's `gen` and every kept line's
-  `seq`) is read whole and applied past that number; a log started over
-  (another `gen`) is applied whole. Identity is the number, never the text.
-  A failed or empty read changes nothing.
-- **The log is bounded without losing an answer.** Compaction keeps, per
-  session, the recent lines, an open block with everything after it, the
-  lines a replay rebuilds the title and clocks from, and always the line being
-  appended — each under its own `seq`. Lines end at `\n` bytes only.
+- **Replay before the first projection.** At launch `ScanEngine` restores
+  the snapshot, applies every line past its `seq` (the whole log when there
+  is none, or the log is another `gen`), in order, and only then projects;
+  that projection is the banner baseline. Every line carries a `seq`
+  assigned under the append lock; after the replay only the bytes past the
+  cursor are read, and only lines numbered past the last applied are
+  applied. A rotated log (same `gen`, a new header) is read whole with its
+  `events.1.tsv` and applied past that number; a log started over (another
+  `gen`) is applied whole. Identity is the number, never the text. A failed
+  or empty read changes nothing. Replaying a log whole and restoring a
+  snapshot then applying the rest give the same book (a property test).
+- **The log is bounded by rotation, never by meaning.** Past 1 MiB the hook
+  moves the file's bytes unread to `events.1.tsv` and goes on under the same
+  `gen`; the hook never parses the log or runs the reducer. A line is at
+  most 8 KiB, so the last `seq` is always in the tail. Lines end at `\n`
+  bytes only.
 - **A source failure must not blank the tray.** A failed libproc scan keeps
   the last good list; a failed log read keeps what was applied and retries on
   one backing-off timer (5 s → 60 s). Sessions leave only by an `end`, a
@@ -213,12 +222,13 @@ their flags live in `PulseQA` and `package_check.py` fails an app carrying one.
 `gates.sh` runs `version_check` (one semver), `catalog_check` (roster, one
 adapter file per agent and no vendor event spelled outside `Agents/`, hook
 contracts and their sources, no gating event, libproc only, AppleScript only
-in `TerminalFocus`, no network API, no token / usage / cost reads),
+in `TerminalFocus`, a subprocess only on a click — `TerminalFocus` and
+`ConnectionTest` — no network API, no token / usage / cost reads),
 `make_agent_icons --check`, `surface_check` (views render values, the pure
 models stay in `PulseKit` and it imports no UI framework, QA files stay in
-`PulseQA`, a why never says "hook", a step never says "running", and the
-one live line — "Now: …", `nowLine` — reads only `SessionFacts.running`) and
-a `Bundle.module` grep. `vendor_drift.py` runs weekly
+`PulseQA`) and a `Bundle.module` grep. Copy rules (a why never says "hook",
+a step never says "running") are tests on the strings (`CopyRuleTests`),
+not greps of source. `vendor_drift.py` runs weekly
 (`vendor-drift.yml`). A gate earns its place by guarding a real fact.
 
 **Version truth:** `PulseBar/Sources/PulseApp/Models.swift` →
@@ -233,7 +243,12 @@ it. Debug log: `~/Library/Application Support/Pulse/debug.log` (rolls at
 open zig-out/package/Pulse.app
 ```
 
-Local distributable builds use `PULSE_SIGN_IDENTITY` and
+Signing order matters: package.sh decides the channel before it signs
+(Info.plist is sealed into the signature), signs with
+`Packaging/Pulse.entitlements` (`com.apple.security.automation.apple-events`,
+which the hardened runtime needs for the tab search; `NSAppleEventsUsageDescription`
+is in Info.plist), and notarizes and staples last — nothing in the bundle
+changes after notarization. Local distributable builds use `PULSE_SIGN_IDENTITY` and
 `PULSE_NOTARY_PROFILE`; release CI uses the base64 Developer ID certificate,
 password and App Store Connect API key secrets when present. Without them it
 still publishes, but the build is `preview` / ad-hoc / unnotarized and must
@@ -302,8 +317,10 @@ a commit to `main` with `[promote]` in its subject (nothing is rebuilt).
 ## Versioning and language
 
 - **Major**: a breaking change to persisted state or a protocol, a removed
-  capability, or a structural change to how the code is extended. A UI pass
-  is a minor. A schema change never ships in a patch. Every version that
+  capability, or a structural change to how the code is extended. A feature
+  or a UI pass is a minor; a fix is a patch. A schema change never ships in
+  a patch. A release that has not run on a real Mac (`scripts/smoke.sh`) is
+  a prerelease. Every version that
   lands on `main` is released; never reserve a number.
 - Code comments and agent-facing docs (this file, the protocol, vendor
   formats, architecture) are English. User-facing copy, CHANGELOG,

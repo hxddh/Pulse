@@ -7,17 +7,10 @@ app against real sessions. The rendering views listed here take a value
 models they render are pure. This gate fails if either grows a store
 reference back, if a surface fixture is missing from the capture list, if
 a QA file (fixtures, captures, the preview window) moves back into the app
-library — the shipping app links `PulseApp`, the QA driver is `PulseQA` — if
-a pure model leaves the kernel (`PulseKit`, Foundation only), if
-a row's why (`L10n` `explain*` and `step*`, either language) says "hook": the
-tray speaks plain words ("Asked permission · 4m ago"), or if a step string
-says it is still going: a step is what a hook reported, a past step ("Bash ·
-swift test · 12m ago"), never "running" / "正在" — neither in the `step*`
-copy nor in the words `TrayRowModel.stepText` / `stepLine` / `nowLine`
-build. The one live line ("Now: Bash · npm test · 3m", `stepNow`) has its
-own word and its own path: `nowLine` is called only with the tool the agent
-said started and has not finished (`facts.running`), never with a finished
-step — so nothing claims a tool runs from a step that ended.
+library — the shipping app links `PulseApp`, the QA driver is `PulseQA` — or if
+a pure model leaves the kernel (`PulseKit`, Foundation only). The copy's
+rules (a why never says "hook", a step is never "running") are tests on
+the strings (`CopyRuleTests`), not greps of source.
 """
 import re
 import sys
@@ -61,7 +54,6 @@ STORE = re.compile(r"\b(StatusStore|store|AppServices)\b")
 # every scan. It reads `store.settings` and a few flags, never the rows.
 SCAN_FACT_FREE = [("SettingsViews.swift", re.compile(r"\bstore\.(snapshot|rows)\b"))]
 # A step is a past step: none of its words says it is still going.
-RUNNING_WORDS = re.compile(r"running|Running|正在")
 
 
 def struct_body(source: str, name: str) -> str | None:
@@ -116,34 +108,6 @@ def main() -> int:
             errors.append(f"{file}: QA code is in the app library — it belongs to PulseQA")
         if not (QA / file).exists():
             errors.append(f"{file}: missing from PulseQA")
-    copy = (KIT / "L10n.swift").read_text()
-    # One line per key, both languages: `case .key: return ("en", "zh")`.
-    string = r'"((?:[^"\\]|\\.)*)"'
-    pairs = re.findall(r'case \.((?:explain|step)\w+):\s*return \(' + string + r',\s*' + string + r'\)', copy)
-    whys = [(key, value) for key, en, zh in pairs for value in (en, zh)]
-    if not whys:
-        errors.append("L10n.swift: no explain* strings found")
-    for key, value in whys:
-        if "hook" in value.lower():
-            errors.append(f"L10n.swift: .{key} says \"hook\" — a why is said in plain words")
-    steps = [(key, value) for key, value in whys if key.startswith("step")]
-    if not steps:
-        errors.append("L10n.swift: no step* strings found")
-    words = code_only((KIT / "TrayRowModel.swift").read_text())
-    for name in ("stepText", "stepLine", "nowLine"):
-        body = re.search(r"static func " + name + r"\b.*?\n    \}\n", words, re.S)
-        if body is None:
-            errors.append(f"TrayRowModel.swift: static func {name} not found")
-        else:
-            steps.append((name, body.group(0)))
-    for key, value in steps:
-        if RUNNING_WORDS.search(value):
-            errors.append(f"{key}: a step says it is still going — a step is a past step, never \"running\" or \"正在\"")
-    # The live line reads only the agent's own "started, not finished".
-    calls = re.findall(r"(?<!func )\bnowLine\((\w+)", words)
-    live_from_running = re.search(r"\blet\s+live\s*=\s*facts\.running\b", words)
-    if not calls or any(arg != "live" for arg in calls) or not live_from_running:
-        errors.append("TrayRowModel.swift: nowLine must be called only with `live`, bound from `facts.running` — never a finished step")
     fixtures = (QA / "SurfaceFixtures.swift").read_text()
     names = re.search(r"static let names = \[(.*?)\]", fixtures, re.S)
     listed = re.findall(r'"([a-z0-9-]+)"', names.group(1)) if names else []

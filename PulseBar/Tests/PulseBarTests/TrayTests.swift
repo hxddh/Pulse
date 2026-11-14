@@ -2124,3 +2124,26 @@ struct DetailTimelinePreviewTests {
         #expect(open.hiddenEntries == 0)
     }
 }
+
+/// The copy's two standing rules, over every key in both languages: a why
+/// is said in plain words (never "hook"), and a step is a past step (never
+/// "running" or "正在"). Tested on the strings, not grepped from source.
+@Suite("Copy rules")
+struct CopyRuleTests {
+    @Test func aWhyNeverSaysHookAndAStepNeverSaysRunning() {
+        for key in L10n.Key.allCases {
+            let name = String(describing: key)
+            let values = [L10n.t(key, .en), L10n.t(key, .zh)]
+            if name.hasPrefix("explain") || name.hasPrefix("step") {
+                for value in values {
+                    #expect(!value.lowercased().contains("hook"), "\(name): \(value)")
+                }
+            }
+            if name.hasPrefix("step") {
+                for value in values {
+                    #expect(!value.contains("running") && !value.contains("Running") && !value.contains("正在"), "\(name): \(value)")
+                }
+            }
+        }
+    }
+}

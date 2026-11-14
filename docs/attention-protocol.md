@@ -1,4 +1,4 @@
-# Attention Protocol v9
+# Attention Protocol v10
 
 The contract between each supported agent's hook and Pulse's lamp: one
 append-only event log of numbered lines.
@@ -12,7 +12,7 @@ the app's own `dismiss` (a wait set aside in Pulse, or a finished turn
 looked at). Both go through `EventLog.append`. Nothing else writes it.
 **Swift source of truth** (all in `PulseKit`): `AttentionKind` /
 `AttentionRecord` / `AttentionProtocol` (`AttentionProtocol.swift`),
-`EventLog` (append, read from a cursor, compact), `PulseHookReceiver`
+`EventLog` (append, rotate, read from a cursor), `BookSnapshot`, `PulseHookReceiver`
 (reads through each agent's adapter), and the adapters in `Agents/` — one
 file per agent, whose `HookContract` is what is installed and what each
 event means.
@@ -26,70 +26,64 @@ UTF-8 TSV, one event per line, numbered in the order the append lock was
 granted. The first line is the header:
 
 ```text
-# pulse-events v9 next=<seq> gen=<gen> (seq\tms\tagent\tkind\tevent\tsession\tsub\tcwd\tpid\tfront\tlanding\ttool\terr\ttook\tcat\tmeta\tmessage)
+# pulse-events v10 next=<seq> gen=<gen> (seq\tms\tagent\tkind\tevent\tsession\tsub\tcwd\tpid\tfront\tlanding\ttool\terr\ttook\tcat\tmeta\tmessage)
 <seq>\t<unix_ms>\t<agent>\t<kind>\t<event>\t<session>\t<sub>\t<cwd>\t<pid>\t<front>\t<landing>\t<tool>\t<err>\t<took>\t<cat>\t<meta>\t<message>
 ```
 
 - **`gen`** names the log. It is chosen when the log is started — the file
-  is created, or a file that is not a v9 log is started over — and every
-  compaction keeps it. A reader that finds another `gen` is reading another
+  is created, or a file that is not a v10 log is started over — and every
+  rotation keeps it. A reader that finds another `gen` is reading another
   log.
 - **`next`** is the `seq` the next line gets when no line in the file has a
-  larger one: 1 for an empty log, one past the newest kept line after a
-  compaction.
-- **Only a v9 log is read.** A file whose first line is not a v9 header (a
-  v8 log or any older protocol, or no header) is treated as absent: a read
+  larger one: 1 for an empty log, one past the line that started the live
+  file after a rotation.
+- **Only a v10 log is read.** A file whose first line is not a v10 header (a
+  v9 log or any older protocol, or no header) is treated as absent: a read
   finds it empty, and the next writer — the app's `ensureExists` at launch,
-  or a hook's append — empties it under its lock and starts a fresh v9 log
+  or a hook's append — empties it under its lock and starts a fresh v10 log
   (a new `gen`, numbering from 1). It is never read and never migrated.
 - **Append only, numbered under the lock.** A writer opens the file
   `O_APPEND`, takes an exclusive `flock`, gives the line the next `seq` —
   one past the last line's (read from the file's tail), never less than the
-  header's `next` — and writes one whole line. A file that does not exist
-  (or is empty) gets a header first. A file whose last byte is not a line
-  break (a writer died mid-line) gets one before the new line. Mode 0600.
-- **Bounded.** An append that would take the file past 1 MiB compacts it
-  first, under the same lock, and rewrites it under a header with the same
-  `gen` and a new `next`; **every kept line keeps its `seq`**. Per session
-  (`SessionKey`: agent + session id, or agent + folder for a session-less
-  one — never the agent alone; a session-less `done` / `dismiss` belongs to
-  the group of the folder it names, or — naming none — to every session-less
-  group of its agent before it), the last 64 lines and every line of the
-  last two hours are kept; a session whose newest line is a day old goes
-  whole. The lines are replayed through the reader itself (`SessionBook`),
-  so its own rules decide the rest: whatever the budget, each session keeps
-  the lines a replay rebuilds its own facts from (`SessionBook.Anchors`: its
-  first line that raises nothing — its first clock — the prompt its title
-  came from, the line that started its turn, its latest prompt that says
-  something, the line its vendor name came from and the line the main
-  agent's latest plan came from) and, while the replay
-  holds it blocked, the raise that turned it red with every line after it.
-  An answered block is never kept without its answer. Over half a MiB
-  the per-session count and the window halve until it fits. The line being
-  appended is always kept: an append reports success only when its line is
-  in the file. `ignored` lines are bounded like any other.
+  header's `next` — and writes one whole line. A line is at most 8 KiB
+  (`EventLog.maxLineBytes`; its message is cut to fit, then its facts, its
+  folder, its tool), so the last `seq` is always inside the tail the writer
+  reads. A file that does not exist (or is empty) gets a header first. A
+  file whose last byte is not a line break (a writer died mid-line) gets one
+  before the new line. Mode 0600.
+- **Bounded by rotation, never by meaning.** An append that would take the
+  file past 1 MiB first moves the file's bytes, unread, to `events.1.tsv`
+  beside it (written 0600, then renamed over the previous one), then empties
+  the live file under a header with the same `gen` and appends its line.
+  Same inode, same lock: a writer waiting on the lock appends to the fresh
+  file. The hook never parses the log and never runs the reducer.
 - **Read from an offset; applied by number.** A reader keeps a cursor: the
   header line it read, the byte after the last complete line it read, the
   log's `gen` and the last `seq` it applied. It reads only what follows the
   offset, under a shared lock, complete lines only. Lines end at `\n` bytes
   alone: a U+2028, NEL or lone `\r` inside a field never splits a record. A
-  cursor whose header is not the file's (a compaction rewrote it, or the log
-  was started over), or one past the end of the file, reads the whole file
-  again. Either way the reader applies **only the lines whose `seq` is past
-  the last it applied** — of the same `gen`; of another `gen`, every line
-  (the log was started over, its numbering began again). Identity is the
-  number, never the text: a kept line is never applied twice, and the same
-  text written twice is two lines. A missing file is an empty log; an
-  unreadable one is a failed read: the reader keeps what it had and
-  retries once, backing off from 5 s to a minute. A read that found no log
-  moves nothing.
-- **Replayed at launch.** The app reads the whole log and applies every line,
-  in order, before its first projection. That projection is the banner
-  baseline: a block already in the log gets no banner. Only that one is: a
-  launch read that failed leaves the baseline to the replay that lands, and
-  every projection after it can notify. Everything the app shows about a
-  session — its steps, its title, its turn's clock — is rebuilt by this
-  replay and kept nowhere else.
+  cursor whose header is not the file's (a rotation, or the log was started
+  over), or one past the end of the file, reads `events.1.tsv` — only when
+  its header names the same `gen` — and then the live file, whole. Either
+  way the reader applies **only the lines whose `seq` is past the last it
+  applied** — of the same `gen`; of another `gen`, every line (the log was
+  started over, its numbering began again). Identity is the number, never
+  the text: a line is never applied twice, and the same text written twice
+  is two lines. A missing file is an empty log; an unreadable one is a
+  failed read: the reader keeps what it had and retries once, backing off
+  from 5 s to a minute. A read that found no log moves nothing.
+- **Replayed at launch, from the snapshot.** The app keeps the reduced book
+  in `snapshot.json` (`BookSnapshot`: the sessions, the log's `gen`, the
+  last `seq` applied, the last line heard and not used per agent), written
+  0600 and atomically at most every 15 s while lines land, and when it
+  quits. At launch it restores the snapshot, then reads the log whole and
+  applies every line past the snapshot's `seq` (every line, when the log is
+  another `gen` or there is no snapshot), in order, before its first
+  projection. That projection is the banner baseline: a block already in
+  the log gets no banner. A snapshot that does not decode, or of another
+  version, is ignored. The snapshot is a cache of the replay, never a
+  source: every fact in it came from a line, and replaying the same lines
+  whole gives the same book (`EventLogTests`).
 
 **Every line has exactly seventeen columns**, in the order above, and a `seq`
 that is a positive integer. A line with any other count, another `seq`, an
@@ -131,8 +125,8 @@ no value can end a pair, a list item or a column (`LineMeta`).
 | `plan` | `<done>/<total>`: how many of the agent's plan items are completed, of how many (`0 ≤ done ≤ total`, `0 < total ≤ 9999`) | Claude's `TodoWrite` step, Codex's `update_plan` step, OpenCode 1.x `todo.updated` |
 | `planNow` | The item in progress (`in_progress`), its first line, ≤120 chars | the same |
 | `err` | An error's first line, ≤160 chars: a failed step's (Claude's `PostToolUseFailure` `error`, Copilot's `error`, Cursor's `failure_type`), a recoverable error's name (Copilot's `error.name`), an end's (Cursor's `error_message`) | the adapters |
-| `src` | Why the session started — a word (`startup`, `resume`, `clear`, `compact`, `fork`, `new`…), ≤40 chars | a `start` line's `source` (Claude, Codex, Copilot; Pi's forwarded `reason`) |
-| `why` | Why it ended — a word (`clear`, `logout`, `prompt_input_exit`, `quit`, `user_close`, `archived`…), ≤40 chars | an `end` line's `reason` |
+| `src` | Why the session started — Pulse's word (`resume`, `clear`, `compact`, `fork`; `StartSource`) or, unknown, the vendor's; a plain start writes none; ≤40 chars | a `start` line's `source` (Claude, Codex, Copilot; Pi's forwarded `reason`) |
+| `why` | Why it ended — Pulse's word (`clear`, `logout`, `exitAtPrompt`, `quit`, `closed`, `archived`, `error`; `EndReason`, mapped from the vendor's by the adapter) or, unknown, the vendor's, ≤40 chars | an `end` line's `reason` |
 | `type` | The subagent's type (`Explore`, `worker`), ≤40 chars | Claude's and Codex's `SubagentStart` / `SubagentStop` `agent_type` |
 | `files` | The files a batch reported changed, `path\|path…`, at most 16 paths of ≤160 chars, ≤480 chars in all | Codex's `apply_patch` (its patch headers), OpenCode 1.x `session.diff` |
 | `name` | The vendor's name for the session riding on a line that is not a `title` or a `start`, ≤120 chars | Claude's `UserPromptSubmit` `session_title` |
@@ -289,7 +283,9 @@ as spelled in the table — no alias, no vendor word, no guess from free text.
 
 ## Versioning
 
-The protocol is v9: seventeen numbered columns (v8's fifteen plus `cat` and
-`meta`, before `message`) and the kinds above (v8's), and a log whose
-header is not v9 is treated as absent (emptied, started over, never read). A change to the columns or the kinds is a new protocol
-version and a major release.
+The protocol is v10: v9's seventeen numbered columns and kinds, bounded by
+rotation (`events.1.tsv`) instead of compaction, with lines of at most
+8 KiB and the app's snapshot beside the log. A log whose header is not v10
+is treated as absent (emptied, started over, never read). A change to the
+columns, the kinds or how the log is bounded is a new protocol version and
+a major release.
