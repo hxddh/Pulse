@@ -59,7 +59,7 @@ All notable changes to Pulse are documented here.
 ### 已知限制
 
 - **仍没有在真机上验证过**，也仍是 ad-hoc 签名、未公证的 `preview` 构建；需要 Apple Developer ID 才能公证。
-  这一版作为预发布发出，真机跑过 `scripts/smoke.sh` 之后再转为正式版。
+  这一版先以预发布发出，随后按维护者的决定直接转为正式版（Latest），没有等真机冒烟（`scripts/smoke.sh`）。
 - 自动化权限、全局快捷键、专注模式下的横幅，只能在真机上确认。
 - 升级时旧的 v9 日志会被清空，以前的时间线不保留。
 
