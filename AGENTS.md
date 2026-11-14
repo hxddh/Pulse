@@ -1,330 +1,143 @@
 # Agent handoff — Pulse
 
-macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
-
-This file says what is true now. A sentence with a version number belongs in
-CHANGELOG.
-
-## Orientation
+macOS menu-bar status lamp for coding agents: idle / running / needs you.
+This file says what is true now; a sentence with a version number belongs in
+CHANGELOG. Tests are the spec's proof — a behaviour is pinned by a test in
+its component's file, not by a document.
 
 | Doc | Read it when |
 | --- | --- |
-| [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, when, and why |
-| [`README.md`](README.md) | You want to know what the product is |
-| [`EXPERIENCE.md`](EXPERIENCE.md) | You change anything the user sees — it is the behaviour spec |
-| [`docs/architecture.md`](docs/architecture.md) | You need who owns which state, how processes are read, how a click lands, or the version identity |
-| [`docs/attention-protocol.md`](docs/attention-protocol.md) | You touch the event log (`events.tsv`, Attention Protocol v10) or a hook's line |
-| [`docs/vendor-formats.md`](docs/vendor-formats.md) | You touch a hook receiver, the installer or any per-agent fact — each contract has a pinned source (`vendor-formats.json`), a test and a weekly drift sentinel |
+| [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped and why |
+| [`EXPERIENCE.md`](EXPERIENCE.md) | You change anything the user sees (the behaviour spec, Chinese) |
+| [`docs/architecture.md`](docs/architecture.md) | Who owns which state, processes, landing, proof layers |
+| [`docs/attention-protocol.md`](docs/attention-protocol.md) | The event log (`events.tsv`, protocol v10) or a hook's line |
+| [`docs/vendor-formats.md`](docs/vendor-formats.md) | A hook receiver, the installer, any per-agent fact (`vendor-formats.json`, weekly drift check) |
 
-The tests are the spec's proof: a behaviour is pinned by a test in the file of
-its component, not by a document.
+**Six agents**, an owner decision: Claude Code, Codex, Cursor (IDE + CLI), Pi,
+Copilot CLI, OpenCode. Adding one: a `case` in `PulseKit/Agents/Agents.swift`,
+its adapter file (`AgentSpec`: process rule, waiting source, `HookContract`,
+`read`), icon, README row, truth table in `SessionBookTests`, a `hooks` entry
+in `vendor-formats.json`, a recorded payload per installed event
+(`Tests/Fixtures/hooks/<agent>/` + `expected.json`). Nothing outside `Agents/`
+switches on an agent or spells a vendor word (`catalog_check`).
 
-**The roster is six agents**, an owner decision: Claude Code, Codex, Cursor
-(IDE + `cursor-agent` CLI), Pi, Copilot CLI, OpenCode. Adding one is a
-product decision; mechanically it is one `case` in
-`PulseKit/Agents/Agents.swift`, one adapter file beside it (its `AgentSpec`:
-identity, process rule, waiting source, `HookContract` with each event's
-action, and a `read` for payload-dependent events), its icon, README row, a
-truth table in `SessionBookTests`, a `hooks` entry in
-`docs/vendor-formats.json` and a recorded payload per installed event
-(`PulseBar/Tests/Fixtures/hooks/<agent>/`, its line in `expected.json`). Nothing outside `Agents/` switches on an agent
-or spells a vendor event (`catalog_check`).
+## Invariants — product decisions; breaking one is a bug
 
-## Invariants
+- **No guessed state.** A row says what the events prove. Only agents that
+  report a tool start (`silenceCanStall`: Pi, OpenCode) can read "quiet"
+  (orange).
+- **No fake waiting. Red means blocked** (`permission`, `question`,
+  `waiting`), and only from the vendor's own blocking event. Codex and
+  Cursor cannot report one (`waiting: .none`): their blocked lines are
+  `ignored`. A request nobody can be shown, or a notice that may be another
+  session's, is `ignored` too. A finished turn is "done" (好了): a quiet
+  count, never red, and a banner only when the person asked for that turn
+  (`TurnWatch`). Muting an agent stops its banners, not its lamp.
+- **A subagent is not the person.** In the reducer it is a `Speaker`: it
+  never answers a block it did not raise, never revives an ended turn, and
+  its prompt is never the person's.
+- **No quota, cost, token, model or plan HUD**; no source reads `usage` /
+  `token_count` / `rate_limits` / `cost`. Pulse reads no vendor session
+  file — only the hook configs it edits and, read-only, the settings that
+  silence hooks (`offSwitches`).
+- **No judgment transfer.** Pulse never answers a permission request; the
+  receiver appends one line and exits. No rules engine, no auto-approve.
+- **A lamp, not an orchestrator.** No dispatching, worktrees, checks or
+  typing into terminals. A subprocess runs only on a click (`TerminalFocus`,
+  `ConnectionTest`).
+- **No network.** "Releases…" opens the browser.
+- **No record of its own.** Hooks write `events.tsv` (+ one rotation
+  `events.1.tsv`); beside it only `settings.json`, the install ledger,
+  `debug.log`, `hook-ping` and `snapshot.json` (a cache of the replay,
+  ignored when it does not decode). The app appends only `dismiss` lines.
+  Banner bookkeeping and turn watches are in memory. A log that is not v10
+  is started over, never migrated.
+- **Every heard event is one line** — a state line or an `ignored` line
+  saying why, never the payload's words.
+- **Replay before the first projection.** Restore the snapshot, apply every
+  line past its `seq` (all of them for another `gen`), then project: that
+  projection is the banner baseline. Identity is the `seq`, never the text.
+  Snapshot + the rest equals the whole replay (a property test).
+- **Bounded by rotation, never by meaning.** Past 1 MiB the hook moves the
+  bytes unread to `events.1.tsv`; it never parses the log. Lines ≤ 8 KiB.
+- **A failed source never blanks the tray.** Sessions leave only by an
+  `end`, a process exit or reused pid, the idle / silent bounds or the
+  one-day prune.
+- **Event-driven.** The log's `DispatchSource` and per-pid exit sources;
+  besides them one cheap tick (5 s open / 60 s, stopped when empty) and a
+  backing-off libproc scan. Low power doubles both; a sleeping display stops
+  both.
+- **Pure core.** `SessionBook.apply` (a `Signal` by a `Speaker`, one
+  transition) and `TrayState.project` take and return values; the
+  projection carries state only, so an unchanged world lands nothing
+  (`ScanQuietTests`). Side effects live in `ScanEngine`, `WaitNotifier`,
+  `StatusStore`.
+- **Observe-only hooks, reversibly.** Never a gating event
+  (`gatingEvents`); decision-capable events are installed async. One owner
+  exception: Copilot's synchronous `agentStop` / `postToolUse` print
+  nothing. Owned plugins read the event stream only and never throw or
+  block. Every install reverts byte-for-byte; Codex's `config.toml` is never
+  read. No environment variable is followed for a vendor's config folder —
+  Settings says so when the default is missing.
+- **QA code never ships** (`PulseQA`; `package_check.py` enforces it).
 
-Product decisions, not preferences. Breaking one is a bug even if it ships.
+## Code
 
-- **No guessed state.** A row says what the events prove. Only an agent
-  that reports a tool start (`HookContract.silenceCanStall`: Pi, OpenCode)
-  can stall; for the rest a long command and a stuck one look the same, so
-  their rows never turn orange. Settings says nothing a process's start
-  time or a rotated log cannot prove.
-- **No fake Waiting.** Waiting comes only from the vendor's own hook / plugin /
-  extension event that reports a block (`waiting: .hooks`). Codex and Cursor
-  are `waiting: .none`: the receiver writes an `ignored` line instead of a
-  blocked one, the reducer refuses one whoever wrote it, and the product says
-  "doesn't report when it waits". A request nobody can be shown (Claude's
-  `dontAsk`, `claude -p` without a permission host) and a notice that may
-  be another session's (Claude's `agent_needs_input`) are `ignored` lines
-  too. **Red means blocked** —
-  `permission`, `question`, `waiting`. A finished turn (`turn`) is "done"
-  (好了): a quiet tray count, never red, never a row of its own, and a banner
-  only when the person asked for that one turn on its detail page
-  (`TurnWatch`, in memory). Muting an agent (Settings) stops its banners
-  only — the lamp and the tray still say it.
-- **A subagent is not the person.** A line carries the vendor's subagent id
-  (`sub`) when a subagent wrote it. It never answers a block the main agent
-  (or another subagent) raised, never revives a turn that has ended, and its
-  prompt is never the person's prompt (no title, no turn clock); its steps
-  are marked as its own. A Pi subagent (`--mode json`) sends nothing.
-- **No quota, cost or reset HUD.** Tokens, context, cost, model and billing
-  plan are not shown and no source reads a `usage` / `token_count` /
-  `rate_limits` / `cost` field (the agent's own to-do plan, `meta` `plan`, is
-  a fact of the turn and is shown). What a row says comes from the events only; Pulse reads no
-  vendor file (no session store, no transcript) — besides the hook configs
-  the installer edits and, read-only for Settings, the vendor settings
-  that silence hooks (`HookContract.offSwitches`).
-- **No judgment transfer, no blind approve.** Pulse never answers a
-  permission request; the answer is always given in the vendor's own prompt.
-  The hook receiver never holds — it appends one line and exits. No rules
-  engine, always-allow or auto-approve.
-- **Pulse watches orchestrators; it is not one.** No dispatching sessions,
-  managed runtimes, worktrees, running checks or typing into terminals.
-- **No network.** Pulse makes no network connection; "Releases…" opens the
-  releases page in the browser.
-- **Pulse keeps no record of its own.** The hooks write the one event log
-  (`events.tsv` and its one rotation `events.1.tsv`, append-only, v10);
-  beside it only `settings.json`, the hook-install ledger, `debug.log`, the
-  launcher's `hook-ping` and `snapshot.json` outlive a launch. The snapshot
-  (`BookSnapshot`) is a cache of the replay — every fact in it came from a
-  line, and a snapshot that does not decode is ignored. The app appends only
-  a `dismiss` (a wait set aside, a finished turn looked at). Banner
-  bookkeeping (`WaitLedger`) and turn watches are in memory. A log that is
-  not v10 is treated as absent and started over — never read or migrated.
-- **Every heard event is one line.** The receiver writes a state line, or an
-  `ignored` line that says why not (an event not installed, a payload that is
-  not JSON, a blocked event from an agent that cannot report one, a vendor
-  prompt that does not block) — never the payload's words. The reducer changes no state for `ignored`; it goes on its
-  session's timeline and Settings' "last not used" — it is there to be read.
-- **Replay before the first projection.** At launch `ScanEngine` restores
-  the snapshot, applies every line past its `seq` (the whole log when there
-  is none, or the log is another `gen`), in order, and only then projects;
-  that projection is the banner baseline. Every line carries a `seq`
-  assigned under the append lock; after the replay only the bytes past the
-  cursor are read, and only lines numbered past the last applied are
-  applied. A rotated log (same `gen`, a new header) is read whole with its
-  `events.1.tsv` and applied past that number; a log started over (another
-  `gen`) is applied whole. Identity is the number, never the text. A failed
-  or empty read changes nothing. Replaying a log whole and restoring a
-  snapshot then applying the rest give the same book (a property test).
-- **The log is bounded by rotation, never by meaning.** Past 1 MiB the hook
-  moves the file's bytes unread to `events.1.tsv` and goes on under the same
-  `gen`; the hook never parses the log or runs the reducer. A line is at
-  most 8 KiB, so the last `seq` is always in the tail. Lines end at `\n`
-  bytes only.
-- **A source failure must not blank the tray.** A failed libproc scan keeps
-  the last good list; a failed log read keeps what was applied and retries on
-  one backing-off timer (5 s → 60 s). Sessions leave only by an `end`, a
-  process exit (or a reused pid — `AgentProcesses.stillRuns`), the idle bound,
-  the silent bound or the one-day prune. A live process keeps a working or
-  blocked session listed, never an idle or recent one.
-- **Event-driven, no fixed probe interval.** State moves when the log changes
-  (one `DispatchSource`) or a session's process exits (a per-pid exit source).
-  Besides that: one cheap tick (`ProbeSchedule`: 5 s with the tray open or a
-  fresh wait, else 60 s, stopped when nothing is listed) and the libproc scan
-  (launch, wake, an unknown hook pid, and a timer backing off 30 s → 5 min).
-  Low power doubles both; a sleeping display stops both.
-- **The reducer and the projection stay pure.** `SessionBook.apply` and
-  `TrayState.project` take values and return values. Side effects live in
-  `ScanEngine`, `WaitNotifier` and `StatusStore`.
-  The projection carries state only (`AgentRow.Status`); what moves with
-  every tool line — steps, last words, clocks, the vendor events behind the
-  state and the timeline (`SessionFacts`) — is read from the book when a row
-  is drawn, so a projection that finds the same world is equal and lands
-  nothing.
-- **Install only documented, observe-only hooks, reversibly.** Never a gating
-  event (`HookContract.gatingEvents`: PreToolUse, beforeShellExecution, an
-  event whose hook takes the vendor's place — Elicitation, WorktreeCreate,
-  MessageDisplay — …), never anything whose decision the vendor reads; an
-  event not installed is not read. Async neutralizes decision output: the
-  vendor reads no decision from an `async` entry, so an event whose only
-  control is a decision (Claude's `PermissionDenied` `retry`,
-  `SubagentStop`) is observe-only installed async. One documented exception
-  (owner decision): Copilot's `agentStop`/`postToolUse` are synchronous and
-  could return a decision; Pulse's hook appends one line and prints nothing,
-  so it never decides. A plugin or extension Pulse owns reads the vendor's
-  event stream only (OpenCode's bus, Pi's events) — never a hook that can
-  change a tool, a message or a permission — and its handlers never throw,
-  never return a decision and never block. Every install is
-  reversible byte-for-byte (`hook-installs.json`). Codex is `hooks.json`
-  only — `config.toml` is never touched, not even read. No environment
-  variable is followed for where a vendor reads its config (a GUI app cannot
-  see the shell's): a folder a variable can move (Pi's `PI_CODING_AGENT_DIR`,
-  OpenCode's `OPENCODE_CONFIG_DIR` / `XDG_CONFIG_HOME`, Copilot's
-  `COPILOT_HOME`) is said in Settings when the default is missing, never
-  guessed.
-- **QA code never ships.** Fixtures, captures and the preview window live in
-  the `PulseQA` executable; the app is `PulseBar` alone.
+`PulseBar/` (Swift 6, warnings are errors, macOS 14+):
 
-## Architecture
-
-Swift under `PulseBar/`, four targets (and the tests), dependencies
-pointing down only:
-
-| Target | Kind | What it holds |
-| --- | --- | --- |
-| `PulseKit` | library, Foundation only | the agent adapters (`Agents/`), the protocol, `EventLog`, the hook receiver and installer (`JSONSplice`, the ledger), libproc `AgentProcesses`, `SessionBook` → `TrayState`, `WaitLedger`, `WaitingDelivery`, `LandingPlan`, every surface model (`TrayRowModel`, `DetailModel`, `SettingsModel`, `Connection`, `TrayKeys`…), `L10n`, bounded and private IO, the cadence, the debug log (members `package`) |
-| `PulseApp` | library | `ScanEngine` and the watchers, `StatusStore`, `WaitNotifier` + `PulseNotify`, `TerminalFocus`, `StatusItemController`, every view, the login item; owns the resources (`PulseResources`, never `Bundle.module`) |
-| `PulseBar` | executable | `PulseBarMain.main()` — the shipping app |
-| `PulseQA` | executable | fixtures, captures, the preview window, `QADriver` (`@testable import PulseApp`, `PulseKit`) |
-
-`PulseKit` imports no AppKit, SwiftUI, UserNotifications or
-ServiceManagement (`surface_check`) and never reaches `StatusStore`; the
-`--hook` path runs in it without starting AppKit.
-
-Data flow: a hook appends one numbered line to `events.tsv` →
-`AttentionWatcher` wakes `ScanEngine`, which applies the lines numbered past
-its cursor to `SessionBook` → `TrayState.project(book:processes:context:)`
-returns rows (each with one `AgentRow.Status` — state only), lamp, title, one
-`TrayState.Counts` and newly-blocked edges → `StatusStore.land` assigns an
-observed property only when it changed (plain equality: the projection
-carries no step and no clock) → `WaitNotifier` plans one banner per wait from
-the edges and withdraws it when the wait is answered, dismissed or ends.
-`TrayRowModel` says every row's headline and why — citing the vendor event
-that caused the state — from the row and its `SessionFacts`, read from the
-book when it is drawn (the tray's `TimelineView` clock); the detail page
-says the same words and draws the session's timeline. Settings → Hooks says
-each agent's `Connection` (install complete / partial / stale / failed, the
-event heard last, the last one not used). Every key inside
-Pulse is a `SessionKey`; its `description` is the one string that leaves the
-process (a banner's id and user info).
-
-## Working on it
-
-```bash
-cd PulseBar && swift build      # macOS 14+; Xcode 26 / Swift 6.2+ (CI: macos-26)
-cd PulseBar && swift test
-```
-
-Every target is in the Swift 6 language mode with complete concurrency
-checking; every product target treats warnings as errors. A value that
-crosses a queue by convention goes in `Unchecked` with a comment saying why;
-prefer `Sendable` types and `Guarded`.
-
-Tests live in `PulseBar/Tests/PulseBarTests/`, one file per component:
-`CoreTests`, `VendorFormatTests`, `AttentionTests` (protocol, event log,
-receiver, installer), `SessionTests` (the six agents' truth tables,
-`TrayState`, identity), `NotifierTests`, `TrayTests`, `SettingsTests`,
-`DiagnosticsTests`, `EngineTests`. A new test goes in its component's file.
-A wrong tray state is fixed with a failing test — `SessionBookTests`,
-`TrayStateTests`, `TrayAssembleTests`, `HookToBannerTests` — not a source
-gate. `ScanQuietTests` lists every observed `StatusStore` property: a
-projection that finds the same world announces nothing.
-
-No path forks an interpreter to observe a session; a missing Python never
-blocks the app, the hooks or `--selftest`.
-
-**Gates**, from the repo root — CI, `release.yml`, `scripts/release.sh` and
-`package.sh` all run `gates.sh`:
-
-```bash
-bash scripts/gates.sh                 # source gates
-python3 scripts/package_check.py      # the built .app: flat resource bundle, no QA code
-./scripts/qa_captures.sh              # surface + status fixture PNGs (PulseQA)
-node scripts/js_adapters_test.mjs     # the Pi extension and OpenCode plugin under Node
-./scripts/e2e.sh                      # after package.sh: installer → pulse-hook → PulseBar --hook → snapshot
-```
-
-The proof layers (recorded payloads, the modules under Node, the end-to-end
-run, the owner's `scripts/smoke.sh`) are in `docs/architecture.md` → Proof;
-their flags live in `PulseQA` and `package_check.py` fails an app carrying one.
-
-`gates.sh` runs `version_check` (one semver), `catalog_check` (roster, one
-adapter file per agent and no vendor event spelled outside `Agents/`, hook
-contracts and their sources, no gating event, libproc only, AppleScript only
-in `TerminalFocus`, a subprocess only on a click — `TerminalFocus` and
-`ConnectionTest` — no network API, no token / usage / cost reads),
-`make_agent_icons --check`, `surface_check` (views render values, the pure
-models stay in `PulseKit` and it imports no UI framework, QA files stay in
-`PulseQA`) and a `Bundle.module` grep. Copy rules (a why never says "hook",
-a step never says "running") are tests on the strings (`CopyRuleTests`),
-not greps of source. `vendor_drift.py` runs weekly
-(`vendor-drift.yml`). A gate earns its place by guarding a real fact.
-
-**Version truth:** `PulseBar/Sources/PulseApp/Models.swift` →
-`PulseVersion.semver`. CHANGELOG's newest heading and the README badge follow
-it. Debug log: `~/Library/Application Support/Pulse/debug.log` (rolls at
-2 MB). User-facing diagnostics: Settings → Hooks → "Copy report".
-
-## Ship
-
-```bash
-./PulseBar/Scripts/package.sh       # release build of PulseBar only, then package_check + --selftest
-open zig-out/package/Pulse.app
-```
-
-Signing order matters: package.sh decides the channel before it signs
-(Info.plist is sealed into the signature), signs with
-`Packaging/Pulse.entitlements` (`com.apple.security.automation.apple-events`,
-which the hardened runtime needs for the tab search; `NSAppleEventsUsageDescription`
-is in Info.plist), and notarizes and staples last — nothing in the bundle
-changes after notarization. Local distributable builds use `PULSE_SIGN_IDENTITY` and
-`PULSE_NOTARY_PROFILE`; release CI uses the base64 Developer ID certificate,
-password and App Store Connect API key secrets when present. Without them it
-still publishes, but the build is `preview` / ad-hoc / unnotarized and must
-never be labelled `stable` or Gatekeeper-ready (`PulseDistributionChannel`).
-Release notes and the DMG's note lead with System Settings → Privacy &
-Security → "Open Anyway", with `xattr -dr com.apple.quarantine` as the
-Terminal alternative. Every release carries the DMG's `.sha256` and a
-build-provenance attestation (`actions/attest-build-provenance`, checked
-with `gh attestation verify <dmg> -R hxddh/Pulse`; the release job alone
-holds `id-token` / `attestations: write`). Provenance is not notarization.
-
-Distribution is the DMG only — no Homebrew, no Sparkle, no update check.
-The DMG (`pulse-<ver>-macos-PulseBar.dmg`, volume "Pulse", the app icns as
-volume icon) opens to Pulse.app left, an arrow, an `/Applications` link
-right, and — unnotarized builds only — "首次打开必读 · Read Me First.txt"
-below. `scripts/make_dmg_art.py` draws the background (shapes only, no
-text) and writes `PulseBar/Packaging/DMG/layout.json`, the one source of
-the geometry (`--check` in `gates.sh`); `dmgbuild` with `DMG/settings.py`
-writes the window's `.DS_Store` headlessly. dmgbuild is a hash-pinned
-packaging tool (`DMG/requirements.txt`) that CI installs into a throwaway
-venv and passes as `PULSE_DMGBUILD`; it never ships. The layout is
-cosmetic: dmgbuild missing or failing falls back to a plain `hdiutil` image
-that still holds the app, the link and the guide — package.sh mounts the
-result and fails only when one of those is missing.
-
-When `xcrun -f actool` exists, package.sh compiles the Icon Composer bundle
-`PulseBar/Packaging/Pulse.icon` (from `make_brand.py`) to `Assets.car` and
-adds `CFBundleIconName=Pulse` only then; `CFBundleIconFile=AppIcon` and
-`AppIcon.icns` are always there. An actool failure warns and ships the
-icns alone. `package_check.py` requires the icns, allows `Assets.car`, and
-fails a `CFBundleIconName` without it.
-
-"Open at login" is `SMAppService.mainApp` (works only from a bundle; macOS
-may hold it for approval). Never add the
-`com.apple.developer.usernotifications.time-sensitive` entitlement to an
-ad-hoc build — an unprovisioned `com.apple.developer.*` entitlement keeps the
-app from launching; Pulse marks a banner time-sensitive only when macOS
-reports it allowed.
-
-## Release
-
-Write the `## x.y.z` section in CHANGELOG.md first — every path refuses
-without it (`version_check.py --fix` updates the README only).
-
-```bash
-./scripts/release.sh X.Y.Z                         # dry run: bump + gates + diff
-./scripts/release.sh X.Y.Z --commit                # commit with [release]
-./scripts/release.sh X.Y.Z --commit --prerelease   # … [release] [prerelease]
-git push                                           # CI builds, tags, publishes
-```
-
-| Trigger | When |
+| Target | Holds |
 | --- | --- |
-| `[release]` in the pushed commit subject | default; `main` only |
-| `[release] [prerelease]` | same build, published as a GitHub prerelease; `main` only |
-| a `v*.*.*` tag push | any branch |
-| `workflow_dispatch` | Actions tab (has a `prerelease` switch) |
+| `PulseKit` (Foundation only) | adapters, protocol, `EventLog`, `BookSnapshot`, receiver + installer, libproc, `SessionBook` → `TrayState`, every surface model, `L10n` |
+| `PulseApp` | `ScanEngine`, `StatusStore`, `WaitNotifier`, `TerminalFocus`, `GlobalShortcut`, `AutomationCheck`, views, resources (`PulseResources`, never `Bundle.module`) |
+| `PulseBar` | the shipping executable |
+| `PulseQA` | fixtures, captures, preview, `QADriver` |
 
-CI checks the version against `PulseVersion.semver`, runs gates and tests,
-packages the DMG and publishes a Release whose body is that CHANGELOG
-section; it creates the tag with its own `contents: write` token. A version
-that already has a Release is refused. A prerelease is not GitHub Latest; the
-owner promotes it after a real-Mac run by editing the release, or by pushing
-a commit to `main` with `[promote]` in its subject (nothing is rebuilt).
+Flow: hook line → `AttentionWatcher` → `ScanEngine` applies lines past its
+cursor → `TrayState.project` → `StatusStore.land` (only changed values) →
+`WaitNotifier` (one banner per wait, withdrawn when it ends). Rows and the
+detail page read `SessionFacts` from the book when drawn. Every key is a
+`SessionKey`; its `description` is the only string that leaves the process.
+
+```bash
+cd PulseBar && swift build && swift test
+bash scripts/gates.sh            # version, catalog, icons, surfaces, DMG art
+node scripts/js_adapters_test.mjs
+./PulseBar/Scripts/package.sh    # then ./scripts/e2e.sh, ./scripts/qa_captures.sh
+```
+
+Tests: one file per component (`CoreTests`, `VendorFormatTests`,
+`AttentionTests`, `SessionTests`, `NotifierTests`, `TrayTests`,
+`SettingsTests`, `DiagnosticsTests`, `EngineTests`). A wrong state is fixed
+with a failing test, not a source gate. Copy rules are string tests
+(`CopyRuleTests`). A gate earns its place by guarding a real fact.
+A new surface comes with a pure model, a fixture and a capture.
+
+Version truth: `PulseApp/Models.swift` → `PulseVersion.semver`; CHANGELOG's
+newest heading and the README badge follow it.
+
+## Ship and release
+
+`package.sh` decides the channel before signing (Info.plist is sealed),
+signs with `Packaging/Pulse.entitlements` (Apple Events for the tab search),
+then notarizes and staples last. Without Developer ID secrets the build is
+`preview`, ad-hoc and unnotarized — never labelled `stable`. Never add a
+`com.apple.developer.*` entitlement to an ad-hoc build. Distribution is the
+DMG only, with `.sha256` and a build-provenance attestation.
+
+Write the `## x.y.z` CHANGELOG section first, then:
+
+| Trigger | Result |
+| --- | --- |
+| `[release]` in a commit subject on `main` | build, tag, publish |
+| `[release] [prerelease]` | same, as a prerelease |
+| `[promote]` on `main` | the current prerelease becomes Latest (no rebuild) |
+| `v*.*.*` tag push / `workflow_dispatch` | manual paths |
 
 ## Versioning and language
 
-- **Major**: a breaking change to persisted state or a protocol, a removed
-  capability, or a structural change to how the code is extended. A feature
-  or a UI pass is a minor; a fix is a patch. A schema change never ships in
-  a patch. A release that has not run on a real Mac (`scripts/smoke.sh`) is
-  a prerelease. Every version that
-  lands on `main` is released; never reserve a number.
-- Code comments and agent-facing docs (this file, the protocol, vendor
-  formats, architecture) are English. User-facing copy, CHANGELOG,
-  EXPERIENCE, README, plans and reviews are Chinese.
-- **A new surface comes with a model, a fixture and a capture**: a pure value
-  in `PulseApp`, a fixture in `PulseQA/SurfaceFixtures.swift`, a PNG from
-  `qa_captures.sh`.
+Major: a breaking change to persisted state, a protocol, or how the code is
+extended. Feature or UI pass: minor. Fix: patch. A release not run on a real
+Mac (`scripts/smoke.sh`) is a prerelease unless the owner decides otherwise,
+and CHANGELOG says so. Every version on `main` is released. Code, comments
+and agent docs are English; user copy, CHANGELOG, EXPERIENCE, README, plans
+and reviews are Chinese.
