@@ -47,6 +47,20 @@ package struct SettingsModel: Equatable {
         case setMuted(AgentID, Bool)
         /// Run the installed launcher once (`HookPing`).
         case testConnection
+        /// The global shortcut's chord.
+        case setShortcut(ShortcutChoice)
+        /// Group the tray by project, or not.
+        case setGroupByProject(Bool)
+        /// System Settings → Privacy & Security → Automation.
+        case openAutomationSettings
+    }
+
+    /// One terminal's Apple Events permission, as the page says it.
+    package struct AutomationLine: Equatable, Identifiable {
+        package var name: String
+        package var text: String
+        package var warning: Bool
+        package var id: String { name }
     }
 
     /// Where "Releases…" goes. Pulse itself never asks the network.
@@ -87,6 +101,12 @@ package struct SettingsModel: Equatable {
     /// The last connection test, in words; nil not run.
     package var pingLine: String?
     package var pingWarning = false
+    /// The global shortcut's chord.
+    package var shortcutChoice: ShortcutChoice = .default
+    package var groupByProject = false
+    /// Each running terminal's Apple Events permission; empty when none
+    /// runs or it was not asked yet.
+    package var automation: [AutomationLine] = []
 
     package init(
         lang: ResolvedLanguage,
@@ -116,11 +136,36 @@ package struct SettingsModel: Equatable {
         self.focus = focus
     }
 
+    /// What macOS allows for each terminal Pulse searches with
+    /// AppleScript — only the running ones, in a fixed order; a denial is
+    /// a warning.
+    package static func automationLines(_ states: [String: AutomationState], lang: ResolvedLanguage) -> [AutomationLine] {
+        let names = [(LandingPlan.terminalBundleID, "Terminal"), (LandingPlan.iTermBundleID, "iTerm2")]
+        return names.compactMap { bundle, name in
+            guard let state = states[bundle], state != .notRunning else { return nil }
+            let key: L10n.Key
+            switch state {
+            case .allowed: key = .automationAllowed
+            case .denied: key = .automationDenied
+            case .notAsked: key = .automationNotAsked
+            case .notRunning: key = .automationNotRunning
+            case .unknown: key = .automationUnknown
+            }
+            return AutomationLine(
+                name: String(format: L10n.t(.automationTitle, lang), name),
+                text: L10n.t(key, lang),
+                warning: state == .denied
+            )
+        }
+    }
+
     /// The shortcut's line: the toggle, and why it is not working when
     /// macOS refused the chord.
-    package static func shortcutNote(on: Bool, registered: Bool?, lang: ResolvedLanguage) -> String? {
+    package static func shortcutNote(
+        on: Bool, registered: Bool?, choice: ShortcutChoice = .default, lang: ResolvedLanguage
+    ) -> String? {
         guard on, registered == false else { return nil }
-        return String(format: L10n.t(.settingsShortcutTaken, lang), "⌃⌥⌘P")
+        return String(format: L10n.t(.settingsShortcutTaken, lang), choice.display)
     }
 
     /// The agents whose banners can be muted: on this Mac and able to

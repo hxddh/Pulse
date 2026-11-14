@@ -37,6 +37,8 @@ struct PulseSettingsTests {
         original.launchAtLogin = true
         original.hooksNudgeOff = true
         original.globalShortcut = false
+        original.shortcut = .optionCommandP
+        original.groupByProject = true
         original = original.muting(.codex, true).muting(.claude, true)
         #expect(original.mutedAgents == [.claude, .codex], "roster order")
         let reparsed = try roundTrip(original)
@@ -58,7 +60,7 @@ struct PulseSettingsTests {
         let data = try JSONEncoder().encode(PulseSettings())
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let keys = Set(object?.keys.map { $0 } ?? [])
-        #expect(keys == ["launchAtLogin", "hooksNudgeOff", "globalShortcut", "mutedAgents"])
+        #expect(keys == ["launchAtLogin", "hooksNudgeOff", "globalShortcut", "mutedAgents", "shortcut", "groupByProject"])
     }
 
     // MARK: Tolerance
@@ -81,6 +83,12 @@ struct PulseSettingsTests {
         #expect(decoded.mutedAgents == [.codex])
         #expect(decoded.isMuted(.codex))
         #expect(!decoded.isMuted(.claude))
+    }
+
+    /// A chord Pulse does not offer reads as the default one.
+    @Test func anUnknownShortcutIsTheDefault() throws {
+        #expect(try decode(#"{"shortcut": "hyperK"}"#).shortcut == .default)
+        #expect(try decode(#"{"shortcut": "optionCommandP"}"#).shortcut == .optionCommandP)
     }
 
     @Test func aWrongTypeCostsOnlyThatField() throws {
@@ -308,5 +316,29 @@ struct SettingsAdditionsTests {
         #expect(ok?.text.hasPrefix("Connected") == true)
         #expect(SettingsModel.pingLine(.noAnswer, nowMs: now, lang: .zh)?.warning == true)
         #expect(SettingsModel.pingLine(.noLauncher, nowMs: now, lang: .en)?.warning == true)
+    }
+}
+
+/// Settings → Hooks says what macOS allows for each running terminal's
+/// tab search; a denial is a warning with a way to fix it.
+@Suite("Automation lines")
+struct AutomationLineTests {
+    @Test func onlyRunningTerminalsAreSaidAndADenialWarns() {
+        let lines = SettingsModel.automationLines([
+            LandingPlan.terminalBundleID: .denied,
+            LandingPlan.iTermBundleID: .notRunning,
+        ], lang: .en)
+        #expect(lines.count == 1)
+        #expect(lines.first?.name.contains("Terminal") == true)
+        #expect(lines.first?.warning == true)
+        let allowed = SettingsModel.automationLines([LandingPlan.iTermBundleID: .allowed], lang: .zh)
+        #expect(allowed.first?.warning == false)
+        #expect(allowed.first?.text == L10n.t(.automationAllowed, .zh))
+        #expect(SettingsModel.automationLines([:], lang: .en).isEmpty)
+    }
+
+    @Test func theRefusedChordIsTheOneChosen() {
+        let note = SettingsModel.shortcutNote(on: true, registered: false, choice: .optionCommandP, lang: .en)
+        #expect(note?.contains("⌥⌘P") == true)
     }
 }

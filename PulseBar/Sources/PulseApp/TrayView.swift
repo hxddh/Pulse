@@ -84,10 +84,11 @@ struct TrayView: View {
     private var list: some View {
         let rows = ui.displayRows
         return VStack(alignment: .leading, spacing: 0) {
-            TrayHeaderFace(model: store.trayHeaderModel) { action in
+            TrayHeaderFace(model: store.trayHeaderModel, doneCount: store.rows.filter(\.isYourTurn).count) { action in
                 switch action {
                 case .settings: store.openSettings()
                 case .quit: store.quit()
+                case .markAllSeen: store.markAllSeen()
                 }
             }
             if let notice = store.trayNotice {
@@ -110,7 +111,18 @@ struct TrayView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 0) {
-                    ForEach(rows) { row in
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                        if store.settings.groupByProject, TrayOrder.startsGroup(rows, at: index) {
+                            Text(row.project.isEmpty ? t(.noProject) : row.project)
+                                .font(PulseTheme.Font.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, TrayChrome.padX)
+                                .padding(.top, index == 0 ? PulseTheme.Space.xxs : PulseTheme.Space.s)
+                                .padding(.bottom, PulseTheme.Space.xxs)
+                                .accessibilityAddTraits(.isHeader)
+                        }
                         TrayRowButton(
                             store: store,
                             ui: ui,
@@ -166,9 +178,11 @@ struct TrayView: View {
 /// One line: the counts in their tones. The ⋯ menu holds Settings and Quit;
 /// ⌘R refreshes. Renders a `TrayHeaderModel`.
 struct TrayHeaderFace: View {
-    enum Action: Equatable { case settings, quit }
+    enum Action: Equatable { case settings, quit, markAllSeen }
 
     let model: TrayHeaderModel
+    /// Finished turns not yet looked at: "Mark all as seen" in the ⋯ menu.
+    var doneCount = 0
     var send: (Action) -> Void = { _ in }
 
     private func t(_ key: L10n.Key) -> String { L10n.t(key, model.lang) }
@@ -182,6 +196,10 @@ struct TrayHeaderFace: View {
                 .contentTransition(.numericText())
             Spacer(minLength: 0)
             Menu {
+                if doneCount > 0 {
+                    Button(String(format: t(.markAllSeen), doneCount)) { send(.markAllSeen) }
+                    Divider()
+                }
                 Button(t(.settings)) { send(.settings) }
                 Divider()
                 Button(t(.quit)) { send(.quit) }
@@ -524,7 +542,8 @@ final class TrayUI {
     /// in the frozen order, then newcomers (`TrayOrder.openList`). The list
     /// scrolls inside the tray's height.
     var displayRows: [AgentRow] {
-        TrayOrder.openList(all: store.rows, pinned: pinned, frozen: frozen)
+        let rows = TrayOrder.openList(all: store.rows, pinned: pinned, frozen: frozen)
+        return store.settings.groupByProject ? TrayOrder.groupedByProject(rows) : rows
     }
 
     /// The row whose detail page is open, while it still exists.

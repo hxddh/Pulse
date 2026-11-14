@@ -27,6 +27,7 @@ struct SettingsView: View {
             store.probeHooks()
             store.refreshPresentAgents()
             store.refreshLoginItem()
+            store.refreshAutomation()
             PulseNotify.refreshAuthorization()
         }
     }
@@ -68,7 +69,12 @@ extension StatusStore {
             focus: settingsFocus.target.map(SettingsModel.section(for:))
         )
         model.globalShortcut = settings.globalShortcut
-        model.shortcutNote = SettingsModel.shortcutNote(on: settings.globalShortcut, registered: shortcutRegistered, lang: lang)
+        model.shortcutNote = SettingsModel.shortcutNote(
+            on: settings.globalShortcut, registered: shortcutRegistered, choice: settings.shortcut, lang: lang
+        )
+        model.shortcutChoice = settings.shortcut
+        model.groupByProject = settings.groupByProject
+        model.automation = SettingsModel.automationLines(automation, lang: lang)
         model.muteCandidates = SettingsModel.muteCandidates(present: presentAgents)
         model.mutedAgents = Set(settings.mutedAgents)
         let ping = SettingsModel.pingLine(hookPing, nowMs: nowMs, lang: lang)
@@ -91,6 +97,12 @@ extension StatusStore {
         case .setGlobalShortcut(let on): setGlobalShortcut(on)
         case .setMuted(let agent, let muted): setMuted(agent, muted)
         case .testConnection: testHookConnection()
+        case .setShortcut(let choice): setShortcut(choice)
+        case .setGroupByProject(let on): set(\.groupByProject, on)
+        case .openAutomationSettings:
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+                NSWorkspace.shared.open(url)
+            }
         }
     }
 
@@ -185,12 +197,23 @@ struct SettingsFace: View {
             case nil:
                 EmptyView()
             }
-            Toggle(String(format: t(.settingsShortcut), "⌃⌥⌘P"), isOn: binding(model.globalShortcut) { .setGlobalShortcut($0) })
+            Toggle(String(format: t(.settingsShortcut), model.shortcutChoice.display), isOn: binding(model.globalShortcut) { .setGlobalShortcut($0) })
+            if model.globalShortcut {
+                Picker(t(.settingsShortcutChoice), selection: Binding(
+                    get: { model.shortcutChoice },
+                    set: { [send] choice in send(.setShortcut(choice)) }
+                )) {
+                    ForEach(ShortcutChoice.allCases, id: \.self) { choice in
+                        Text(choice.display).tag(choice)
+                    }
+                }
+            }
             if let note = model.shortcutNote {
                 Label(note, systemImage: "exclamationmark.triangle")
                     .font(PulseTheme.Font.caption)
                     .foregroundStyle(PulseTheme.warning)
             }
+            Toggle(t(.settingsGroupByProject), isOn: binding(model.groupByProject) { .setGroupByProject($0) })
         case .notifications:
             switch model.notifications {
             case .notAsked:
@@ -278,6 +301,17 @@ struct SettingsFace: View {
             if let absent = SettingsModel.absentLine(model.absentAgents, lang: model.lang) {
                 Text(absent)
                     .foregroundStyle(.secondary)
+            }
+            ForEach(model.automation) { line in
+                LabeledContent {
+                    if line.warning {
+                        Button(t(.openAutomationSettings)) { send(.openAutomationSettings) }
+                    }
+                } label: {
+                    Text(line.name)
+                    Text(line.text)
+                        .foregroundStyle(line.warning ? AnyShapeStyle(PulseTheme.warning) : AnyShapeStyle(.secondary))
+                }
             }
             LabeledContent {
                 Button(t(.settingsTestConnection)) { send(.testConnection) }

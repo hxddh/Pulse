@@ -49,6 +49,7 @@ struct ScanQuietTests {
             ("shortcutRegistered", \StatusStore.shortcutRegistered),
             ("hookPing", \StatusStore.hookPing),
             ("turnWatches", \StatusStore.turnWatches),
+            ("automation", \StatusStore.automation),
         ]
     }
 

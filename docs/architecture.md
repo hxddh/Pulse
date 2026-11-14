@@ -31,6 +31,19 @@ own action stands. The installer has one writer per `HookFormat`
 (`nested`, `versioned`, `ownedJSON`, `module`), parameterized by the
 format's flavor — never by the agent.
 
+## The reducer
+
+`SessionBook.apply` reads a line once into a `Signal` — started, prompt,
+activity, raise, stopped, named, turnEnd, atPrompt, resolved, ended
+(`ignored` is none: heard, never a move) — and its `Speaker` (the main
+agent, or a subagent by the vendor's id). One function,
+`SessionBook.transition`, makes the move: per signal, the main agent's rule
+and a subagent's side by side. A subagent answers only its own block
+(`owned`), never starts a turn after the person's ended, and its prompt is
+not the person's. The value types are `SessionBook+Values.swift`; the
+timeline's grouping is `SessionBook+Timeline.swift`. Property tests
+(`ReducerInvariantTests`) hold the invariants over generated lines.
+
 ## Who owns what
 
 - **`ScanEngine`** (`@MainActor`, not observed): the `SessionBook`, the

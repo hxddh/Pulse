@@ -137,7 +137,6 @@ package struct SessionBook: Equatable, Codable {
         if kind.isBlocking, agent.waitingSource == .none { return false }
         let ms = record.ms
         let spelled = record.session.trimmingCharacters(in: .whitespacesAndNewlines)
-        let dismissal = kind == .dismiss
 
         if kind.isResolution, spelled.isEmpty {
             // An empty resolution clears the agent's session-less entries
@@ -157,129 +156,265 @@ package struct SessionBook: Equatable, Codable {
 
         let key = SessionKey(agent, spelled, cwd: record.cwd)
         let before = sessions[key]
-        guard var session = before ?? introduce(key: key, session: spelled, kind: kind, ms: ms) else {
+        guard let signal = Signal(kind),
+              var session = before ?? introduce(key: key, session: spelled, kind: kind, ms: ms)
+        else {
             return false
         }
         // A held turn whose grace this event's clock has passed goes first.
         Self.settleHeldTurn(&session, nowMs: ms)
         note(record, ms: ms, into: &session)
         let prior = session.state
-        let event = record.event
-        let sub = record.sub.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if !sub.isEmpty {
-            Self.applySubagent(record, sub: sub, at: ms, new: before == nil, into: &session)
-            Self.digestFiles(record, into: &session)
-            Self.hear(&session, Self.heard(record, effect: Self.effect(of: record, prior: prior, now: session), sub: sub))
-            return land(session, before: before)
+        let speaker = Speaker(record.sub)
+        if case .sub(let id) = speaker {
+            session.digest.hear(sub: id, type: record.meta.agentType, kind: kind)
         }
+        Self.transition(signal, by: speaker, record: record, new: before == nil, in: &session)
+        Self.digestFiles(record, into: &session)
+        let heardSub = record.sub.trimmingCharacters(in: .whitespacesAndNewlines)
+        Self.hear(&session, Self.heard(record, effect: Self.effect(of: record, prior: prior, now: session), sub: heardSub))
+        return land(session, before: before)
+    }
 
-        switch kind {
-        case .start:
+    // MARK: - The state machine
+
+    /// Who spoke: the main agent, or one of its subagents (the vendor's id,
+    /// at most 80 characters). A subagent is not the person: it never
+    /// answers a block it did not raise, never revives a turn that has
+    /// ended, and its prompt is never the person's.
+    package enum Speaker: Hashable, Sendable {
+        case main
+        case sub(String)
+
+        package init(_ raw: String) {
+            let id = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            self = id.isEmpty ? .main : .sub(String(id.prefix(80)))
+        }
+    }
+
+    /// What a line means to the state machine — the protocol's kinds,
+    /// folded to the moves a session can make. `ignored` is none: it is
+    /// heard, never a move.
+    package enum Signal: Hashable, Sendable {
+        /// The session started or resumed (`start`).
+        case started
+        /// A prompt (`working`).
+        case prompt
+        /// Work: a step finished (`tool`) or work goes on (`status`).
+        case activity
+        /// Blocked on the person (`permission`, `question`, `waiting`).
+        case raise(AttentionKind)
+        /// The person stopped the run at its prompt (`stopped`).
+        case stopped
+        /// The vendor named the session (`title`).
+        case named
+        /// The turn ended (`turn`, `failed`).
+        case turnEnd
+        /// It sat at its prompt (`idle`).
+        case atPrompt
+        /// The vendor closed its prompt (`done`) or it was set aside in
+        /// Pulse (`dismiss`).
+        case resolved
+        /// The session ended (`end`).
+        case ended
+
+        package init?(_ kind: AttentionKind) {
+            switch kind {
+            case .start: self = .started
+            case .working: self = .prompt
+            case .tool, .status: self = .activity
+            case .permission, .question, .waiting: self = .raise(kind)
+            case .stopped: self = .stopped
+            case .title: self = .named
+            case .turn, .failed: self = .turnEnd
+            case .idle: self = .atPrompt
+            case .done, .dismiss: self = .resolved
+            case .end: self = .ended
+            case .ignored: return nil
+            }
+        }
+    }
+
+    /// The one transition: a signal, by a speaker, on a session. Every rule
+    /// about who may move what is here — the main agent's moves and a
+    /// subagent's, side by side, per signal.
+    private static func transition(_ signal: Signal, by speaker: Speaker, record: AttentionRecord, new: Bool, in session: inout Session) {
+        let kind = record.kind
+        let ms = record.ms
+        let event = record.event
+        // A subagent's own open block, the only one its lines can answer.
+        var owned: Block?
+        if case .sub(let id) = speaker, case .blocked(let block) = session.state, block.sub == id { owned = block }
+        let live = isLive(session.state)
+
+        switch signal {
+        case .raise(let raised):
+            // Whoever raised it, the work cannot go on.
+            raise(raised, record: record, at: ms, new: new, in: &session)
+
+        case .started:
+            guard speaker == .main else { return }
             // A start mid-work (a resume, a compaction) says nothing about
             // the work; otherwise the session is at its prompt.
-            if session.state != .working { Self.set(&session, .idle, at: ms, event: event) }
+            if session.state != .working { set(&session, .idle, at: ms, event: event) }
             // A session the vendor already named (a resume).
             let name = TitleHeuristics.firstLine(record.message)
-            if !name.isEmpty {
-                session.name = name
+            if !name.isEmpty { session.name = name }
+
+        case .prompt:
+            guard speaker == .main else {
+                // Its own task, not the person's prompt.
+                if live { session.activityMs = max(session.activityMs, ms) }
+                return
             }
-        case .working:
             session.activityMs = max(session.activityMs, ms)
             // A custom name riding on the prompt (Claude's `session_title`).
             let named = TitleHeuristics.firstLine(record.meta.name)
-            if !named.isEmpty {
-                session.name = named
-            }
-            Self.prompt(record, at: ms, into: &session)
+            if !named.isEmpty { session.name = named }
+            prompt(record, at: ms, into: &session)
             // A prompt stamped no later than the session's end is from
             // before it: it revives nothing.
-            if !Self.endedBefore(session, ms) { Self.answer(&session, at: ms, event: event) }
-        case .tool, .status:
-            // A `status` that names no tool — a retry, a recoverable error, a
-            // compaction — says work goes on: it keeps a live turn from
-            // reading stalled, and never starts one. After the turn ended
-            // (or before any was seen) it is heard and moves nothing.
-            if kind == .status, before != nil, record.tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-               !Self.isLive(session.state) {
-                break
-            }
-            // A tool said to start no later than the session's end runs
-            // nothing now.
-            if kind == .status, Self.endedBefore(session, ms) { break }
-            session.activityMs = max(session.activityMs, ms)
-            session.toolMs = max(session.toolMs, ms)
-            Self.progress(record, at: ms, into: &session)
-            // A reply that names no tool (Cursor's `afterAgentResponse`):
-            // its words are the turn's last words so far — a turn line that
-            // carries none keeps them.
-            if kind == .tool, record.tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                let words = TitleHeuristics.firstLine(record.message)
-                if !words.isEmpty { session.lastWords = words }
-            }
-            // Work goes on — unless it is older than the state it would
-            // end, or a different tool than the one a block is about.
-            if ms > session.stateSinceMs || before == nil {
-                switch session.state {
-                case .working:
-                    break
-                case .blocked(let block):
-                    if Self.answers(record, block) { Self.answer(&session, at: ms, event: event) }
-                case .idle, .yourTurn, .ended:
-                    // A turn whose prompt Pulse did not see starts here;
-                    // the error of the last one is over, and its count is
-                    // this line's step alone.
-                    session.turnStartMs = ms
-                    session.lastError = ""
-                    session.failedTurn = false
-                    let step = kind == .tool ? Self.stepOf(record) : nil
-                    session.turnSteps = step == nil ? 0 : 1
-                    session.turnFailedSteps = step?.failed == true ? 1 : 0
-                    session.digest = TurnDigest()
-                    if let step { session.digest.add(step, files: record.meta.files) }
-                    Self.set(&session, .working, at: ms, event: event)
+            if !endedBefore(session, ms) { answer(&session, at: ms, event: event) }
+
+        case .activity:
+            if case .sub = speaker {
+                // Work inside a live turn — never a turn of its own after
+                // the person's has ended. A session met only now is working.
+                guard live || new else { return }
+                session.activityMs = max(session.activityMs, ms)
+                session.toolMs = max(session.toolMs, ms)
+                progress(record, at: ms, into: &session)
+                guard ms > session.stateSinceMs || new else { return }
+                if new, !live {
+                    set(&session, .working, at: ms, event: event)
+                } else if let owned, answers(record, owned) {
+                    answer(&session, at: ms, event: event, restoring: true)
                 }
+                return
             }
-        case .permission, .question, .waiting:
-            Self.raise(kind, record: record, at: ms, new: before == nil, in: &session)
+            mainActivity(record, new: new, in: &session)
+
         case .stopped:
-            Self.stop(&session, at: ms, event: event)
-        case .title:
+            if case .sub = speaker {
+                answerOwned(owned, record: record, in: &session)
+                return
+            }
+            stop(&session, at: ms, event: event)
+
+        case .named:
+            guard speaker == .main else { return }
             // The vendor's name for the session; an empty one clears it.
             session.name = TitleHeuristics.firstLine(record.message)
-        case .turn, .failed:
+
+        case .turnEnd:
+            if case .sub = speaker {
+                // The subagent is done: its own ask is over; the session's
+                // turn goes on — or, raised after it ended, stays over.
+                answerOwned(owned, record: record, in: &session)
+                return
+            }
             // A turn stamped no later than the session's end is from before
             // it (the lines were numbered out of order): heard, no state.
-            if Self.endedBefore(session, ms) { break }
+            if endedBefore(session, ms) { return }
             let message = TitleHeuristics.firstLine(record.message)
             if !message.isEmpty {
                 if kind == .failed { session.lastError = message } else { session.lastWords = message }
             }
             session.failedTurn = kind == .failed
-            Self.turn(&session, at: ms, front: record.front == true, event: event)
-        case .idle:
+            turn(&session, at: ms, front: record.front == true, event: event)
+
+        case .atPrompt:
+            if case .sub = speaker {
+                answerOwned(owned, record: record, in: &session)
+                return
+            }
             // Sat at its prompt a while: news only if Pulse had not seen the
             // turn end (still working or blocked — an Esc on a prompt fires
             // no Stop — or a session met just now).
             switch session.state {
             case .working, .blocked:
                 session.failedTurn = false
-                Self.turn(&session, at: ms, front: record.front == true, event: event)
-            case .idle where before == nil:
-                Self.turn(&session, at: ms, front: record.front == true, event: event)
+                turn(&session, at: ms, front: record.front == true, event: event)
+            case .idle where new:
+                turn(&session, at: ms, front: record.front == true, event: event)
             case .idle, .yourTurn, .ended:
                 break
             }
-        case .done, .dismiss:
-            _ = Self.clear(&session, at: ms, dismissal: dismissal, event: event)
-        case .end:
-            Self.set(&session, .ended(atMs: ms), at: ms, event: event)
-        case .ignored:
-            return false
+
+        case .resolved:
+            if case .sub = speaker {
+                // Its own prompt closed; a dismissal is Pulse's, never a
+                // subagent's.
+                if kind == .done { answerOwned(owned, record: record, in: &session) }
+                return
+            }
+            _ = clear(&session, at: ms, dismissal: kind == .dismiss, event: event)
+
+        case .ended:
+            if case .sub = speaker {
+                answerOwned(owned, record: record, in: &session)
+                return
+            }
+            set(&session, .ended(atMs: ms), at: ms, event: event)
         }
-        Self.digestFiles(record, into: &session)
-        Self.hear(&session, Self.heard(record, effect: Self.effect(of: record, prior: prior, now: session), sub: ""))
-        return land(session, before: before)
+    }
+
+    /// A subagent's own block is over: answered, restoring where the
+    /// session was when it was raised.
+    private static func answerOwned(_ owned: Block?, record: AttentionRecord, in session: inout Session) {
+        guard let owned, record.ms >= owned.sinceMs else { return }
+        answer(&session, at: record.ms, event: record.event, restoring: true)
+    }
+
+    /// The main agent's work: a step finished (`tool`) or work goes on
+    /// (`status`).
+    private static func mainActivity(_ record: AttentionRecord, new: Bool, in session: inout Session) {
+        let kind = record.kind
+        let ms = record.ms
+        let event = record.event
+        // A `status` that names no tool — a retry, a recoverable error, a
+        // compaction — says work goes on: it keeps a live turn from reading
+        // stalled, and never starts one. After the turn ended (or before any
+        // was seen) it is heard and moves nothing.
+        if kind == .status, !new, record.tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !isLive(session.state) {
+            return
+        }
+        // A tool said to start no later than the session's end runs nothing
+        // now.
+        if kind == .status, endedBefore(session, ms) { return }
+        session.activityMs = max(session.activityMs, ms)
+        session.toolMs = max(session.toolMs, ms)
+        progress(record, at: ms, into: &session)
+        // A reply that names no tool (Cursor's `afterAgentResponse`): its
+        // words are the turn's last words so far — a turn line that carries
+        // none keeps them.
+        if kind == .tool, record.tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let words = TitleHeuristics.firstLine(record.message)
+            if !words.isEmpty { session.lastWords = words }
+        }
+        // Work goes on — unless it is older than the state it would end, or
+        // a different tool than the one a block is about.
+        guard ms > session.stateSinceMs || new else { return }
+        switch session.state {
+        case .working:
+            break
+        case .blocked(let block):
+            if answers(record, block) { answer(&session, at: ms, event: event) }
+        case .idle, .yourTurn, .ended:
+            // A turn whose prompt Pulse did not see starts here; the error
+            // of the last one is over, and its count is this line's step
+            // alone.
+            session.turnStartMs = ms
+            session.lastError = ""
+            session.failedTurn = false
+            let step = kind == .tool ? stepOf(record) : nil
+            session.turnSteps = step == nil ? 0 : 1
+            session.turnFailedSteps = step?.failed == true ? 1 : 0
+            session.digest = TurnDigest()
+            if let step { session.digest.add(step, files: record.meta.files) }
+            set(&session, .working, at: ms, event: event)
+        }
     }
 
     /// The applied line's session goes back in the book. Returns whether
@@ -299,51 +434,6 @@ package struct SessionBook: Equatable, Codable {
         guard var session = sessions[key] else { return }
         Self.hear(&session, Heard(ms: record.ms, event: record.event, effect: .skipped(reason: record.message)))
         sessions[key] = session
-    }
-
-    /// A subagent's line (`sub` set). It never answers a block the main
-    /// agent or another subagent raised, never revives a turn that has ended
-    /// and is never the person's prompt; its own block is answered by its
-    /// own activity, its `done` or its end of turn. A raise is a block of
-    /// the session's (the subagent cannot go on, so neither can the work).
-    private static func applySubagent(_ record: AttentionRecord, sub: String, at ms: Int64, new: Bool, into session: inout Session) {
-        let event = record.event
-        session.digest.hear(sub: String(sub.prefix(80)), type: record.meta.agentType, kind: record.kind)
-        var owned: Block?
-        if case .blocked(let block) = session.state, block.sub == String(sub.prefix(80)) { owned = block }
-        let live: Bool
-        switch session.state {
-        case .working, .blocked: live = true
-        case .idle, .yourTurn, .ended: live = false
-        }
-        switch record.kind {
-        case .permission, .question, .waiting:
-            raise(record.kind, record: record, at: ms, new: new, in: &session)
-        case .tool, .status:
-            // Work inside a live turn — never a turn of its own after the
-            // person's has ended. A session met only now is working.
-            guard live || new else { return }
-            session.activityMs = max(session.activityMs, ms)
-            session.toolMs = max(session.toolMs, ms)
-            progress(record, at: ms, into: &session)
-            guard ms > session.stateSinceMs || new else { return }
-            if new, !live {
-                set(&session, .working, at: ms, event: event)
-            } else if let owned, answers(record, owned) {
-                answer(&session, at: ms, event: event, restoring: true)
-            }
-        case .working:
-            // Its own task, not the person's prompt.
-            if live { session.activityMs = max(session.activityMs, ms) }
-        case .done:
-            if let owned, ms >= owned.sinceMs { answer(&session, at: ms, event: event, restoring: true) }
-        case .turn, .failed, .idle, .stopped, .end:
-            // The subagent is done: its own ask is over; the session's turn
-            // goes on — or, raised after it ended, stays over.
-            if let owned, ms >= owned.sinceMs { answer(&session, at: ms, event: event, restoring: true) }
-        case .start, .title, .dismiss, .ignored:
-            break
-        }
     }
 
     /// A turn is going on: working, or blocked on the person.

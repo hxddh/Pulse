@@ -73,6 +73,9 @@ final class StatusStore {
     /// Sessions whose end of turn the person asked to hear about, on the
     /// detail page — one banner each, in memory only.
     var turnWatches: Set<SessionKey> = []
+    /// What macOS says about Apple Events to each terminal (bundle id →
+    /// state) — read when Settings opens, never on the scan path.
+    var automation: [String: AutomationState] = [:]
 
     // MARK: Not observed
 
@@ -166,7 +169,7 @@ final class StatusStore {
     func applyShortcut() {
         guard started else { return }
         let on = settings.globalShortcut
-        let registered = GlobalShortcut.shared.set(enabled: on)
+        let registered = GlobalShortcut.shared.set(enabled: on, choice: settings.shortcut)
         land(\.shortcutRegistered, on ? registered : nil)
     }
 
@@ -181,6 +184,25 @@ final class StatusStore {
             tray.close()
         } else {
             requestTrayReveal(key: rows.first(where: \.isBlocked)?.key)
+        }
+    }
+
+    func setShortcut(_ choice: ShortcutChoice) {
+        set(\.shortcut, choice)
+        applyShortcut()
+    }
+
+    /// Every finished turn in the tray, looked at: the same `pulse.seen` a
+    /// click on each would write.
+    func markAllSeen() {
+        for row in rows where row.isYourTurn { markTurnSeen(row) }
+    }
+
+    /// Ask macOS, without prompting, what it allows for each terminal.
+    func refreshAutomation() {
+        Task { @MainActor [weak self] in
+            let states = await Task.detached(priority: .utility) { AutomationCheck.all() }.value
+            self?.land(\.automation, states)
         }
     }
 
