@@ -2475,3 +2475,90 @@ final class RowContextTests: XCTestCase {
         XCTAssertEqual(face.secondLine?.text, face.why)
     }
 }
+
+/// The reducer's invariants, over generated lines rather than examples:
+/// a subagent never answers a block it did not raise, an ended session is
+/// revived by nothing stamped before its end, and an ignored line never
+/// moves a state.
+@Suite("Reducer invariants")
+struct ReducerInvariantTests {
+    let t0: Int64 = 1_800_000_000_000
+
+    private struct Rng {
+        var state: UInt64
+        mutating func next(_ bound: Int) -> Int {
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Int((state >> 33) % UInt64(bound))
+        }
+    }
+
+    private func line(_ kind: AttentionKind, _ ms: Int64, sub: String = "", tool: String = "", message: String = "") -> AttentionRecord {
+        AttentionRecord(agent: .claude, kind: kind, ms: ms, message: message, session: "s1", cwd: "/w",
+                        tool: tool, event: kind.rawValue, sub: sub)
+    }
+
+    private var key: SessionKey { SessionKey(.claude, "s1") }
+
+    @Test(arguments: 0..<32)
+    func aSubagentNeverAnswersTheMainAgentsBlock(seed: Int) throws {
+        var rng = Rng(state: UInt64(seed) &+ 11)
+        var book = SessionBook()
+        var ms = t0
+        book.apply(line(.start, ms), nowMs: ms + 1)
+        ms += 1_000
+        book.apply(line(.working, ms, message: "Fix the build"), nowMs: ms + 1)
+        ms += 1_000
+        book.apply(line(.permission, ms, tool: "Bash", message: "Bash: make"), nowMs: ms + 1)
+        let raised = try #require(book.sessions[key])
+        guard case .blocked(let block) = raised.state else {
+            Issue.record("not blocked")
+            return
+        }
+        let kinds: [AttentionKind] = [.tool, .status, .working, .turn, .failed, .idle, .stopped, .done, .dismiss, .end, .title, .start]
+        for _ in 0..<(10 + rng.next(30)) {
+            ms += Int64(100 + rng.next(30_000))
+            let kind = kinds[rng.next(kinds.count)]
+            book.apply(line(kind, ms, sub: ["a1", "b2"][rng.next(2)], tool: ["Bash", "Read", ""][rng.next(3)]), nowMs: ms + 1)
+            let state = try #require(book.sessions[key]).state
+            #expect(state == .blocked(block), "seed \(seed): \(kind) by a subagent moved the main agent's block")
+        }
+    }
+
+    @Test(arguments: 0..<32)
+    func nothingStampedBeforeTheEndRevivesASession(seed: Int) throws {
+        var rng = Rng(state: UInt64(seed) &+ 97)
+        var book = SessionBook()
+        let end = t0 + 600_000
+        book.apply(line(.start, t0), nowMs: end + 1)
+        book.apply(line(.working, t0 + 1_000, message: "Do it"), nowMs: end + 1)
+        book.apply(line(.end, end), nowMs: end + 1)
+        let kinds: [AttentionKind] = [.tool, .status, .working, .turn, .failed, .idle, .stopped]
+        for _ in 0..<(10 + rng.next(30)) {
+            let ms = t0 + 2_000 + Int64(rng.next(Int(end - t0 - 2_000)))
+            let kind = kinds[rng.next(kinds.count)]
+            book.apply(line(kind, ms, tool: kind == .tool || kind == .status ? "Bash" : ""), nowMs: end + 1)
+            let state = try #require(book.sessions[key]).state
+            #expect(state == .ended(atMs: end), "seed \(seed): a \(kind) stamped before the end revived the session")
+        }
+    }
+
+    @Test(arguments: 0..<16)
+    func anIgnoredLineNeverMovesAState(seed: Int) throws {
+        var rng = Rng(state: UInt64(seed) &+ 5)
+        var book = SessionBook()
+        var ms = t0
+        let opening: [AttentionKind] = [.start, .working, .permission, .turn]
+        for kind in opening.prefix(1 + rng.next(opening.count)) {
+            ms += 1_000
+            book.apply(line(kind, ms, tool: kind == .permission ? "Bash" : "", message: "x"), nowMs: ms + 1)
+        }
+        let before = try #require(book.sessions[key]).state
+        for _ in 0..<(5 + rng.next(10)) {
+            ms += Int64(100 + rng.next(10_000))
+            let changed = book.apply(line(.ignored, ms, message: "not an installed event"), nowMs: ms + 1)
+            #expect(!changed)
+            let after = try #require(book.sessions[key]).state
+            #expect(after == before)
+        }
+    }
+}
