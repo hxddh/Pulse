@@ -3,7 +3,7 @@
 it checked.
 
     e2e_assert.py line <events.tsv> <lines-before> <expected>
-        exactly one line was appended, and it is <expected>: a v9 kind, or
+        exactly one line was appended, and it is <expected>: a v10 kind, or
         ignored:<why> (PulseBar/Tests/Fixtures/hooks/expected.json's words)
     e2e_assert.py expected <expected.json> <agent/event[@variant]>
         print what that fixture becomes

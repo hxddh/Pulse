@@ -25,9 +25,9 @@ import Foundation
 ///   its steps alone is never said to be going (no guessed state).
 ///
 /// Tokens, cost and model are never here — a decision.
-package struct TurnDigest: Hashable, Sendable {
+package struct TurnDigest: Hashable, Sendable, Codable {
     /// A name and how many times.
-    package struct Count: Hashable, Sendable {
+    package struct Count: Hashable, Sendable, Codable {
         package var name: String
         package var count: Int
 
@@ -38,7 +38,7 @@ package struct TurnDigest: Hashable, Sendable {
     }
 
     /// One subagent of the turn.
-    package struct Subagent: Hashable, Sendable {
+    package struct Subagent: Hashable, Sendable, Codable {
         /// The vendor's subagent id (`sub`).
         package var sub: String
         /// Its type (`meta` `type`); "" unknown.

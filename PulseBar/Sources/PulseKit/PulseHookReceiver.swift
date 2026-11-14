@@ -7,7 +7,7 @@ import Foundation
 /// for the two modules, as the last argument). Each agent's adapter
 /// (`Agents/`) maps its own event names and payload onto a `HookAction`;
 /// nothing else is read — not the protocol's kind words, not plain text.
-/// Every event it hears is one v9 line in the event log (`EventLog` — the
+/// Every event it hears is one v10 line in the event log (`EventLog` — the
 /// only file it writes), and it exits 0 at once. An event it does not turn
 /// into state — one Pulse does not install, a payload that is not a JSON
 /// object, a blocked event from an agent whose hooks cannot report one
@@ -130,7 +130,7 @@ package enum PulseHookReceiver {
         return claimed == parent ? claimed : 0
     }
 
-    /// The v9 line one vendor event becomes, before the hook's own facts
+    /// The v10 line one vendor event becomes, before the hook's own facts
     /// (front, pid, landing) and its `seq` are added — a state, or an
     /// `ignored` line saying why not. Pure.
     package static func record(agent: AgentID, event rawEvent: String, payload: [String: Any], nowMs: Int64) -> AttentionRecord {
@@ -479,7 +479,7 @@ package enum PulseHookReceiver {
         return ""
     }
 
-    /// One field of a v9 line: credentials redacted, every tab and line
+    /// One field of a v10 line: credentials redacted, every tab and line
     /// break — `\n`, `\r`, VT, FF, NEL, U+2028, U+2029 — a space
     /// (`AttentionProtocol.flatten`), bounded.
     package static func cleanField(_ value: String, limit: Int) -> String {

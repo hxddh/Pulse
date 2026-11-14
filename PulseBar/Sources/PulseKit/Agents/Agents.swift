@@ -18,7 +18,7 @@ import Foundation
 // Order is meaningful. `Agents.all` is `AgentID.allCases` order, which is
 // also process-rule precedence (the first matching rule wins).
 
-package enum AgentID: String, CaseIterable, Identifiable, Hashable, Sendable {
+package enum AgentID: String, CaseIterable, Identifiable, Hashable, Sendable, Codable {
     case claude, codex, cursor, pi, copilot, opencode
 
     package var id: String { rawValue }

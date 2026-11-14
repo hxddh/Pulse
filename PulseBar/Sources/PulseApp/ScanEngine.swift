@@ -118,6 +118,18 @@ final class ScanEngine {
     private var reading: Set<Source> = []
     private var rereadWanted: Set<Source> = []
 
+    /// Where the book's snapshot is kept (`BookSnapshot`); nil keeps none —
+    /// a store a test or a fixture builds. `start()` points it at the real
+    /// one.
+    var snapshotURL: URL?
+    /// The one pending snapshot write.
+    private var snapshotWrite: Task<Void, Never>?
+    /// A snapshot is written at most this often while lines land.
+    nonisolated static let snapshotDelay: Duration = .seconds(15)
+    /// The book came from a snapshot: the launch replay applies only what is
+    /// past it, and checks the restored sessions' processes.
+    private(set) var restoredFromSnapshot = false
+
     /// How the event log is read after a cursor, off the main thread: the
     /// real log. A test reads its own file (never a global override —
     /// suites run in parallel).
@@ -143,6 +155,8 @@ final class ScanEngine {
     func start() {
         armed = true
         holdProjection = !Self.suppressBackgroundScansForTesting
+        if snapshotURL == nil { snapshotURL = BookSnapshot.path }
+        restore()
         exitWatch.start { [weak self] pid in
             // Bind before the Task: the exit callback is @Sendable.
             guard let engine = self else { return }
@@ -173,6 +187,7 @@ final class ScanEngine {
     }
 
     func stop() {
+        writeSnapshotNow()
         armed = false
         logRetry?.cancel()
         logRetry = nil
@@ -312,8 +327,11 @@ final class ScanEngine {
         logCursor = chunk.advancing(logCursor)
         if records.isEmpty {
             // Nothing new (or nothing there): the empty replay is still the
-            // baseline.
-            if baseline { project(nowMs: nowMs) }
+            // baseline — and a restored book's processes may have gone.
+            if baseline {
+                if restoredFromSnapshot { endGoneSessions() }
+                project(nowMs: nowMs)
+            }
         } else {
             apply(records: records, nowMs: nowMs, verifyPids: baseline)
         }
@@ -395,6 +413,7 @@ final class ScanEngine {
             }
         }
         project(nowMs: nowMs)
+        scheduleSnapshot()
     }
 
     /// A process scan. `nil` — the table could not be read — keeps the last
@@ -421,8 +440,62 @@ final class ScanEngine {
         processes.removeAll { $0.family.contains(pid) }
         if book.processExited(pid: pid, atMs: nowMs) {
             DebugLog.write("process exit pid=\(pid) ends its session")
+            scheduleSnapshot()
         }
         project(nowMs: nowMs)
+    }
+
+    // MARK: - Snapshot
+
+    /// The book a snapshot left, before the launch replay: the replay then
+    /// applies only the lines past it. Nothing there (or another version)
+    /// leaves the book empty and the replay reads the log alone.
+    private func restore() {
+        guard let snapshotURL, let snapshot = BookSnapshot.load(at: snapshotURL) else { return }
+        book = snapshot.book
+        logCursor = snapshot.cursor
+        latestHeard = snapshot.heard
+        latestIgnored = snapshot.ignored
+        logWhole = snapshot.whole
+        restoredFromSnapshot = true
+        DebugLog.write("snapshot restored sessions=\(book.sessions.count) seq=\(snapshot.seq)")
+    }
+
+    /// The current book as a snapshot, once the log has been read.
+    private func currentSnapshot() -> BookSnapshot? {
+        guard logRead, let cursor = logCursor, !cursor.gen.isEmpty else { return nil }
+        return BookSnapshot(gen: cursor.gen, seq: cursor.seq, book: book,
+                            heard: latestHeard, ignored: latestIgnored, whole: logWhole)
+    }
+
+    /// Write a snapshot soon — at most one per `snapshotDelay`.
+    private func scheduleSnapshot() {
+        guard armed, snapshotURL != nil, snapshotWrite == nil else { return }
+        snapshotWrite = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.snapshotDelay)
+            guard let self, !Task.isCancelled else { return }
+            self.snapshotWrite = nil
+            self.writeSnapshot(sync: false)
+        }
+    }
+
+    /// Write it now (quitting).
+    private func writeSnapshotNow() {
+        snapshotWrite?.cancel()
+        snapshotWrite = nil
+        guard armed else { return }
+        writeSnapshot(sync: true)
+    }
+
+    /// Encode on the main actor (the book is its), write off it — or right
+    /// here when the app is about to exit.
+    private func writeSnapshot(sync: Bool) {
+        guard let url = snapshotURL, let data = currentSnapshot()?.encoded() else { return }
+        if sync {
+            BookSnapshot.write(data, to: url)
+        } else {
+            ioQueue.async { BookSnapshot.write(data, to: url) }
+        }
     }
 
     // MARK: - Projection

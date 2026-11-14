@@ -352,11 +352,11 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertNil(AttentionRecord(line: "1\t1\tgoose\tpermission\t\ts\t\t/p\t\t\t\t\t\t\t\t\tx"), "an unknown agent is not read")
         XCTAssertEqual(AttentionRecord(line: "1\t1\tcursor-agent\tturn\tstop\ts\t\t/p\t\t\t\t\t\t\t\t\t")?.agent, .cursor, "an alias reads as its agent")
         let header = AttentionProtocol.Header(next: 43, gen: "g42")
-        XCTAssertTrue(header.line.hasPrefix("# pulse-events v9 next=43 gen=g42 "))
+        XCTAssertTrue(header.line.hasPrefix("# pulse-events v10 next=43 gen=g42 "))
         XCTAssertTrue(header.line.hasSuffix("\n"))
         XCTAssertEqual(AttentionProtocol.Header(line: header.line.trimmingCharacters(in: .newlines)), header)
-        XCTAssertNil(AttentionProtocol.Header(line: "# pulse-events v8 next=43 gen=g42 (seq)"), "a v8 log has no v9 header")
-        XCTAssertNil(AttentionProtocol.Header(line: "# pulse-events v9 gen=g42"), "a header names its next seq")
+        XCTAssertNil(AttentionProtocol.Header(line: "# pulse-events v8 next=43 gen=g42 (seq)"), "a v8 log has no v10 header")
+        XCTAssertNil(AttentionProtocol.Header(line: "# pulse-events v10 gen=g42"), "a header names its next seq")
         XCTAssertEqual(AttentionProtocol.kind("tool"), .tool)
         XCTAssertFalse(AttentionKind.tool.isOpen)
         XCTAssertTrue(AttentionKind.failed.isOpen)
@@ -2112,7 +2112,7 @@ struct LineFactsTests {
         #expect(columns[16] == "src/a.rs (+1)", "the message is last")
         #expect(AttentionRecord(line: record.line) == record)
         #expect(AttentionProtocol.columnNames.count == AttentionProtocol.columnCount)
-        #expect(AttentionProtocol.headerPrefix == "# pulse-events v9 ")
+        #expect(AttentionProtocol.headerPrefix == "# pulse-events v10 ")
     }
 
     /// A category is written only on a line that names a tool, as its
@@ -2450,212 +2450,7 @@ struct EventLogTests {
         EventLog.ensureExists(at: home.log, nowMs: t0)
         let header = try #require(chunk.header)
         let again = try #require(EventLog.read(at: home.log, after: nil))
-        #expect(again.header == header, "ensureExists leaves a v9 log alone")
-    }
-
-    /// A compaction keeps what a replay rebuilds a session's own facts
-    /// from: its first clock, the prompt its title came from and its latest
-    /// prompt — so after a rewrite and a replay the row says the same title
-    /// and the same age.
-    @Test func compactionKeepsTheTitleAndTheFirstClock() {
-        let now = t0
-        let base = now - 5 * Self.hour
-        var lines = [
-            record(.start, base, session: "t"),
-            record(.working, base + 1_000, session: "t", message: "continue"),
-            record(.working, base + 2_000, session: "t", message: "Fix the login redirect"),
-        ]
-        for index in 0..<300 { lines.append(record(.tool, base + 10_000 + Int64(index), session: "t", tool: "Read")) }
-        lines.append(record(.working, base + 20_000, session: "t", message: "Now the logout"))
-        for index in 0..<300 { lines.append(record(.tool, base + 30_000 + Int64(index), session: "t", tool: "Edit")) }
-        lines = numbered(lines)
-        func replay(_ records: [AttentionRecord]) -> SessionBook.Session? {
-            var book = SessionBook()
-            for record in records { book.apply(record, nowMs: now) }
-            return book.sessions[SessionKey(.claude, "t")]
-        }
-        let kept = EventLog.compact(lines, nowMs: now, budget: 1 << 30)
-        #expect(kept.count < lines.count)
-        let seqs = kept.map(\.seq)
-        #expect(seqs == seqs.sorted(), "kept lines keep their numbers, in order")
-        let before = replay(lines)
-        let after = replay(kept)
-        #expect(before?.title == "Fix the login redirect")
-        #expect(after?.title == before?.title)
-        #expect(after?.startedMs == before?.startedMs)
-        #expect(after?.lastPrompt == before?.lastPrompt)
-        #expect(after?.turnStartMs == before?.turnStartMs)
-        let state = HookFeed.word(after?.state)
-        #expect(state == HookFeed.word(before?.state))
-        // A tight budget keeps them too.
-        let tight = replay(EventLog.compact(lines, nowMs: now, budget: 1_000))
-        #expect(tight?.title == before?.title)
-        #expect(tight?.startedMs == before?.startedMs)
-    }
-
-    /// A compaction keeps what a replay rebuilds the vendor's name from (the
-    /// latest `title` line), never takes a subagent's prompt for the
-    /// person's, and keeps a subagent's open block while only another
-    /// subagent's tools follow it.
-    @Test func compactionKeepsTheNameAndASubagentsOpenBlock() {
-        let now = t0
-        let base = now - 5 * Self.hour
-        var lines = [
-            record(.start, base, session: "t", agent: .pi),
-            record(.title, base + 500, session: "t", message: "Release 31", agent: .pi),
-            record(.working, base + 1_000, session: "t", message: "Bump the version", agent: .pi),
-        ]
-        var sub = record(.working, base + 1_500, session: "t", message: "Search for version strings", agent: .pi)
-        sub.sub = "a1"
-        lines.append(sub)
-        for index in 0..<300 { lines.append(record(.tool, base + 10_000 + Int64(index), session: "t", tool: "read", agent: .pi)) }
-        var raised = record(.permission, base + 20_000, session: "c", message: "Bash: rm -rf build", tool: "Bash")
-        raised.sub = "a1"
-        lines.append(raised)
-        for index in 0..<300 {
-            var other = record(.tool, base + 30_000 + Int64(index), session: "c", tool: "Bash")
-            other.sub = "a2"
-            lines.append(other)
-        }
-        lines = numbered(lines)
-        func replay(_ records: [AttentionRecord]) -> SessionBook {
-            var book = SessionBook()
-            for record in records { book.apply(record, nowMs: now) }
-            return book
-        }
-        let tight = replay(EventLog.compact(lines, nowMs: now, budget: 1_000))
-        let named = tight.sessions[SessionKey(.pi, "t")]
-        #expect(named?.shownTitle == "Release 31")
-        #expect(named?.title == "Bump the version")
-        let blocked = HookFeed.word(tight.sessions[SessionKey(.claude, "c")]?.state)
-        #expect(blocked == "blocked:permission", "another subagent's tools do not answer it")
-        #expect(HookFeed.word(replay(lines).sessions[SessionKey(.claude, "c")]?.state) == "blocked:permission")
-    }
-
-    /// A compaction keeps an open block exactly where the book does: a
-    /// main-agent `done`, stop or dismissal stamped before the block is
-    /// about an earlier one; a main-agent step never answers a subagent's
-    /// block; and an OpenCode step answers no ask (its replies do). A
-    /// replay of what it kept is as red as a replay of everything.
-    @Test func compactionAnswersABlockOnlyAsTheBookDoes() {
-        let now = t0
-        let base = now - 5 * Self.hour
-        var lines = [
-            record(.working, base, session: "early", message: "Ship it"),
-            record(.permission, base + 10_000, session: "early", message: "Bash: npm publish", tool: "Bash"),
-            record(.done, base + 9_000, session: "early"),
-            record(.stopped, base + 9_500, session: "early"),
-            record(.dismiss, base + 9_000, session: "early"),
-            record(.working, base, session: "sub", message: "Audit"),
-        ]
-        var raised = record(.permission, base + 10_000, session: "sub", message: "Bash: rm -rf build", tool: "Bash")
-        raised.sub = "a1"
-        lines.append(raised)
-        lines += [
-            record(.working, base, session: "oc", message: "Run both suites", agent: .opencode),
-            record(.permission, base + 10_000, session: "oc", message: "bash: npm test", tool: "bash", agent: .opencode),
-            record(.ignored, base + 11_000, session: "oc", message: "not used", agent: .opencode),
-        ]
-        for index in 0..<300 {
-            let ms = base + 20_000 + Int64(index)
-            lines.append(record(.tool, ms, session: "early", tool: "Read"))
-            lines.append(record(.tool, ms, session: "sub", tool: "Bash"))
-            lines.append(record(.tool, ms, session: "oc", tool: "bash", agent: .opencode))
-        }
-        lines = numbered(lines)
-        func replay(_ records: [AttentionRecord]) -> SessionBook {
-            var book = SessionBook()
-            for record in records { book.apply(record, nowMs: now) }
-            return book
-        }
-        let full = replay(lines)
-        let tight = replay(EventLog.compact(lines, nowMs: now, budget: 1_000))
-        for key in [SessionKey(.claude, "early"), SessionKey(.claude, "sub"), SessionKey(.opencode, "oc")] {
-            #expect(HookFeed.word(full.sessions[key]?.state) == "blocked:permission", "\(key)")
-            #expect(HookFeed.word(tight.sessions[key]?.state) == "blocked:permission", "\(key)")
-        }
-    }
-
-    /// After a compaction the latest prompt's words survive even when the
-    /// latest prompt line carries none (a run's start): the row says the
-    /// same latest prompt, on the same turn clock.
-    @Test func compactionKeepsTheLatestPromptThatSaysSomething() {
-        let now = t0
-        let base = now - 5 * Self.hour
-        var lines = [
-            record(.start, base, session: "t", agent: .pi),
-            record(.working, base + 1_000, session: "t", message: "Fix the login redirect", agent: .pi),
-        ]
-        for index in 0..<300 { lines.append(record(.tool, base + 10_000 + Int64(index), session: "t", tool: "read", agent: .pi)) }
-        lines.append(record(.working, base + 20_000, session: "t", message: "Now the logout", agent: .pi))
-        lines.append(record(.working, base + 21_000, session: "t", agent: .pi))
-        for index in 0..<300 { lines.append(record(.tool, base + 30_000 + Int64(index), session: "t", tool: "edit", agent: .pi)) }
-        lines = numbered(lines)
-        func replay(_ records: [AttentionRecord]) -> SessionBook.Session? {
-            var book = SessionBook()
-            for record in records { book.apply(record, nowMs: now) }
-            return book.sessions[SessionKey(.pi, "t")]
-        }
-        let before = replay(lines)
-        let after = replay(EventLog.compact(lines, nowMs: now, budget: 1_000))
-        #expect(before?.lastPrompt == "Now the logout")
-        #expect(after?.lastPrompt == before?.lastPrompt)
-        #expect(after?.turnStartMs == before?.turnStartMs)
-        #expect(after?.title == "Fix the login redirect")
-    }
-
-    /// A compaction keeps the line the main agent's latest plan came from
-    /// (`SessionBook.Anchors.plan`), whatever the budget: after a rewrite
-    /// and a replay the row's "3/7" and the detail page's plan are the same.
-    @Test func compactionKeepsTheLatestPlanLine() {
-        let now = t0
-        let base = now - 5 * Self.hour
-        var lines = [
-            record(.start, base, session: "t"),
-            record(.working, base + 1_000, session: "t", message: "Ship the upload queue"),
-        ]
-        var plan = record(.tool, base + 2_000, session: "t", tool: "TodoWrite")
-        plan.category = .plan
-        plan.meta = LineMeta(plan: LineMeta.Plan(done: 2, total: 5), planNow: "Write the tests")
-        lines.append(plan)
-        for index in 0..<300 { lines.append(record(.tool, base + 10_000 + Int64(index), session: "t", tool: "Edit")) }
-        lines = numbered(lines)
-        func replay(_ records: [AttentionRecord]) -> SessionBook.Session? {
-            var book = SessionBook()
-            for record in records { book.apply(record, nowMs: now) }
-            return book.sessions[SessionKey(.claude, "t")]
-        }
-        let kept = EventLog.compact(lines, nowMs: now, budget: 1_000)
-        let planKept = kept.contains { $0.seq == 3 }
-        #expect(planKept, "the plan's line survives a tight budget")
-        let before = replay(lines)
-        let after = replay(kept)
-        #expect(before?.plan?.total == 5)
-        #expect(after?.plan == before?.plan)
-        #expect(after?.turnPlan == before?.turnPlan)
-        #expect(after?.turnStartMs == before?.turnStartMs)
-    }
-
-    /// The record being appended is always in the file after its own
-    /// compaction — even one older than the retention window.
-    @Test func theAppendedRecordSurvivesItsOwnCompaction() throws {
-        let home = Home()
-        var ms = t0
-        let pad = String(repeating: "y", count: 180)
-        while home.size < EventLog.maxBytes - 300 {
-            EventLog.append(record(.tool, ms, session: "busy", message: pad, tool: "Read"), at: home.log, nowMs: ms)
-            ms += 1
-        }
-        // Longer than the room left, so this append compacts.
-        let ancient = record(.turn, t0 - 3 * EventLog.retentionMs, session: "late", message: String(repeating: "z", count: 400))
-        #expect(EventLog.append(ancient, at: home.log, nowMs: ms))
-        let chunk = try #require(EventLog.read(at: home.log, after: nil))
-        let last = try #require(chunk.records.last)
-        #expect(last.session == "late")
-        #expect(last.message == ancient.message)
-        let newest = chunk.records.map { $0.seq }.max()
-        #expect(last.seq == newest, "the newest number")
-        #expect(home.size < EventLog.maxBytes)
+        #expect(again.header == header, "ensureExists leaves a v10 log alone")
     }
 
     @Test func aCursorFromAnotherHeaderReadsTheWholeFileAgain() throws {
@@ -2663,7 +2458,7 @@ struct EventLogTests {
         EventLog.append(record(.working, t0), at: home.log, nowMs: t0)
         let first = try #require(EventLog.read(at: home.log, after: nil))
         let header = try #require(first.header)
-        let stale = EventLog.Cursor(header: "# pulse-events v9 next=1 gen=gOLD", offset: first.end, gen: "gOLD", seq: 1)
+        let stale = EventLog.Cursor(header: "# pulse-events v10 next=1 gen=gOLD", offset: first.end, gen: "gOLD", seq: 1)
         let again = try #require(EventLog.read(at: home.log, after: stale))
         #expect(again.records == first.records, "read whole")
         #expect(again.unapplied(after: stale).count == 1, "another log: every line is new")
@@ -2673,10 +2468,10 @@ struct EventLogTests {
         #expect(shorter.unapplied(after: past).isEmpty, "and nothing it already applied is applied again")
     }
 
-    /// A log that is not v9 — an older header, or none — is never read and
+    /// A log that is not v10 — an older header, or none — is never read and
     /// never migrated: a read finds it empty, and the next writer (the
-    /// launch's `ensureExists`, or an append) starts a fresh v9 log.
-    @Test func aLogThatIsNotV9IsTreatedAsAbsentAndStartedOver() throws {
+    /// launch's `ensureExists`, or an append) starts a fresh v10 log.
+    @Test func aLogThatIsNotV10IsTreatedAsAbsentAndStartedOver() throws {
         let home = Home()
         let old = "# pulse-events v8 next=2 gen=g1 (seq)\n1\t\(t0)\tclaude\tpermission\tPermissionRequest\ts1\t\t/w\t\t\t\tBash\t\t\tBash: make\n"
         try Data(old.utf8).write(to: home.log)
@@ -2729,94 +2524,136 @@ struct EventLogTests {
         #expect(seqs == [1, 2])
     }
 
-    // MARK: - Compaction
+    // MARK: - Rotation
 
-    /// An append past the bound compacts: the same log (`gen`), a new
-    /// header, every kept line under its own number, the newest line kept,
-    /// and an open block kept however old. A reader at its old cursor reads
-    /// the file whole and applies only what is new.
-    @Test func anAppendPastTheBoundCompactsKeepingTheNumbers() throws {
+    /// An append past the bound rotates: the bytes go unread to
+    /// `events.1.tsv`, the live file starts again under the same `gen`, the
+    /// numbers go on, and a whole read takes both files — every line, in
+    /// order, none twice. A reader at its old cursor applies only what is new.
+    @Test func anAppendPastTheBoundRotatesKeepingEveryNumber() throws {
         let home = Home()
-        let old = t0 - 5 * Self.hour
-        EventLog.append(record(.permission, old, session: "keep-me", message: "Bash: make", tool: "Bash"), at: home.log, nowMs: old)
+        EventLog.append(record(.permission, t0, session: "keep-me", message: "Bash: make", tool: "Bash"), at: home.log, nowMs: t0)
         let before = try #require(EventLog.read(at: home.log, after: nil))
         let cursor = try #require(before.advancing(nil))
-        var ms = old + 1
+        var ms = t0 + 1
         let pad = String(repeating: "x", count: 180)
         while home.size < EventLog.maxBytes - 400 {
             EventLog.append(record(.tool, ms, session: "busy", message: pad, tool: "Read"), at: home.log, nowMs: ms)
             ms += 1
         }
-        let full = try #require(EventLog.read(at: home.log, after: nil))
-        let appendedBefore = full.records.count
-        EventLog.append(record(.tool, t0, session: "busy", message: pad, tool: "Read"), at: home.log, nowMs: t0)
-        EventLog.append(record(.tool, t0 + 1, session: "busy", message: pad, tool: "Read"), at: home.log, nowMs: t0 + 1)
+        let count = try #require(EventLog.read(at: home.log, after: nil)).records.count
+        EventLog.append(record(.tool, ms, session: "busy", message: pad, tool: "Read"), at: home.log, nowMs: ms)
+        EventLog.append(record(.tool, ms + 1, session: "busy", message: pad, tool: "Read"), at: home.log, nowMs: ms + 1)
+        #expect(home.size < 4 * 1024, "the live file started again")
+        let rotated = EventLog.rotatedURL(for: home.log)
+        #expect(rotated.lastPathComponent == "events.1.tsv")
+        #expect(FileManager.default.fileExists(atPath: rotated.path))
+
         let after = try #require(EventLog.read(at: home.log, after: cursor))
-        #expect(after.headerLine != before.headerLine, "a rewrite: the old cursor reads the whole file")
+        #expect(after.headerLine != before.headerLine, "a rotation: the old cursor reads whole")
         #expect(after.header?.gen == cursor.gen, "the same log")
-        #expect(home.size < EventLog.maxBytes)
-        let kept = after.records.first { $0.session == "keep-me" && $0.kind == .permission }
-        #expect(kept?.seq == 1, "an open block is never dropped, and keeps its number")
-        let newest = after.records.last
-        #expect(newest?.ms == t0 + 1, "the newest line is kept")
-        #expect(newest?.seq == Int64(appendedBefore + 2))
+        let seqs = after.records.map(\.seq)
+        #expect(seqs == Array(1...Int64(count + 2)), "every line, in order, once")
+        #expect(EventLog.keepsEveryLine(after.records))
         let unapplied = after.unapplied(after: cursor)
-        #expect(!unapplied.contains { $0.seq <= cursor.seq }, "nothing applied is applied again")
-        // The header's `next` is a floor, not a counter: the next line
-        // continues after the newest one, whatever the header says.
-        EventLog.append(record(.tool, t0 + 2, session: "busy", message: pad, tool: "Read"), at: home.log, nowMs: t0 + 2)
+        #expect(unapplied.first?.seq == 2, "nothing applied is applied again")
+        EventLog.append(record(.tool, ms + 2, session: "busy", message: pad, tool: "Read"), at: home.log, nowMs: ms + 2)
         let last = try #require(EventLog.read(at: home.log, after: nil)).records.last
-        #expect(last?.seq == (newest?.seq ?? 0) + 1, "numbers continue after a compaction")
+        #expect(last?.seq == Int64(count + 3), "numbers continue after a rotation")
     }
 
-    /// Compaction keeps a block together with what answers it, groups a
-    /// session-less line by agent and folder, and forgets a day-old session.
-    @Test func compactionKeepsPerSessionHistory() {
-        let now = t0
-        let base = now - 3 * Self.hour
+    /// A rotated file of another log is never read as this one's.
+    @Test func aRotatedFileOfAnotherLogIsNotRead() throws {
+        let home = Home()
+        let stale = AttentionProtocol.Header(next: 2, gen: "gOTHER").line
+            + record(.permission, t0, session: "old", message: "Bash: rm", tool: "Bash", seq: 1).line + "\n"
+        try Data(stale.utf8).write(to: EventLog.rotatedURL(for: home.log))
+        EventLog.append(record(.working, t0 + 1), at: home.log, nowMs: t0 + 1)
+        let chunk = try #require(EventLog.read(at: home.log, after: nil))
+        let sessions = chunk.records.map(\.session)
+        #expect(sessions == ["s1"])
+    }
+
+    /// A line is at most `maxLineBytes`, however its message is built (a
+    /// grapheme of a thousand combining marks counts as one character), so
+    /// the appender always finds the last number in its tail.
+    @Test func aLongLineIsCutAndTheNumberingHolds() throws {
+        let home = Home()
+        let zalgo = "a" + String(repeating: "\u{0301}", count: 20_000)
+        #expect(EventLog.append(record(.working, t0, message: zalgo), at: home.log, nowMs: t0))
+        #expect(EventLog.append(record(.tool, t0 + 1, tool: "Read"), at: home.log, nowMs: t0 + 1))
+        let chunk = try #require(EventLog.read(at: home.log, after: nil))
+        let seqs = chunk.records.map(\.seq)
+        #expect(seqs == [1, 2])
+        for record in chunk.records { #expect(record.line.utf8.count <= EventLog.maxLineBytes) }
+    }
+
+    // MARK: - Snapshot
+
+    /// A snapshot is a cache of the replay, never a source: replaying a log
+    /// whole, and restoring a snapshot taken partway then applying the rest,
+    /// give the same book — for many generated logs (blocks, answers,
+    /// subagents, turns, dismissals, titles, plans, ends).
+    @Test(arguments: 0..<24)
+    func aSnapshotThenTheRestIsTheWholeReplay(seed: Int) throws {
+        var rng = UInt64(truncatingIfNeeded: seed &* 2_654_435_761 &+ 1)
+        func next(_ bound: Int) -> Int {
+            rng = rng &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Int((rng >> 33) % UInt64(bound))
+        }
+        let kinds: [AttentionKind] = [.start, .working, .tool, .tool, .tool, .status, .permission, .question,
+                                      .turn, .failed, .idle, .done, .dismiss, .stopped, .title, .end, .ignored]
+        let sessions = ["a", "b", "c"]
+        let subs = ["", "", "", "sub1"]
         var lines: [AttentionRecord] = []
-        // An answered block, then a long tail in the same session.
-        lines.append(record(.permission, base, session: "a", message: "Bash: ls", tool: "Bash"))
-        lines.append(record(.tool, base + 1_000, session: "a", tool: "Bash"))
-        for index in 0..<200 { lines.append(record(.tool, base + 2_000 + Int64(index), session: "a", tool: "Read")) }
-        // An open block with parallel tools and status after it that do not
-        // answer it.
-        lines.append(record(.permission, base + 10_000, session: "b", message: "Bash: make", tool: "Bash"))
-        for index in 0..<100 { lines.append(record(index % 10 == 0 ? .status : .tool, base + 11_000 + Int64(index), session: "b", tool: index % 10 == 0 ? "" : "Read")) }
-        // Two session-less folders of one agent.
-        lines.append(record(.permission, base + 20_000, session: "", message: "Allow?", cwd: "/one", agent: .copilot))
-        for index in 0..<100 { lines.append(record(.start, base + 21_000 + Int64(index), session: "", cwd: "/two", agent: .copilot)) }
-        // A session nobody has heard from for two days.
-        lines.append(record(.turn, now - 2 * EventLog.retentionMs, session: "gone"))
+        var ms = t0
+        for _ in 0..<(60 + next(60)) {
+            ms += Int64(500 + next(40_000))
+            let kind = kinds[next(kinds.count)]
+            var meta = LineMeta()
+            if next(6) == 0 { meta.plan = LineMeta.Plan(done: next(3), total: 3) }
+            lines.append(AttentionRecord(
+                agent: next(4) == 0 ? .pi : .claude, kind: kind, ms: ms,
+                message: kind == .working ? "Do thing \(next(9))" : "Bash: make \(next(3))",
+                session: sessions[next(sessions.count)], cwd: "/w", pid: 0,
+                tool: kind == .tool || kind == .permission ? ["Bash", "Read", "Edit"][next(3)] : "",
+                event: kind.rawValue, sub: subs[next(subs.count)], failed: next(8) == 0,
+                meta: meta
+            ))
+        }
         lines = numbered(lines)
+        let nowMs = ms + 1_000
+        var whole = SessionBook()
+        for line in lines { whole.apply(line, nowMs: nowMs) }
 
-        let records = EventLog.compact(lines, nowMs: now, budget: 1 << 30)
-        let a = records.filter { $0.session == "a" }
-        #expect(a.count == EventLog.linesPerSession + 1, "a session keeps its last lines once nothing in it is open, and its first clock")
-        #expect(!a.contains { $0.kind == .permission }, "an answered block is never kept without its answer")
-        let b = records.filter { $0.session == "b" }
-        #expect(b.first?.kind == .permission, "an open block is kept, with every line after it")
-        #expect(b.count == 101)
-        let folder = records.contains { $0.agent == .copilot && $0.cwd == "/one" }
-        #expect(folder, "a session-less wait is not pushed out by another folder's lines")
-        let gone = records.contains { $0.session == "gone" }
-        #expect(!gone)
+        let split = next(lines.count)
+        var partial = SessionBook()
+        for line in lines.prefix(split) { partial.apply(line, nowMs: nowMs) }
+        let snapshot = BookSnapshot(gen: "g1", seq: Int64(split), book: partial, heard: [:], ignored: [:], whole: true)
+        let data = try #require(snapshot.encoded())
+        let home = Home()
+        let url = home.url.appendingPathComponent(BookSnapshot.fileName)
+        #expect(BookSnapshot.write(data, to: url))
+        let restored = try #require(BookSnapshot.load(at: url))
+        #expect(restored == snapshot, "a snapshot reads back as it was written")
+        var resumed = restored.book
+        let chunk = EventLog.Chunk(header: AttentionProtocol.Header(next: 1, gen: "g1"), records: lines, end: 0)
+        for line in chunk.unapplied(after: restored.cursor) { resumed.apply(line, nowMs: nowMs) }
+        #expect(resumed == whole)
+    }
 
-        // A tight budget still keeps the open blocks.
-        let tight = EventLog.compact(lines, nowMs: now, budget: 1_000)
-        let openB = tight.contains { $0.session == "b" && $0.kind == .permission }
-        let openOne = tight.contains { $0.cwd == "/one" && $0.kind == .permission }
-        #expect(openB)
-        #expect(openOne)
-        // A dismissal's session-less `dismiss` names its folder: it answers
-        // that folder's block only, so another folder's open block stays.
-        let dismissed = lines + [record(.dismiss, base + 30_000, session: "", cwd: "/two", agent: .copilot, seq: 9_999)]
-        let afterDismiss = EventLog.compact(dismissed, nowMs: now, budget: 1_000)
-        let stillOpen = afterDismiss.contains { $0.cwd == "/one" && $0.kind == .permission }
-        #expect(stillOpen, "a dismiss for /two is not an answer in /one")
-        // Recent lines all stay.
-        let recent = numbered((0..<300).map { record(.tool, now - 1_000 + Int64($0), session: "hot", tool: "Read") })
-        #expect(EventLog.compact(recent, nowMs: now, budget: 1 << 30).count == 300)
+    /// A snapshot of another version, or one that does not decode, is
+    /// ignored: the launch replays the log alone.
+    @Test func aSnapshotThatDoesNotFitIsIgnored() throws {
+        let home = Home()
+        let url = home.url.appendingPathComponent(BookSnapshot.fileName)
+        try Data("{\"version\": 999}".utf8).write(to: url)
+        #expect(BookSnapshot.load(at: url) == nil)
+        var snapshot = BookSnapshot(gen: "g1", seq: 3, book: SessionBook(), heard: [:], ignored: [:], whole: false)
+        snapshot.version = BookSnapshot.currentVersion + 1
+        try #require(snapshot.encoded()).write(to: url)
+        #expect(BookSnapshot.load(at: url) == nil)
+        #expect(BookSnapshot.load(at: home.url.appendingPathComponent("missing.json")) == nil)
     }
 }
 
