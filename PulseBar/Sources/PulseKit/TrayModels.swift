@@ -521,3 +521,63 @@ package enum BannerRoute: Equatable {
         return focused ? .terminal : .detail(target)
     }
 }
+
+// MARK: - 35: grouping, shortcut choices, Automation
+
+extension TrayOrder {
+    /// `rows` grouped by project, each group where its first row was — so
+    /// the oldest wait's project still leads — and inside a group the order
+    /// they came. Stable: the same rows give the same order. Pure.
+    package static func groupedByProject(_ rows: [AgentRow]) -> [AgentRow] {
+        var order: [String] = []
+        var groups: [String: [AgentRow]] = [:]
+        for row in rows {
+            let project = row.project
+            if groups[project] == nil { order.append(project) }
+            groups[project, default: []].append(row)
+        }
+        return order.flatMap { groups[$0] ?? [] }
+    }
+
+    /// Where a project's heading goes: before the first row, and wherever
+    /// the project changes. Pure.
+    package static func startsGroup(_ rows: [AgentRow], at index: Int) -> Bool {
+        guard rows.indices.contains(index) else { return false }
+        return index == 0 || rows[index - 1].project != rows[index].project
+    }
+}
+
+/// The global shortcut's chord: one of a few that rarely collide. The key
+/// codes live with the hot key (`GlobalShortcut`); this is what the person
+/// picks and reads.
+package enum ShortcutChoice: String, CaseIterable, Sendable, Codable {
+    case controlOptionCommandP
+    case optionCommandP
+    case controlOptionSpace
+
+    package static let `default` = ShortcutChoice.controlOptionCommandP
+
+    package var display: String {
+        switch self {
+        case .controlOptionCommandP: return "⌃⌥⌘P"
+        case .optionCommandP: return "⌥⌘P"
+        case .controlOptionSpace: return "⌃⌥Space"
+        }
+    }
+}
+
+/// What macOS says about Pulse sending Apple Events to a terminal — the
+/// tab search behind "Go to terminal". Asked without prompting
+/// (`AEDeterminePermissionToAutomateTarget`, askUserIfNeeded false).
+package enum AutomationState: String, Equatable, Sendable {
+    /// Allowed.
+    case allowed
+    /// The person said no: System Settings → Privacy & Security → Automation.
+    case denied
+    /// Not asked yet: the first Go asks.
+    case notAsked
+    /// The terminal is not running; nothing to ask.
+    case notRunning
+    /// macOS did not say.
+    case unknown
+}

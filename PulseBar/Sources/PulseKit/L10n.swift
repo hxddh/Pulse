@@ -268,6 +268,17 @@ package enum L10n {
         case timelineEarlierSteps
         case timelineShowSteps
         case turnDoneBanner
+        case markAllSeen
+        case noProject
+        case settingsGroupByProject
+        case settingsShortcutChoice
+        case automationTitle
+        case automationAllowed
+        case automationDenied
+        case automationNotAsked
+        case automationNotRunning
+        case automationUnknown
+        case openAutomationSettings
         case watchTurn
         case watchingTurn
         case settingsShortcut
@@ -491,6 +502,17 @@ extension L10n.Key {
         case .endError: return ("Ended on an error", "因出错结束")
         case .timelineEarlierSteps: return ("%d earlier", "更早的 %d 步")
         case .timelineShowSteps: return ("Show each step", "展开每一步")
+        case .markAllSeen: return ("Mark all done as seen (%d)", "全部看过（%d）")
+        case .noProject: return ("No project", "无项目")
+        case .settingsGroupByProject: return ("Group the tray by project", "托盘按项目分组")
+        case .settingsShortcutChoice: return ("Shortcut", "快捷键")
+        case .automationTitle: return ("Go to terminal · %@", "前往终端 · %@")
+        case .automationAllowed: return ("allowed", "已允许")
+        case .automationDenied: return ("not allowed — Pulse can only open the app", "未允许——Pulse 只能打开应用")
+        case .automationNotAsked: return ("macOS asks on the first Go", "第一次前往时 macOS 会询问")
+        case .automationNotRunning: return ("not running", "未运行")
+        case .automationUnknown: return ("macOS did not say", "macOS 没有回答")
+        case .openAutomationSettings: return ("Open Automation", "打开「自动化」")
         case .turnDoneBanner: return ("Done — the turn you were waiting on ended", "好了——你在等的这一轮结束了")
         case .watchTurn: return ("Tell me when this turn is done", "这一轮好了时提醒我")
         case .watchingTurn: return ("Pulse will tell you when this turn is done", "这一轮好了时 Pulse 会提醒你")

@@ -17,11 +17,15 @@ package struct PulseSettings: Equatable, Codable, Sendable {
     /// Agents whose "needs you" banners are not posted. The lamp, the tray
     /// and the count still say it: muting is about interruptions only.
     package var mutedAgents: [AgentID] = []
+    /// The chord the global shortcut uses.
+    package var shortcut: ShortcutChoice = .default
+    /// The tray groups its rows by project.
+    package var groupByProject = false
 
     package init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case launchAtLogin, hooksNudgeOff, globalShortcut, mutedAgents
+        case launchAtLogin, hooksNudgeOff, globalShortcut, mutedAgents, shortcut, groupByProject
     }
 
     package init(from decoder: any Decoder) throws {
@@ -31,6 +35,9 @@ package struct PulseSettings: Equatable, Codable, Sendable {
         globalShortcut = (try? c.decodeIfPresent(Bool.self, forKey: .globalShortcut)) ?? true
         let muted = (try? c.decodeIfPresent([String].self, forKey: .mutedAgents)) ?? []
         mutedAgents = muted.compactMap(AgentID.init(rawValue:))
+        let chord = (try? c.decodeIfPresent(String.self, forKey: .shortcut)) ?? nil
+        shortcut = chord.flatMap(ShortcutChoice.init(rawValue:)) ?? .default
+        groupByProject = (try? c.decodeIfPresent(Bool.self, forKey: .groupByProject)) ?? false
     }
 
     package func encode(to encoder: any Encoder) throws {
@@ -39,6 +46,8 @@ package struct PulseSettings: Equatable, Codable, Sendable {
         try c.encode(hooksNudgeOff, forKey: .hooksNudgeOff)
         try c.encode(globalShortcut, forKey: .globalShortcut)
         try c.encode(mutedAgents.map(\.rawValue), forKey: .mutedAgents)
+        try c.encode(shortcut.rawValue, forKey: .shortcut)
+        try c.encode(groupByProject, forKey: .groupByProject)
     }
 
     /// Whether `agent`'s banners are muted.
@@ -55,7 +64,7 @@ package struct PulseSettings: Equatable, Codable, Sendable {
 
     /// One-line summary for the debug log.
     package var debugDescription: String {
-        "login=\(launchAtLogin) hooksNudgeOff=\(hooksNudgeOff) shortcut=\(globalShortcut) muted=\(mutedAgents.map(\.rawValue))"
+        "login=\(launchAtLogin) hooksNudgeOff=\(hooksNudgeOff) shortcut=\(globalShortcut ? shortcut.display : "off") group=\(groupByProject) muted=\(mutedAgents.map(\.rawValue))"
     }
 
     // MARK: - On disk

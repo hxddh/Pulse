@@ -2147,3 +2147,27 @@ struct CopyRuleTests {
         }
     }
 }
+
+/// "Group the tray by project": each project together, where its first row
+/// was, rows in the order they came; a heading wherever the project changes.
+@Suite("Group by project")
+struct GroupByProjectTests {
+    private func row(_ id: String, _ cwd: String) -> AgentRow {
+        var row = AgentRow(key: SessionKey(.claude, id))
+        row.cwd = cwd
+        return row
+    }
+
+    @Test func groupsKeepTheirFirstPlaceAndTheirOrder() {
+        let rows = [row("a", "/w/app"), row("b", "/w/site"), row("c", "/w/app"), row("d", "/w/site"), row("e", "/w/lib")]
+        let grouped = TrayOrder.groupedByProject(rows).map { $0.key }
+        #expect(grouped == [SessionKey(.claude, "a"), SessionKey(.claude, "c"), SessionKey(.claude, "b"),
+                            SessionKey(.claude, "d"), SessionKey(.claude, "e")])
+        let again = TrayOrder.groupedByProject(TrayOrder.groupedByProject(rows)).map { $0.key }
+        #expect(again == grouped, "stable")
+        let regrouped = TrayOrder.groupedByProject(rows)
+        let starts = regrouped.indices.filter { TrayOrder.startsGroup(regrouped, at: $0) }
+        #expect(starts == [0, 2, 4])
+        #expect(!TrayOrder.startsGroup(regrouped, at: 9))
+    }
+}
