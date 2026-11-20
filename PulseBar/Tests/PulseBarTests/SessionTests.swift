@@ -2239,7 +2239,8 @@ final class TrayAssembleTests: XCTestCase {
 
     func testAFinishedTurnIsNotRunning() {
         let r = build([row("a", status: .yourTurn(sinceMs: now - 60_000))])
-        XCTAssertEqual(r.snapshot.lamp, .idle)
+        XCTAssertEqual(r.snapshot.lamp, .done)
+        XCTAssertTrue(r.snapshot.lamp.isGrey)
         XCTAssertEqual(r.activity, .recent)
     }
 
