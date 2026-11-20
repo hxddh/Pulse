@@ -185,7 +185,7 @@ final class WaitNotifier {
     /// The one banner a watched or opt-in session's finished turn was asked for
     /// (`TurnWatch`). Uses its own category (Go only, no Ignore) and is
     /// withdrawn once the session moves on or is marked seen.
-    func postTurnDone(_ row: AgentRow, facts: SessionFacts = SessionFacts()) {
+    func postTurnDone(_ row: AgentRow, facts: SessionFacts = .empty) {
         guard let model, model.notifyAuthorized == true else { return }
         doneBannerKeys.insert(row.key)
         PulseNotify.postWaiting(
