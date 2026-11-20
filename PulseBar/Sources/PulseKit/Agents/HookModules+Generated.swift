@@ -58,6 +58,7 @@ function send(event, payload) {
     pump()
   } catch {}
 }
+
 """#
 
     package static let piModuleTemplate = #"""
@@ -286,6 +287,7 @@ export default function (pi) {
     })
   }
 }
+
 """#
 
     package static let openCodePluginTemplate = #"""
@@ -701,5 +703,6 @@ export default {
     }
   },
 }
+
 """#
 }

@@ -26,12 +26,16 @@ FILES = [
 
 
 def swift_raw_literal(text: str) -> str:
-    """Wrap text in a Swift raw multiline string literal with enough `#` delimiters."""
+    """Wrap text in a Swift raw multiline string literal with enough `#` delimiters.
+
+    Swift strips the newline immediately before the closing delimiter, so
+    appending one extra newline preserves a trailing newline in `text`.
+    """
     hashes = 1
     while ('"' * 3 + "#" * hashes) in text or ("\\" + "#" * hashes) in text:
         hashes += 1
     delim = "#" * hashes
-    return f'{delim}"""\n{text}"""{delim}'
+    return f'{delim}"""\n{text}\n"""{delim}'
 
 
 def generate() -> str:
