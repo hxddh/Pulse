@@ -10,6 +10,7 @@ import Foundation
 /// | `waiting`     | filled               | red    |
 /// | `running`     | ring (circle + dot)  | green  |
 /// | `stalled`     | ring + a corner notch| orange |
+/// | `done`        | ring + check         | grey   |
 /// | `idle`        | hollow               | grey   |
 /// | `processOnly` | dotted               | grey   |
 ///
@@ -18,7 +19,7 @@ import Foundation
 /// and the menu-bar image are `PulseTheme`'s (`Lamp.color`,
 /// `Lamp.statusBarImage`). Pure.
 package enum Lamp: String, CaseIterable, Equatable, Sendable {
-    case waiting, running, stalled, idle, processOnly
+    case waiting, running, stalled, done, idle, processOnly
 
     /// The lamp of one row's status.
     package init(_ status: AgentRow.Status) {
@@ -26,7 +27,8 @@ package enum Lamp: String, CaseIterable, Equatable, Sendable {
         case .needsYou: self = .waiting
         case .processOnly: self = .processOnly
         case .running(let stalled): self = stalled ? .stalled : .running
-        case .yourTurn, .recent: self = .idle
+        case .yourTurn: self = .done
+        case .recent: self = .idle
         }
     }
 
@@ -37,12 +39,13 @@ package enum Lamp: String, CaseIterable, Equatable, Sendable {
         case .stalled: self = .stalled
         case .running: self = .running
         case .processOnly: self = .processOnly
-        case .yourTurn, .recent, .idle: self = .idle
+        case .yourTurn: self = .done
+        case .recent, .idle: self = .idle
         }
     }
 
     /// Grey: the menu bar draws it as a template, in its own colour.
-    package var isGrey: Bool { self == .idle || self == .processOnly }
+    package var isGrey: Bool { self == .done || self == .idle || self == .processOnly }
 
     /// What VoiceOver says for the state.
     package var accessibilityKey: L10n.Key {
@@ -50,6 +53,7 @@ package enum Lamp: String, CaseIterable, Equatable, Sendable {
         case .waiting: return .needsYou
         case .running: return .running
         case .stalled: return .stalled
+        case .done: return .yourTurn
         case .processOnly: return .processOnly
         case .idle: return .a11yIdle
         }
@@ -232,6 +236,10 @@ package struct AgentRow: Identifiable, Hashable {
         /// It was working, its process lives, and nothing has been heard for
         /// `TrayState.silentBoundMs` (an interrupted turn sends no Stop).
         case silent
+        /// The person ignored an open wait in Pulse (`⌘D` / banner Ignore):
+        /// the lamp goes grey rather than faking green while the vendor's
+        /// prompt may still wait in its terminal.
+        case dismissedWait
     }
 
     // MARK: Identity — decided once, never changed.

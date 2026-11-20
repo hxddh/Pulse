@@ -68,6 +68,8 @@ final class StatusStore {
     /// The global shortcut as macOS answered: registered, refused (another
     /// app holds the chord), or nil — off, or not started.
     var shortcutRegistered: Bool?
+    /// The optional direct-jump shortcut (⌃⌥⌘↩) as macOS answered.
+    var directJumpRegistered: Bool?
     /// Settings' "Test connection", its last answer; nil not run.
     var hookPing: HookPing.Result?
     /// Sessions whose end of turn the person asked to hear about, on the
@@ -138,7 +140,9 @@ final class StatusStore {
         refreshLoginItem()
         notifier.start()
         GlobalShortcut.shared.onPress = { [weak self] in self?.shortcutPressed() }
+        GlobalShortcut.shared.onDirectJump = { [weak self] in self?.jumpToOldestWait() }
         applyShortcut()
+        applyDirectJumpShortcut()
         engine.start()
         DebugLog.write("start armed")
     }
@@ -155,10 +159,22 @@ final class StatusStore {
     /// projection of its first read) — a wait already there is not a new
     /// one.
     func land(_ state: TrayState, nowMs: Int64, baseline: Bool = false) {
+        let previousRows = rows
         land(\.rows, state.rows)
         notifier.scanLanded(state, nowMs: nowMs, baseline: baseline)
         let watched = TurnWatch.finished(watching: turnWatches, rows: state.rows)
-        for row in watched.done { notifier.postTurnDone(row) }
+        let autoDone = baseline
+            ? []
+            : TurnWatch.autoDone(
+                previous: previousRows,
+                current: state.rows,
+                facts: { self.facts(for: $0) },
+                settings: settings
+            )
+        var notifiedDone = Set<SessionKey>()
+        for row in watched.done + autoDone where notifiedDone.insert(row.key).inserted {
+            notifier.postTurnDone(row, facts: facts(for: row.key))
+        }
         land(\.turnWatches, turnWatches.subtracting(watched.gone).subtracting(watched.done.map(\.key)))
         land(\.snapshot, state.snapshot)
     }
@@ -173,9 +189,22 @@ final class StatusStore {
         land(\.shortcutRegistered, on ? registered : nil)
     }
 
+    /// Register the direct-jump chord (⌃⌥⌘↩) when the setting is on.
+    func applyDirectJumpShortcut() {
+        guard started else { return }
+        let on = settings.directJumpShortcut
+        let registered = GlobalShortcut.shared.setDirectJump(enabled: on)
+        land(\.directJumpRegistered, on ? registered : nil)
+    }
+
     func setGlobalShortcut(_ on: Bool) {
         set(\.globalShortcut, on)
         applyShortcut()
+    }
+
+    func setDirectJumpShortcut(_ on: Bool) {
+        set(\.directJumpShortcut, on)
+        applyDirectJumpShortcut()
     }
 
     /// The chord: the tray on the oldest wait, or closed when it is open.
@@ -187,9 +216,31 @@ final class StatusStore {
         }
     }
 
+    /// Direct jump (⌃⌥⌘↩): jump straight to the oldest blocked terminal
+    /// without popping up the tray (falls back to its detail or the tray).
+    func jumpToOldestWait() {
+        guard let oldest = rows.first(where: \.isBlocked) else {
+            requestTrayReveal()
+            return
+        }
+        focusAgent(idRaw: oldest.agent.rawValue, session: oldest.session, rowKey: oldest.key.description)
+    }
+
     func setShortcut(_ choice: ShortcutChoice) {
         set(\.shortcut, choice)
         applyShortcut()
+    }
+
+    func setNotifyDone(_ agent: AgentID, _ enabled: Bool) {
+        set(\.notifyDoneAgents, settings.notifyingDone(agent, enabled).notifyDoneAgents)
+    }
+
+    func setLongTurnSeconds(_ seconds: Int) {
+        set(\.notifyLongTurnSeconds, max(0, seconds))
+    }
+
+    func setNotificationSound(_ sound: NotificationSound) {
+        set(\.notificationSound, sound)
     }
 
     /// Every finished turn in the tray, looked at: the same `pulse.seen` a
@@ -387,11 +438,13 @@ final class StatusStore {
 
     /// The tray row's face, as a value, at `date` — the store contributes
     /// the session's facts and the row's notice.
-    func trayRowModel(_ row: AgentRow, at date: Date = Date()) -> TrayRowModel {
+    func trayRowModel(_ row: AgentRow, at date: Date = Date(), hideProject: Bool = false) -> TrayRowModel {
         TrayRowModel.make(TrayRowModel.Input(
             row: row, facts: facts(for: row.key), lang: lang,
             nowMs: Self.ms(date), notice: rowActionNotices[row.key],
-            connected: connected(row.agent)
+            connected: connected(row.agent),
+            hideProject: hideProject,
+            watching: turnWatches.contains(row.key)
         ))
     }
 
@@ -416,6 +469,15 @@ final class StatusStore {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
         DebugLog.write("turn summary copied")
+    }
+
+    /// Copy the blocked row's ask (shell command / question) to the clipboard.
+    func copyAsk(_ row: AgentRow) {
+        guard let ask = TrayRowModel.ask(row) else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(ask, forType: .string)
+        DebugLog.write("ask copied")
     }
 
     /// Pulse's hook is in the agent's config (the last probe; a status not
@@ -552,6 +614,7 @@ final class StatusStore {
     /// record — it survives a restart.
     private func markTurnSeen(_ row: AgentRow) {
         guard row.isYourTurn, !row.session.isEmpty else { return }
+        notifier.withdrawTurnDone(row.key)
         writeDismissal(row, event: AttentionRecord.seenEvent)
     }
 
@@ -592,20 +655,30 @@ final class StatusStore {
     /// decision.
     func runHooks(
         _ job: HooksSupport.Job,
+        agents: [AgentID]? = nil,
         then done: @escaping @MainActor @Sendable (HooksSupport.Status) -> Void = { _ in }
     ) {
         guard !hooksStatus.isWorking else { return }
         let previous = hooksStatus.failures
         land(\.hooksStatus, .working)
-        if settings.hooksNudgeOff != (job == .uninstall) {
-            settings.hooksNudgeOff = job == .uninstall
-            if started { settings.save() }
+        // Only bulk removal disables the setup nudge; any install re-enables it.
+        if agents == nil || job == .install {
+            let nudgeOff = agents == nil && job == .uninstall
+            if settings.hooksNudgeOff != nudgeOff {
+                settings.hooksNudgeOff = nudgeOff
+                if started { settings.save() }
+            }
         }
         // `Task` inherits this class's main-actor isolation, so the assignment
         // lands on main while the hook installer stays off it.
         Task { [weak self] in
             let (status, installs) = await Task.detached(priority: .userInitiated) {
-                (HooksSupport.run(job, previous: previous), HooksSupport.inspectAll())
+                let status: HooksSupport.Status
+                switch job {
+                case .install: status = HooksSupport.install(agents: agents, previous: previous)
+                case .uninstall: status = HooksSupport.uninstall(agents: agents, previous: previous)
+                }
+                return (status, HooksSupport.inspectAll())
             }.value
             self?.land(\.hooksStatus, status)
             self?.land(\.hookInstalls, installs)

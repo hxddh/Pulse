@@ -83,7 +83,7 @@ extension Lamp {
         case .waiting: return .systemRed
         case .running: return .systemGreen
         case .stalled: return .systemOrange
-        case .idle, .processOnly: return .systemGray
+        case .done, .idle, .processOnly: return .systemGray
         }
     }
 
@@ -135,6 +135,17 @@ extension Lamp {
             outline.stroke()
             color.setFill()
             NSBezierPath(ovalIn: NSRect(x: 6 * scale, y: 6 * scale, width: 4 * scale, height: 4 * scale)).fill()
+        case .done:
+            color.setStroke()
+            outline.stroke()
+            let check = NSBezierPath()
+            check.lineWidth = max(1.0, 1.45 * scale)
+            check.lineCapStyle = .round
+            check.lineJoinStyle = .round
+            check.move(to: NSPoint(x: 5.5 * scale, y: 8.1 * scale))
+            check.line(to: NSPoint(x: 7.3 * scale, y: 6.2 * scale))
+            check.line(to: NSPoint(x: 10.6 * scale, y: 9.8 * scale))
+            check.stroke()
         case .idle:
             color.setStroke()
             outline.stroke()

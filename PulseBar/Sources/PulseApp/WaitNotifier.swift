@@ -28,6 +28,9 @@ final class WaitNotifier {
     /// in-flight until its callback arrives so a fast follow-up scan cannot
     /// post a duplicate or mark a failed request as delivered.
     private(set) var inFlight: Set<SessionKey> = []
+    /// Sessions that currently have a delivered "Done" banner in Notification
+    /// Center — withdrawn as soon as the session moves on, is seen, or leaves.
+    private(set) var doneBannerKeys: Set<SessionKey> = []
     /// Is this blocked row's app in front now? nil: cannot tell (no pid, a
     /// detached tmux chain). Asked only of a wait raised in front, once it
     /// is `WaitingDelivery.deferAfterMs` old. Tests replace it.
@@ -62,12 +65,26 @@ final class WaitNotifier {
         withdraw(ledger.reconcile(
             rows: state.rows, edges: Set(state.newlyBlocked.map(\.key)), nowMs: nowMs, baseline: baseline
         ))
+        // Withdraw any "Done" banner whose session started working again,
+        // became blocked, was marked seen, or left the list.
+        if !doneBannerKeys.isEmpty {
+            let activeTurnKeys = Set(state.rows.filter(\.isYourTurn).map(\.key))
+            let staleDone = doneBannerKeys.subtracting(activeTurnKeys)
+            if !staleDone.isEmpty {
+                doneBannerKeys.subtract(staleDone)
+                withdraw(Set(staleDone.map(TurnWatch.bannerID)))
+            }
+        }
         guard !baseline, let model else { return }
-        // A wait raised in front of the person, still open after the hold,
-        // whose app has left the front: its one banner is due. Not knowing
-        // is not "in front" — only a known front app holds it back.
-        let due = WaitingDelivery.deferred(rows: state.rows, ledger: ledger, nowMs: nowMs)
-            .filter { promptInFront($0) != true }
+        // Two-tier hold for waits raised while their terminal app was in front:
+        // 1. After 30s (`deferAfterMs`), fire as soon as the app leaves the front.
+        // 2. After 90s (`frontEscalationMs`), fire unconditionally — an unanswered
+        //    90s prompt is almost certainly in another tab of the same terminal.
+        let escalated = WaitingDelivery.escalatedFront(rows: state.rows, ledger: ledger, nowMs: nowMs)
+        let escalatedKeys = Set(escalated.map(\.key))
+        let leftFront = WaitingDelivery.deferred(rows: state.rows, ledger: ledger, nowMs: nowMs)
+            .filter { !escalatedKeys.contains($0.key) && promptInFront($0) != true }
+        let due = leftFront + escalated
         for row in due { ledger.markFrontDue(row.key) }
         // A wait raised in front of the person is not owed a banner until
         // its hold is over (`due`).
@@ -154,6 +171,8 @@ final class WaitNotifier {
                 agent: waiting.agent.rawValue,
                 session: waiting.session,
                 rowKey: waiting.key.description,
+                kind: .waiting,
+                sound: model.settings.notificationSound,
                 completion: { [weak self] success in
                     // Each request owns one wait; commit it on its own so
                     // one rejected request never hides the others.
@@ -163,18 +182,28 @@ final class WaitNotifier {
         }
     }
 
-    /// The one banner a watched session's finished turn was asked for
-    /// (`TurnWatch`). The person asked, so a muted agent still posts it.
-    func postTurnDone(_ row: AgentRow) {
+    /// The one banner a watched or opt-in session's finished turn was asked for
+    /// (`TurnWatch`). Uses its own category (Go only, no Ignore) and is
+    /// withdrawn once the session moves on or is marked seen.
+    func postTurnDone(_ row: AgentRow, facts: SessionFacts = .empty) {
         guard let model, model.notifyAuthorized == true else { return }
+        doneBannerKeys.insert(row.key)
         PulseNotify.postWaiting(
             id: TurnWatch.bannerID(row.key),
-            banner: TurnWatch.banner(row, lang: model.lang),
+            banner: TurnWatch.banner(row, facts: facts, lang: model.lang),
             agent: row.agent.rawValue,
             session: row.session,
-            rowKey: row.key.description
+            rowKey: row.key.description,
+            kind: .done,
+            sound: model.settings.notificationSound
         )
         DebugLog.write("turn done banner key=\(row.key)")
+    }
+
+    /// Withdraw a delivered turn-done banner when the person looks at it.
+    func withdrawTurnDone(_ key: SessionKey) {
+        guard doneBannerKeys.remove(key) != nil else { return }
+        withdraw([TurnWatch.bannerID(key)])
     }
 
     /// Commit the banner only once Notification Center has said whether it
@@ -277,11 +306,22 @@ final class WaitNotifier {
 
     // MARK: - Clicks
 
-    /// A banner (or its Go button) was clicked: go to its wait when it is
-    /// still open. When it was answered, ignored or ended meanwhile, the
-    /// tray opens instead — never a jump to a prompt that is gone.
-    func handleBannerClick(agent: String, session: String, rowKey: String) {
+    /// A banner (or its Go button) was clicked:
+    /// - for a waiting banner: go to its wait when it is still open; when it
+    ///   was answered, ignored or ended meanwhile, open the tray instead;
+    /// - for a turn-done banner: go to the session if its row still exists,
+    ///   otherwise open the tray.
+    func handleBannerClick(agent: String, session: String, rowKey: String, kind: String = PulseNotify.BannerKind.waiting.rawValue) {
         guard let model else { return }
+        if kind == PulseNotify.BannerKind.done.rawValue {
+            if let row = model.rows.first(where: { $0.key.description == rowKey }) {
+                withdrawTurnDone(row.key)
+                model.focusAgent(idRaw: agent, session: session, rowKey: rowKey)
+            } else {
+                model.requestTrayReveal()
+            }
+            return
+        }
         if ledger.isOpen(rowKey: rowKey) {
             model.focusAgent(idRaw: agent, session: session, rowKey: rowKey)
         } else {

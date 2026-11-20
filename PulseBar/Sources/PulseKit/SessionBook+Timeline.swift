@@ -12,6 +12,15 @@ extension SessionBook {
     /// line's clock and event. A single step keeps its own words, target
     /// and duration.
     static func hear(_ session: inout Session, _ heard: Heard) {
+        // Optimistic `dismiss` / `seen` applied immediately by the store is
+        // read back from the event log with the same stamp and event — even if
+        // another hook line (such as an echo) arrived in between: keep one.
+        if (heard.effect == .dismissed || heard.effect == .seen),
+           session.timeline.contains(where: {
+               $0.ms == heard.ms && $0.event == heard.event && $0.effect == heard.effect && $0.sub == heard.sub
+           }) {
+            return
+        }
         if let last = session.timeline.last, last.sub == heard.sub,
            case .steps(var run) = last.effect, case .steps(let next) = heard.effect, next.count == 1,
            let tool = next.tools.first?.tool {

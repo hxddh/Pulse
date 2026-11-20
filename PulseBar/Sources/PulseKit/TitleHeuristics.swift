@@ -155,7 +155,8 @@ package enum TitleHeuristics {
         let folded = ContentSanitizer.redact(text)
             .split(whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")
-        guard folded.count >= 3, !folded.hasPrefix("<"), !folded.hasPrefix("# AGENTS.md") else { return "" }
+        let minLength = folded.unicodeScalars.contains(where: { $0.value >= 0x2E80 }) ? 2 : 3
+        guard folded.count >= minLength, !folded.hasPrefix("<"), !folded.hasPrefix("# AGENTS.md") else { return "" }
         return folded.count > limit ? String(folded.prefix(limit - 1)) + "…" : folded
     }
 

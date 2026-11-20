@@ -531,6 +531,8 @@ package enum HooksInstaller {
         fi
         if [ -z "$RUNNER" ] || [ ! -x "$RUNNER" ]; then
           for c in \\
+            "/Applications/Pulse.app/Contents/MacOS/pulse-hook" \\
+            "$HOME/Applications/Pulse.app/Contents/MacOS/pulse-hook" \\
             "/Applications/Pulse.app/Contents/MacOS/PulseBar" \\
             "$HOME/Applications/Pulse.app/Contents/MacOS/PulseBar"
           do
@@ -553,15 +555,20 @@ package enum HooksInstaller {
         let fm = FileManager.default
         try? fm.createDirectory(at: supportDir, withIntermediateDirectories: true)
         let runner: String = {
-            if let exe = Bundle.main.executableURL?.path,
-               fm.isExecutableFile(atPath: exe),
-               Bundle.main.bundleURL.pathExtension == "app" {
-                return exe
+            if Bundle.main.bundleURL.pathExtension == "app" {
+                // Prefer the dedicated lightweight `pulse-hook` binary (zero AppKit/SwiftUI).
+                let fast = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/pulse-hook").path
+                if fm.isExecutableFile(atPath: fast) { return fast }
+                if let exe = Bundle.main.executableURL?.path, fm.isExecutableFile(atPath: exe) {
+                    return exe
+                }
             }
-            // `swift run` / XCTest: prefer the process executable.
+            // `swift run` / XCTest: prefer a sibling `pulse-hook` if built, else the process executable.
             let processPath = ProcessInfo.processInfo.arguments.first ?? ""
-            if !processPath.isEmpty, fm.isExecutableFile(atPath: processPath) {
-                return processPath
+            if !processPath.isEmpty {
+                let sibling = URL(fileURLWithPath: processPath).deletingLastPathComponent().appendingPathComponent("pulse-hook").path
+                if fm.isExecutableFile(atPath: sibling) { return sibling }
+                if fm.isExecutableFile(atPath: processPath) { return processPath }
             }
             return Bundle.main.executableURL?.path ?? processPath
         }()

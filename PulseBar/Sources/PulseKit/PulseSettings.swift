@@ -1,12 +1,17 @@
 import Foundation
 
+/// Notification banner sound preference.
+package enum NotificationSound: String, CaseIterable, Sendable, Codable {
+    case `default`
+    case silent
+}
+
 /// User settings as a value, saved as `settings.json` (0600, `PrivateFile`).
 ///
 /// Whether Pulse opens at login, whether the person removed the hooks on
-/// purpose, whether the global shortcut is on, and the agents whose banners
-/// are muted. Decoding is tolerant — a missing or mistyped key is its
-/// default, an unknown key is ignored — so one bad field never costs the
-/// rest of the file.
+/// purpose, whether the global shortcuts are on, and notification preferences.
+/// Decoding is tolerant — a missing or mistyped key is its default, an unknown
+/// key is ignored — so one bad field never costs the rest of the file.
 package struct PulseSettings: Equatable, Codable, Sendable {
     package var launchAtLogin = false
     /// Set when the user removes the hooks: the tray stops suggesting
@@ -14,9 +19,20 @@ package struct PulseSettings: Equatable, Codable, Sendable {
     package var hooksNudgeOff = false
     /// The global shortcut (⌃⌥⌘P) opens the tray on the oldest wait.
     package var globalShortcut = true
+    /// Optional second global shortcut (⌃⌥⌘↩) jumps straight to the oldest
+    /// blocked terminal without opening the tray.
+    package var directJumpShortcut = false
     /// Agents whose "needs you" banners are not posted. The lamp, the tray
     /// and the count still say it: muting is about interruptions only.
     package var mutedAgents: [AgentID] = []
+    /// Agents whose finished turns automatically post a quiet "Done" banner
+    /// (opt-in; ideal for Codex/Cursor which do not report waits).
+    package var notifyDoneAgents: [AgentID] = []
+    /// Automatically post a "Done" banner when any non-muted turn lasting at
+    /// least this many seconds finishes (0 = off).
+    package var notifyLongTurnSeconds = 0
+    /// Whether Pulse banners play the system notification sound.
+    package var notificationSound: NotificationSound = .default
     /// The chord the global shortcut uses.
     package var shortcut: ShortcutChoice = .default
     /// The tray groups its rows by project.
@@ -25,7 +41,9 @@ package struct PulseSettings: Equatable, Codable, Sendable {
     package init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case launchAtLogin, hooksNudgeOff, globalShortcut, mutedAgents, shortcut, groupByProject
+        case launchAtLogin, hooksNudgeOff, globalShortcut, directJumpShortcut
+        case mutedAgents, notifyDoneAgents, notifyLongTurnSeconds, notificationSound
+        case shortcut, groupByProject
     }
 
     package init(from decoder: any Decoder) throws {
@@ -33,8 +51,15 @@ package struct PulseSettings: Equatable, Codable, Sendable {
         launchAtLogin = (try? c.decodeIfPresent(Bool.self, forKey: .launchAtLogin)) ?? false
         hooksNudgeOff = (try? c.decodeIfPresent(Bool.self, forKey: .hooksNudgeOff)) ?? false
         globalShortcut = (try? c.decodeIfPresent(Bool.self, forKey: .globalShortcut)) ?? true
+        directJumpShortcut = (try? c.decodeIfPresent(Bool.self, forKey: .directJumpShortcut)) ?? false
         let muted = (try? c.decodeIfPresent([String].self, forKey: .mutedAgents)) ?? []
         mutedAgents = muted.compactMap(AgentID.init(rawValue:))
+        let doneAgents = (try? c.decodeIfPresent([String].self, forKey: .notifyDoneAgents)) ?? []
+        notifyDoneAgents = doneAgents.compactMap(AgentID.init(rawValue:))
+        let longSeconds = (try? c.decodeIfPresent(Int.self, forKey: .notifyLongTurnSeconds)) ?? 0
+        notifyLongTurnSeconds = max(0, longSeconds)
+        let soundRaw = (try? c.decodeIfPresent(String.self, forKey: .notificationSound)) ?? nil
+        notificationSound = soundRaw.flatMap(NotificationSound.init(rawValue:)) ?? .default
         let chord = (try? c.decodeIfPresent(String.self, forKey: .shortcut)) ?? nil
         shortcut = chord.flatMap(ShortcutChoice.init(rawValue:)) ?? .default
         groupByProject = (try? c.decodeIfPresent(Bool.self, forKey: .groupByProject)) ?? false
@@ -45,7 +70,11 @@ package struct PulseSettings: Equatable, Codable, Sendable {
         try c.encode(launchAtLogin, forKey: .launchAtLogin)
         try c.encode(hooksNudgeOff, forKey: .hooksNudgeOff)
         try c.encode(globalShortcut, forKey: .globalShortcut)
+        try c.encode(directJumpShortcut, forKey: .directJumpShortcut)
         try c.encode(mutedAgents.map(\.rawValue), forKey: .mutedAgents)
+        try c.encode(notifyDoneAgents.map(\.rawValue), forKey: .notifyDoneAgents)
+        try c.encode(notifyLongTurnSeconds, forKey: .notifyLongTurnSeconds)
+        try c.encode(notificationSound.rawValue, forKey: .notificationSound)
         try c.encode(shortcut.rawValue, forKey: .shortcut)
         try c.encode(groupByProject, forKey: .groupByProject)
     }
@@ -62,9 +91,24 @@ package struct PulseSettings: Equatable, Codable, Sendable {
         return next
     }
 
+    /// Whether `agent`'s finished turns automatically post a "Done" banner.
+    package func notifiesDone(_ agent: AgentID) -> Bool { notifyDoneAgents.contains(agent) }
+
+    /// The settings with `agent`'s turn-done banner on or off, in roster order.
+    package func notifyingDone(_ agent: AgentID, _ enabled: Bool) -> PulseSettings {
+        var next = self
+        var set = Set(notifyDoneAgents)
+        if enabled { set.insert(agent) } else { set.remove(agent) }
+        next.notifyDoneAgents = AgentID.allCases.filter(set.contains)
+        return next
+    }
+
+    /// Supported long-turn thresholds (seconds; 0 = off).
+    package static let longTurnOptions = [0, 120, 300, 600]
+
     /// One-line summary for the debug log.
     package var debugDescription: String {
-        "login=\(launchAtLogin) hooksNudgeOff=\(hooksNudgeOff) shortcut=\(globalShortcut ? shortcut.display : "off") group=\(groupByProject) muted=\(mutedAgents.map(\.rawValue))"
+        "login=\(launchAtLogin) hooksNudgeOff=\(hooksNudgeOff) shortcut=\(globalShortcut ? shortcut.display : "off") directJump=\(directJumpShortcut) group=\(groupByProject) sound=\(notificationSound.rawValue) longTurn=\(notifyLongTurnSeconds)s muted=\(mutedAgents.map(\.rawValue)) done=\(notifyDoneAgents.map(\.rawValue))"
     }
 
     // MARK: - On disk

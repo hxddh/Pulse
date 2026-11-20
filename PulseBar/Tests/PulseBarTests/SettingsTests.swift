@@ -37,10 +37,15 @@ struct PulseSettingsTests {
         original.launchAtLogin = true
         original.hooksNudgeOff = true
         original.globalShortcut = false
+        original.directJumpShortcut = true
         original.shortcut = .optionCommandP
         original.groupByProject = true
+        original.notifyLongTurnSeconds = 300
+        original.notificationSound = .silent
         original = original.muting(.codex, true).muting(.claude, true)
+        original = original.notifyingDone(.cursor, true).notifyingDone(.codex, true)
         #expect(original.mutedAgents == [.claude, .codex], "roster order")
+        #expect(original.notifyDoneAgents == [.codex, .cursor], "roster order")
         let reparsed = try roundTrip(original)
         #expect(reparsed == original)
     }
@@ -50,7 +55,11 @@ struct PulseSettingsTests {
         #expect(!d.launchAtLogin)
         #expect(!d.hooksNudgeOff)
         #expect(d.globalShortcut, "the shortcut is on until turned off")
+        #expect(!d.directJumpShortcut)
         #expect(d.mutedAgents.isEmpty)
+        #expect(d.notifyDoneAgents.isEmpty)
+        #expect(d.notifyLongTurnSeconds == 0)
+        #expect(d.notificationSound == .default)
         let reparsed = try roundTrip(d)
         #expect(reparsed == d)
     }
@@ -60,7 +69,11 @@ struct PulseSettingsTests {
         let data = try JSONEncoder().encode(PulseSettings())
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let keys = Set(object?.keys.map { $0 } ?? [])
-        #expect(keys == ["launchAtLogin", "hooksNudgeOff", "globalShortcut", "mutedAgents", "shortcut", "groupByProject"])
+        #expect(keys == [
+            "launchAtLogin", "hooksNudgeOff", "globalShortcut", "directJumpShortcut",
+            "mutedAgents", "notifyDoneAgents", "notifyLongTurnSeconds", "notificationSound",
+            "shortcut", "groupByProject",
+        ])
     }
 
     // MARK: Tolerance
@@ -340,5 +353,11 @@ struct AutomationLineTests {
     @Test func theRefusedChordIsTheOneChosen() {
         let note = SettingsModel.shortcutNote(on: true, registered: false, choice: .optionCommandP, lang: .en)
         #expect(note?.contains("⌥⌘P") == true)
+        let directNote = SettingsModel.directJumpNote(on: true, registered: false, lang: .zh)
+        #expect(directNote?.contains("⌃⌥⌘↩") == true)
+        #expect(SettingsModel.directJumpNote(on: false, registered: false, lang: .en) == nil)
+        #expect(SettingsModel.longTurnLabel(0, lang: .en) == "Off")
+        #expect(SettingsModel.longTurnLabel(300, lang: .zh) == "超过 5 分钟")
+        #expect(SettingsModel.notifyDoneCandidates(present: [.codex, .cursor]) == [.codex, .cursor])
     }
 }

@@ -37,9 +37,13 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 2
 fi
 APP="${PULSE_APP:-$ROOT/zig-out/package/Pulse.app}"
-RUNNER="$APP/Contents/MacOS/PulseBar"
+RUNNER="$APP/Contents/MacOS/pulse-hook"
 if [[ ! -x "$RUNNER" ]]; then
-  echo "error: no packaged app at $APP — run ./PulseBar/Scripts/package.sh first" >&2
+  echo "error: no packaged pulse-hook at $APP — run ./PulseBar/Scripts/package.sh first" >&2
+  exit 2
+fi
+if [[ ! -x "$APP/Contents/MacOS/PulseBar" ]]; then
+  echo "error: no packaged PulseBar at $APP — run ./PulseBar/Scripts/package.sh first" >&2
   exit 2
 fi
 if [[ -n "${PULSE_QA:-}" ]]; then

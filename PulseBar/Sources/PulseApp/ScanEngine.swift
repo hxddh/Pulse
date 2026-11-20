@@ -101,9 +101,9 @@ final class ScanEngine {
     private(set) var activity: ProbeSchedule.Activity = .empty
     /// A wait younger than `freshWaitMs` is open.
     private var freshWait = false
-    /// A wait younger than this keeps the fast tick: the banner for a wait
-    /// raised in front of the person is decided 30 s later.
-    static let freshWaitMs: Int64 = 60_000
+    /// A wait younger than this keeps the fast tick: the deferred banner for a
+    /// wait raised in front is decided at 30 s (left front) and 90 s (unanswered).
+    static let freshWaitMs: Int64 = 100_000
     /// The tick in force; nil while it is stopped.
     private(set) var currentInterval: TimeInterval?
     private var lastApplyLogSignature = ""

@@ -47,6 +47,7 @@ struct ScanQuietTests {
             ("snapshot", \StatusStore.snapshot),
             ("waitingBannerFailed", \StatusStore.waitingBannerFailed),
             ("shortcutRegistered", \StatusStore.shortcutRegistered),
+            ("directJumpRegistered", \StatusStore.directJumpRegistered),
             ("hookPing", \StatusStore.hookPing),
             ("turnWatches", \StatusStore.turnWatches),
             ("automation", \StatusStore.automation),
