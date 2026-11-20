@@ -140,26 +140,35 @@ def main(argv: list[str]) -> int:
             f"{BUNDLE_NAME} is in neither Contents/Resources/ nor the app root — "
             "resource lookup will fail and the app cannot show its icons"
         )
+    bundle_layout = "flat"
     for bundle in found:
-        # A SwiftPM resource bundle is flat. Adding Contents/ flips CFBundle to
-        # the modern layout, so it stops reading the root and looks for
-        # Contents/Info.plist instead.
-        stray = bundle / "Contents"
-        if stray.exists():
-            problems.append(
-                f"{bundle.name} at {bundle.parent.name}/ has a Contents/ directory — "
-                "a SwiftPM resource bundle is flat, and CFBundle will stop reading "
-                "the root once it sees this"
-            )
-
-        if not (bundle / "Info.plist").is_file():
-            problems.append(
-                f"{bundle.name} at {bundle.parent.name}/ has no Info.plist — a "
-                "directory without one may not open as a bundle at all"
-            )
+        # SwiftPM emits a flat bundle on single-arch builds (Info.plist and
+        # resources at the root) and a modern macOS bundle (Contents/Info.plist
+        # and Contents/Resources/...) on universal xcbuild builds. Both open
+        # cleanly via Bundle(url:) as long as the layout is consistent.
+        contents_dir = bundle / "Contents"
+        if contents_dir.is_dir():
+            bundle_layout = "modern"
+            res_root = contents_dir / "Resources"
+            if not (contents_dir / "Info.plist").is_file():
+                problems.append(
+                    f"{bundle.name} at {bundle.parent.name}/ has Contents/ without Contents/Info.plist — "
+                    "CFBundle switches to modern layout once Contents/ exists and will refuse to open it"
+                )
+            if (bundle / "Info.plist").is_file():
+                problems.append(
+                    f"{bundle.name} at {bundle.parent.name}/ has both Contents/ and a stray root Info.plist"
+                )
+        else:
+            res_root = bundle
+            if not (bundle / "Info.plist").is_file():
+                problems.append(
+                    f"{bundle.name} at {bundle.parent.name}/ has no Info.plist — a "
+                    "directory without one may not open as a bundle at all"
+                )
 
         for rel in REQUIRED_IN_BUNDLE:
-            if not (bundle / rel).is_file():
+            if not (res_root / rel).is_file():
                 problems.append(f"{BUNDLE_NAME}/{rel} is missing")
 
     for rel in REQUIRED_IN_APP:
@@ -173,10 +182,11 @@ def main(argv: list[str]) -> int:
     if problems:
         return fail(problems)
 
-    icons = len(list((found[0] / "AgentIcons").glob("*.png")))
+    first_root = found[0] / "Contents" / "Resources" if (found[0] / "Contents").is_dir() else found[0]
+    icons = len(list((first_root / "AgentIcons").glob("*.png")))
     where = ", ".join(str(b.relative_to(app)) for b in found)
     print(f"package OK — {app.name} {version or '?'} · {icons} agent icons")
-    print(f"  resource bundle at: {where} (flat, Info.plist present)")
+    print(f"  resource bundle at: {where} ({bundle_layout}, Info.plist present)")
     glass = "Assets.car + CFBundleIconName" if (resources / "Assets.car").is_file() else "none (AppIcon.icns only)"
     print(f"  Liquid Glass icon: {glass}")
     print("  structure only — run `PulseBar --selftest` to prove it resolves")

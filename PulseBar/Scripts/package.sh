@@ -140,11 +140,16 @@ fi
 rm -rf "$APP/Contents/Resources/PulseBar_PulseApp.bundle"
 cp -R "$RES_BUNDLE" "$APP/Contents/Resources/"
 
-# A bundle directory without an Info.plist is not a bundle — Bundle(url:)
-# returns nil and the compiler-generated Bundle.module accessor calls
-# fatalError(). SwiftPM usually writes one; make sure, rather than find out
-# from a crash report.
-BUNDLE_PLIST="$APP/Contents/Resources/PulseBar_PulseApp.bundle/Info.plist"
+# SwiftPM emits a flat resource bundle on single-arch builds (Info.plist at
+# root) and a modern macOS bundle on universal xcbuild builds
+# (Contents/Info.plist + Contents/Resources/). Never write a stray root
+# Info.plist next to Contents/, or CFBundle sees a broken hybrid.
+BUNDLE_DIR="$APP/Contents/Resources/PulseBar_PulseApp.bundle"
+if [[ -d "$BUNDLE_DIR/Contents" ]]; then
+  BUNDLE_PLIST="$BUNDLE_DIR/Contents/Info.plist"
+else
+  BUNDLE_PLIST="$BUNDLE_DIR/Info.plist"
+fi
 if [[ ! -f "$BUNDLE_PLIST" ]]; then
   echo "note: SwiftPM emitted no Info.plist for the resource bundle — writing one"
   cat > "$BUNDLE_PLIST" <<PLIST
@@ -198,7 +203,8 @@ else
   test -x "$APP/Contents/MacOS/PulseBar"
   test -f "$APP/Contents/Info.plist"
   test -d "$APP/Contents/Resources/PulseBar_PulseApp.bundle"
-  test -f "$APP/Contents/Resources/PulseBar_PulseApp.bundle/Info.plist"
+  test -f "$APP/Contents/Resources/PulseBar_PulseApp.bundle/Info.plist" \
+    -o -f "$APP/Contents/Resources/PulseBar_PulseApp.bundle/Contents/Info.plist"
   echo "package structure OK — Python package_check skipped"
 fi
 
