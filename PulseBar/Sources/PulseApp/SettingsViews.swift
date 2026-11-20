@@ -73,10 +73,18 @@ extension StatusStore {
             on: settings.globalShortcut, registered: shortcutRegistered, choice: settings.shortcut, lang: lang
         )
         model.shortcutChoice = settings.shortcut
+        model.directJumpShortcut = settings.directJumpShortcut
+        model.directJumpNote = SettingsModel.directJumpNote(
+            on: settings.directJumpShortcut, registered: directJumpRegistered, lang: lang
+        )
         model.groupByProject = settings.groupByProject
         model.automation = SettingsModel.automationLines(automation, lang: lang)
         model.muteCandidates = SettingsModel.muteCandidates(present: presentAgents)
         model.mutedAgents = Set(settings.mutedAgents)
+        model.notifyDoneCandidates = SettingsModel.notifyDoneCandidates(present: presentAgents)
+        model.notifyDoneAgents = Set(settings.notifyDoneAgents)
+        model.notifyLongTurnSeconds = settings.notifyLongTurnSeconds
+        model.notificationSound = settings.notificationSound
         let ping = SettingsModel.pingLine(hookPing, nowMs: nowMs, lang: lang)
         model.pingLine = ping?.text
         model.pingWarning = ping?.warning ?? false
@@ -91,11 +99,17 @@ extension StatusStore {
         case .openNotificationSettings: PulseNotify.openSystemSettings()
         case .installHooks, .uninstallHooks:
             if let job = SettingsModel.hooksJob(action) { runHooks(job) }
+        case .installAgent(let agent): runHooks(.install, agents: [agent])
+        case .uninstallAgent(let agent): runHooks(.uninstall, agents: [agent])
         case .copyReport: copyReport()
         case .openReleases:
             if let url = URL(string: SettingsModel.releasesURL) { NSWorkspace.shared.open(url) }
         case .setGlobalShortcut(let on): setGlobalShortcut(on)
+        case .setDirectJumpShortcut(let on): setDirectJumpShortcut(on)
         case .setMuted(let agent, let muted): setMuted(agent, muted)
+        case .setNotifyDone(let agent, let on): setNotifyDone(agent, on)
+        case .setLongTurnSeconds(let seconds): setLongTurnSeconds(seconds)
+        case .setNotificationSound(let sound): setNotificationSound(sound)
         case .testConnection: testHookConnection()
         case .setShortcut(let choice): setShortcut(choice)
         case .setGroupByProject(let on): set(\.groupByProject, on)
@@ -213,6 +227,15 @@ struct SettingsFace: View {
                     .font(PulseTheme.Font.caption)
                     .foregroundStyle(PulseTheme.warning)
             }
+            Toggle(t(.settingsDirectJump), isOn: binding(model.directJumpShortcut) { .setDirectJumpShortcut($0) })
+            Text(t(.settingsDirectJumpHint))
+                .font(PulseTheme.Font.caption)
+                .foregroundStyle(.secondary)
+            if let note = model.directJumpNote {
+                Label(note, systemImage: "exclamationmark.triangle")
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(PulseTheme.warning)
+            }
             Toggle(t(.settingsGroupByProject), isOn: binding(model.groupByProject) { .setGroupByProject($0) })
         case .notifications:
             switch model.notifications {
@@ -237,6 +260,13 @@ struct SettingsFace: View {
                     Text(t(.notifyFocusNote))
                 }
             }
+            Picker(t(.settingsSoundTitle), selection: Binding(
+                get: { model.notificationSound },
+                set: { [send] sound in send(.setNotificationSound(sound)) }
+            )) {
+                Text(t(.settingsSoundDefault)).tag(NotificationSound.default)
+                Text(t(.settingsSoundSilent)).tag(NotificationSound.silent)
+            }
             if !model.muteCandidates.isEmpty {
                 VStack(alignment: .leading, spacing: PulseTheme.Space.xs) {
                     Text(t(.settingsMuteTitle))
@@ -252,6 +282,31 @@ struct SettingsFace: View {
                     Text(t(.settingsMuteHint))
                         .font(PulseTheme.Font.caption)
                         .foregroundStyle(.secondary)
+                }
+            }
+            if !model.notifyDoneCandidates.isEmpty {
+                VStack(alignment: .leading, spacing: PulseTheme.Space.xs) {
+                    Text(t(.settingsDoneNotifyTitle))
+                    HStack(spacing: PulseTheme.Space.m) {
+                        ForEach(model.notifyDoneCandidates, id: \.self) { agent in
+                            let enabled = model.notifyDoneAgents.contains(agent)
+                            Toggle(isOn: binding(enabled) { .setNotifyDone(agent, $0) }) {
+                                Label { Text(agent.displayName) } icon: { AgentIconView(id: agent) }
+                            }
+                            .toggleStyle(.checkbox)
+                        }
+                    }
+                    Text(t(.settingsDoneNotifyHint))
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Picker(t(.settingsLongTurnTitle), selection: Binding(
+                get: { model.notifyLongTurnSeconds },
+                set: { [send] seconds in send(.setLongTurnSeconds(seconds)) }
+            )) {
+                ForEach(PulseSettings.longTurnOptions, id: \.self) { seconds in
+                    Text(SettingsModel.longTurnLabel(seconds, lang: model.lang)).tag(seconds)
                 }
             }
         case .hooks:
@@ -274,13 +329,27 @@ struct SettingsFace: View {
                     .font(PulseTheme.Font.caption)
                     .foregroundStyle(PulseTheme.warning)
             }
-            // One line per agent: its name and state, then — quietly — that
-            // it does not report waits, what was heard (and any caveat), and
-            // the last event not used.
+            // One line per agent: its name and state, with a quick per-agent
+            // Install / Update / Remove button beside the state.
             ForEach(model.hookAgents) { line in
                 LabeledContent {
-                    Text(line.state)
-                        .foregroundStyle(Self.style(line.tone))
+                    HStack(spacing: PulseTheme.Space.s) {
+                        Text(line.state)
+                            .foregroundStyle(Self.style(line.tone))
+                        if line.connection.install.needsUpdate {
+                            Button(t(.updateOne)) { send(.installAgent(line.agent)) }
+                                .controlSize(.small)
+                                .disabled(model.hooksBusy)
+                        } else if line.installed {
+                            Button(t(.removeOne)) { send(.uninstallAgent(line.agent)) }
+                                .controlSize(.small)
+                                .disabled(model.hooksBusy)
+                        } else {
+                            Button(t(.installOne)) { send(.installAgent(line.agent)) }
+                                .controlSize(.small)
+                                .disabled(model.hooksBusy)
+                        }
+                    }
                 } label: {
                     Label {
                         Text(line.agent.displayName)

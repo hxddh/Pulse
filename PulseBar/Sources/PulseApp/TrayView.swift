@@ -112,7 +112,7 @@ struct TrayView: View {
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                        if store.settings.groupByProject, TrayOrder.startsGroup(rows, at: index) {
+                        if ui.groupedAtOpen, TrayOrder.startsGroup(rows, at: index) {
                             Text(row.project.isEmpty ? t(.noProject) : row.project)
                                 .font(PulseTheme.Font.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
@@ -122,6 +122,11 @@ struct TrayView: View {
                                 .padding(.top, index == 0 ? PulseTheme.Space.xxs : PulseTheme.Space.s)
                                 .padding(.bottom, PulseTheme.Space.xxs)
                                 .accessibilityAddTraits(.isHeader)
+                        } else if !ui.groupedAtOpen, index > 0, rows[index - 1].isBlocked, !row.isBlocked {
+                            Divider()
+                                .opacity(0.45)
+                                .padding(.horizontal, TrayChrome.padX)
+                                .padding(.vertical, PulseTheme.Space.xs)
                         }
                         TrayRowButton(
                             store: store,
@@ -293,7 +298,7 @@ private struct TrayRowButton: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: TrayChrome.clock)) { context in
             TrayRowFace(
-                model: store.trayRowModel(row, at: context.date),
+                model: store.trayRowModel(row, at: context.date, hideProject: ui.groupedAtOpen),
                 selected: selected
             ) { action in
                 ui.send(action, row: row)
@@ -384,6 +389,7 @@ struct TrayRowFace: View {
         switch key {
         case .enter: return KeyboardShortcut(.return, modifiers: [])
         case .right: return KeyboardShortcut(.rightArrow, modifiers: [])
+        case .watchTurn: return KeyboardShortcut("b", modifiers: .command)
         case .dismiss: return KeyboardShortcut("d", modifiers: .command)
         default: return nil
         }
@@ -480,6 +486,12 @@ struct TrayRowFace: View {
                     .lineLimit(1)
                     .fixedSize()
             }
+            if model.watchingTurn {
+                Image(systemName: "bell.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
             if !model.age.isEmpty {
                 Text(model.age)
                     .font(PulseTheme.Font.caption)
@@ -512,6 +524,10 @@ final class TrayUI {
     /// Every row that has been on screen this glance. While the tray is open
     /// they stay listed, in their place, as long as they exist.
     var pinned: Set<SessionKey> = []
+    /// Whether the list was grouped by project when this glance opened —
+    /// frozen with `frozen` so newcomers append at the bottom instead of
+    /// shifting rows under the pointer.
+    var groupedAtOpen = false
     /// The row the pointer selected last. The list scrolls to a selection
     /// the keyboard made, never to one the pointer made — a row that moved
     /// under a still pointer would select the next one.
@@ -542,8 +558,7 @@ final class TrayUI {
     /// in the frozen order, then newcomers (`TrayOrder.openList`). The list
     /// scrolls inside the tray's height.
     var displayRows: [AgentRow] {
-        let rows = TrayOrder.openList(all: store.rows, pinned: pinned, frozen: frozen)
-        return store.settings.groupByProject ? TrayOrder.groupedByProject(rows) : rows
+        TrayOrder.openList(all: store.rows, pinned: pinned, frozen: frozen)
     }
 
     /// The row whose detail page is open, while it still exists.
@@ -579,8 +594,13 @@ final class TrayUI {
     /// clock last).
     func open(pointer: CGPoint? = nil) {
         generation &+= 1
-        frozen = store.rows.map(\.key)
+        groupedAtOpen = store.settings.groupByProject
+        let initial = groupedAtOpen ? TrayOrder.groupedByProject(store.rows) : store.rows
+        frozen = initial.map(\.key)
         pinned = Set(frozen)
+        if listHeight == 0, !initial.isEmpty {
+            listHeight = min(CGFloat(initial.count * 46 + 8), CGFloat(maxListHeight))
+        }
         pointerSelection = nil
         self.pointer = pointer
         var next = TrayKeys.State()
@@ -633,6 +653,8 @@ final class TrayUI {
             if let row = lookup(key) { store.focusTerminal(row) }
         case .dismiss(let key):
             if let row = lookup(key) { store.dismissWaiting(row) }
+        case .watchTurn(let key):
+            if let row = lookup(key) { store.toggleTurnWatch(row) }
         case .refresh:
             store.engine.refresh(reason: "manual")
         case .openSettings:
@@ -655,6 +677,7 @@ final class TrayUI {
                 showDetail(row.key)
             }
         case .details: showDetail(row.key)
+        case .watchTurn: store.toggleTurnWatch(row)
         case .dismiss: store.dismissWaiting(row)
         case .focus: store.focusTerminal(row)
         }
@@ -670,6 +693,7 @@ final class TrayUI {
             next.disclosed = next.detail != nil && !next.disclosed
             if keys != next { keys = next }
         case .copySummary: store.copyTurnSummary(row)
+        case .copyAsk: store.copyAsk(row)
         case .watchTurn: store.toggleTurnWatch(row)
         }
     }

@@ -13,8 +13,10 @@ let package = Package(
     name: "PulseBar",
     platforms: [.macOS(.v14)],
     products: [
-        // The shipping app. `package.sh` builds this product alone.
+        // The shipping app. `package.sh` builds PulseBar + pulse-hook.
         .executable(name: "PulseBar", targets: ["PulseBar"]),
+        // The lightweight native hook receiver (Foundation + CoreGraphics only).
+        .executable(name: "pulse-hook", targets: ["PulseHook"]),
         // The QA driver: fixtures and captures. Debug configuration only
         // (`swift build --product PulseQA`); never packaged.
         .executable(name: "PulseQA", targets: ["PulseQA"]),
@@ -26,10 +28,18 @@ let package = Package(
         // protocol and the event log, the hook receiver and installer, the
         // process table (libproc), the session book and the tray projection,
         // every surface model, the copy. Its members are `package`: the app,
-        // the QA driver and the tests are its only clients.
+        // the hook receiver, the QA driver and the tests are its only clients.
         .target(
             name: "PulseKit",
             path: "Sources/PulseKit",
+            exclude: ["Agents/JS"],
+            swiftSettings: strict
+        ),
+        // The lightweight hook receiver: links only PulseKit (no AppKit/SwiftUI).
+        .executableTarget(
+            name: "PulseHook",
+            dependencies: ["PulseKit"],
+            path: "Sources/PulseHook",
             swiftSettings: strict
         ),
         // The app: the engine (scan, watchers), the store, the notifier,

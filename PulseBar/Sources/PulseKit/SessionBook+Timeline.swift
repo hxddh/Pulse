@@ -12,6 +12,13 @@ extension SessionBook {
     /// line's clock and event. A single step keeps its own words, target
     /// and duration.
     static func hear(_ session: inout Session, _ heard: Heard) {
+        // Optimistic `dismiss` / `seen` applied immediately by the store is
+        // read back from the event log with the same stamp and event: keep one.
+        if let last = session.timeline.last,
+           (heard.effect == .dismissed || heard.effect == .seen),
+           last.ms == heard.ms, last.event == heard.event, last.effect == heard.effect, last.sub == heard.sub {
+            return
+        }
         if let last = session.timeline.last, last.sub == heard.sub,
            case .steps(var run) = last.effect, case .steps(let next) = heard.effect, next.count == 1,
            let tool = next.tools.first?.tool {

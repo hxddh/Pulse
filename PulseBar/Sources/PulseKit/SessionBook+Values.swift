@@ -12,6 +12,9 @@ extension SessionBook {
         case working
         /// It cannot go on until the person answers — the red lamp.
         case blocked(Block)
+        /// The person ignored a wait in Pulse (`dismiss`): neither red nor
+        /// faking green while the vendor's prompt may still be open.
+        case dismissedWait(sinceMs: Int64)
         /// It finished its turn and nobody has looked since — quiet.
         case yourTurn(sinceMs: Int64)
         /// It ended, or its process exited.

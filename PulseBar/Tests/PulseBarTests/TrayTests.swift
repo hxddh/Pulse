@@ -273,7 +273,7 @@ struct TrayInteractionTests {
         let labels = model.counts.map { "\($0.count) \($0.label)" }
         #expect(labels == ["2 need you", "1 running", "1 quiet", "1 done"])
         let tones = model.counts.map { $0.tone }
-        #expect(tones == [Lamp.waiting, .running, .stalled, .idle])
+        #expect(tones == [Lamp.waiting, .running, .stalled, .done])
     }
 
     @Test func oneWaitIsSingular() {
@@ -547,6 +547,9 @@ final class StatusLampTests: XCTestCase {
             XCTAssertEqual(lamp.statusBarImage.isTemplate, lamp.isGrey, "\(lamp): only grey follows the menu bar")
         }
         XCTAssertTrue(Lamp.processOnly.isGrey)
+        XCTAssertTrue(Lamp.done.isGrey)
+        // Done (ring + check) is visually distinct from idle (hollow ring).
+        XCTAssertNotEqual(Lamp.done.statusBarImage.tiffRepresentation, Lamp.idle.statusBarImage.tiffRepresentation)
 
         let waiting = Lamp.waiting.nsColor.usingColorSpace(.deviceRGB)!
         let running = Lamp.running.nsColor.usingColorSpace(.deviceRGB)!
@@ -1314,7 +1317,8 @@ struct RowWordsTests {
         let model = face(row, failed)
         #expect(model.secondLine == TrayRowModel.SecondLine(kind: .failure, text: "Turn failed: rate limit reached"))
         #expect(face(row, failed, lang: .zh).secondLine?.text == "回合出错：rate limit reached")
-        #expect(model.lamp == .idle)
+        #expect(model.lamp == .done)
+        #expect(model.lamp.isGrey)
         let silent = SessionFacts(lastEventMs: now - 2 * minute, failedTurn: true)
         #expect(face(row, silent).secondLine == nil, "no words, no second line — the why says it")
     }
@@ -1616,18 +1620,18 @@ struct RowWordsTests {
         #expect(Lamp(Status.needsYou(Block(kind: .permission))) == .waiting)
         #expect(Lamp(Status.running(stalled: false)) == .running)
         #expect(Lamp(Status.running(stalled: true)) == .stalled)
-        #expect(Lamp(Status.yourTurn(sinceMs: now)) == .idle)
+        #expect(Lamp(Status.yourTurn(sinceMs: now)) == .done)
         #expect(Lamp(Status.recent(.atPrompt)) == .idle)
         #expect(Lamp(Status.processOnly) == .processOnly, "a process is never orange")
     }
 
-    /// The menu bar draws the lamp of the rule that set it: the same five
+    /// The menu bar draws the lamp of the rule that set it: the same six
     /// lamps as the rows.
     @Test func theMenuBarLampUsesTheSameShapes() {
         #expect(Lamp(TrayState.LampRule.blocked) == .waiting)
         #expect(Lamp(TrayState.LampRule.running) == .running)
         #expect(Lamp(TrayState.LampRule.stalled) == .stalled)
-        #expect(Lamp(TrayState.LampRule.yourTurn) == .idle)
+        #expect(Lamp(TrayState.LampRule.yourTurn) == .done)
         #expect(Lamp(TrayState.LampRule.recent) == .idle)
         #expect(Lamp(TrayState.LampRule.idle) == .idle)
         #expect(Lamp(TrayState.LampRule.processOnly) == .processOnly)
@@ -1640,7 +1644,7 @@ struct RowWordsTests {
         #expect(model.lamp == .waiting)
         #expect(model.secondLine == TrayRowModel.SecondLine(kind: .ask, text: "Bash: npm run build"))
         let menu = model.menu.map { $0.action }
-        #expect(menu == [.focus, .details, .dismiss], "every verb is in the menu once")
+        #expect(menu == [.focus, .details, .watchTurn, .dismiss], "every verb is in the menu once")
         let ignore = model.menu.first { $0.action == .dismiss }?.title
         #expect(ignore == "Ignore", "one word for setting a wait aside: the tray, the detail and the banner")
         // The only time on a waiting row is how long it has waited.
@@ -1653,13 +1657,14 @@ struct RowWordsTests {
     @Test func theContextMenuShowsEachItemsKey() {
         let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowPermission(), lang: .en)
         let keys: [TrayKeys.Key?] = model.menu.map { $0.key }
-        let expected: [TrayKeys.Key?] = [.enter, .right, .dismiss]
+        let expected: [TrayKeys.Key?] = [.enter, .right, .watchTurn, .dismiss]
         #expect(keys == expected)
     }
 
     @Test func yourTurnIsQuietAndSaysSo() {
         let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowTurn(), lang: .zh)
-        #expect(model.lamp == .idle)
+        #expect(model.lamp == .done)
+        #expect(model.lamp.isGrey)
         #expect(model.turnLabel == "好了")
         #expect(model.secondLine == nil)
         #expect(model.accessibilityLabel.contains("好了"))
@@ -2169,5 +2174,46 @@ struct GroupByProjectTests {
         let starts = regrouped.indices.filter { TrayOrder.startsGroup(regrouped, at: $0) }
         #expect(starts == [0, 2, 4])
         #expect(!TrayOrder.startsGroup(regrouped, at: 9))
+    }
+
+    @Test func trayKeysSupportTabJumpAndWatchTurn() {
+        let rows = [
+            TrayKeys.Row(key: "w1", blocked: true, canFocus: true, canWatch: true),
+            TrayKeys.Row(key: "w2", blocked: true, canFocus: false, canWatch: true),
+            TrayKeys.Row(key: "r1", blocked: false, canFocus: true, canWatch: true),
+        ]
+        #expect(TrayKeys.key(keyCode: 48, characters: "\t", command: false) == .tab)
+        #expect(TrayKeys.key(keyCode: 18, characters: "1", command: true) == .jump(1))
+        #expect(TrayKeys.key(keyCode: 11, characters: "b", command: true) == .watchTurn)
+
+        let tab1 = TrayKeys.reduce(TrayKeys.State(selected: "w1"), .tab, rows: rows)
+        #expect(tab1.state.selected == "w2")
+        let tab2 = TrayKeys.reduce(tab1.state, .tab, rows: rows)
+        #expect(tab2.state.selected == "w1", "wraps around blocked rows")
+
+        let jump1 = TrayKeys.reduce(TrayKeys.State(selected: "r1"), .jump(1), rows: rows)
+        #expect(jump1.state.selected == "w1")
+        #expect(jump1.effect == .focus("w1"))
+
+        let jump2 = TrayKeys.reduce(TrayKeys.State(selected: "r1"), .jump(2), rows: rows)
+        #expect(jump2.state.detail == "w2", "no handle opens detail")
+
+        let watch = TrayKeys.reduce(TrayKeys.State(selected: "r1"), .watchTurn, rows: rows)
+        #expect(watch.effect == .watchTurn("r1"))
+    }
+
+    @Test func groupedRowHidesDuplicateProjectAndDismissedWaitExplainsItself() {
+        var sample = SurfaceFixtures.rowRunning()
+        sample.row.cwd = "/Users/me/code/app"
+        let grouped = TrayRowModel.make(TrayRowModel.Input(
+            row: sample.row, facts: sample.facts, lang: .en, nowMs: SurfaceFixtures.nowMs,
+            hideProject: true, watching: true
+        ))
+        #expect(grouped.project == "")
+        #expect(grouped.watchingTurn)
+        var dismissed = sample.row
+        dismissed.status = .recent(.dismissedWait)
+        #expect(TrayRowModel.why(dismissed, facts: sample.facts, lang: .en, nowMs: SurfaceFixtures.nowMs).hasPrefix("Ignored wait"))
+        #expect(TrayRowModel.why(dismissed, facts: sample.facts, lang: .zh, nowMs: SurfaceFixtures.nowMs).hasPrefix("已忽略等待"))
     }
 }

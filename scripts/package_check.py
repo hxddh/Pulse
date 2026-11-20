@@ -77,20 +77,22 @@ def main(argv: list[str]) -> int:
     contents = app / "Contents"
     resources = contents / "Resources"
 
-    binary = contents / "MacOS" / "PulseBar"
-    if not binary.is_file():
-        problems.append("Contents/MacOS/PulseBar is missing")
-    else:
-        data = binary.read_bytes()
-        for marker in QA_ONLY_MARKERS:
-            if marker in data:
-                problems.append(
-                    f"Contents/MacOS/PulseBar contains {marker.decode()!r} — QA code "
-                    "(PulseQA) was linked into the shipping app"
-                )
-    extra = sorted(p.name for p in (contents / "MacOS").glob("*") if p.name != "PulseBar")
+    allowed_macos = {"PulseBar", "pulse-hook"}
+    for exe_name in sorted(allowed_macos):
+        binary = contents / "MacOS" / exe_name
+        if not binary.is_file():
+            problems.append(f"Contents/MacOS/{exe_name} is missing")
+        else:
+            data = binary.read_bytes()
+            for marker in QA_ONLY_MARKERS:
+                if marker in data:
+                    problems.append(
+                        f"Contents/MacOS/{exe_name} contains {marker.decode()!r} — QA code "
+                        "(PulseQA) was linked into the shipping app"
+                    )
+    extra = sorted(p.name for p in (contents / "MacOS").glob("*") if p.name not in allowed_macos)
     if extra:
-        problems.append(f"Contents/MacOS/ carries more than the app: {', '.join(extra)}")
+        problems.append(f"Contents/MacOS/ carries unexpected binaries: {', '.join(extra)}")
 
     app_plist = contents / "Info.plist"
     version = None

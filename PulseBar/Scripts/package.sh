@@ -14,8 +14,14 @@ if [[ -z "$BUNDLE_ID" ]]; then
   exit 1
 fi
 
-if [[ "$(uname -m)" != "arm64" ]]; then
-  echo "error: Pulse is built for Apple silicon (arm64); found $(uname -m)" >&2
+ARCH_MODE="${PULSE_ARCHS:-universal}"
+SWIFT_ARCH_FLAGS=()
+if [[ "$ARCH_MODE" == "universal" ]]; then
+  SWIFT_ARCH_FLAGS=(--arch arm64 --arch x86_64)
+elif [[ "$ARCH_MODE" == "arm64" || "$ARCH_MODE" == "x86_64" ]]; then
+  SWIFT_ARCH_FLAGS=(--arch "$ARCH_MODE")
+else
+  echo "error: unsupported PULSE_ARCHS=$ARCH_MODE (use universal, arm64, or x86_64)" >&2
   exit 1
 fi
 
@@ -55,18 +61,23 @@ else
 fi
 ENTITLEMENTS="$ROOT/PulseBar/Packaging/Pulse.entitlements"
 
-echo "building PulseBar ${VERSION}..."
-# The product, not the package: a plain `swift build -c release` would also
+echo "building PulseBar + pulse-hook ${VERSION} (${ARCH_MODE})..."
+# The products, not the package: a plain `swift build -c release` would also
 # build `PulseQA`, which reaches the app's internals through `@testable
 # import` and only builds in the debug configuration.
-swift build -c release --product PulseBar
+swift build -c release "${SWIFT_ARCH_FLAGS[@]}" --product PulseBar
+swift build -c release "${SWIFT_ARCH_FLAGS[@]}" --product pulse-hook
 
-BIN="$(swift build -c release --product PulseBar --show-bin-path)/PulseBar"
+BIN_DIR="$(swift build -c release "${SWIFT_ARCH_FLAGS[@]}" --product PulseBar --show-bin-path)"
+BIN="${BIN_DIR}/PulseBar"
+HOOK_BIN="${BIN_DIR}/pulse-hook"
 APP="$ROOT/zig-out/package/Pulse.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp "$BIN" "$APP/Contents/MacOS/PulseBar"
+cp "$HOOK_BIN" "$APP/Contents/MacOS/pulse-hook"
+lipo -info "$APP/Contents/MacOS/PulseBar" "$APP/Contents/MacOS/pulse-hook" || true
 # The Finder / Dock icon (CFBundleIconFile). Everything the app draws at
 # runtime — the agent marks, the brand mark — lives in the SwiftPM resource
 # bundle below and is found through PulseResources.
@@ -266,7 +277,7 @@ Gatekeeper 的信任策略，不是 Pulse 运行时崩溃。请只对 Pulse 做�
 
 macOS 15 起，按住 Control 点“打开”不再能放行未公证的 App。
 不要关闭“允许从以下位置下载的 App”或全局禁用 Gatekeeper。
-需要 macOS 14 或更高版本；当前构建面向 Apple silicon（arm64）。
+需要 macOS 14 或更高版本；支持 Apple silicon 与 Intel（Universal Binary）。
 
 English: this DMG is channel=${DISTRIBUTION_CHANNEL} and not notarized. Drag Pulse to
 Applications and open it once; when macOS blocks it, go to System Settings →

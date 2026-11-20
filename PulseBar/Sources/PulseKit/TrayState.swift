@@ -178,6 +178,9 @@ package struct TrayState: Equatable {
         case .blocked(let block):
             if unknownPid, quiet { return .recent(.quiet) }
             return .needsYou(block)
+        case .dismissedWait:
+            if unknownPid, quiet { return .recent(.quiet) }
+            return .recent(.dismissedWait)
         case .working:
             if unknownPid, quiet { return .recent(.quiet) }
             if nowMs - session.lastEventMs > silentBoundMs { return .recent(.silent) }

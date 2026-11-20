@@ -25,7 +25,7 @@ package struct TrayHeaderModel: Equatable {
         }
         if all.running > 0 { counts.append(Count(count: all.running, label: t(.runningN), tone: .running)) }
         if all.stalled > 0 { counts.append(Count(count: all.stalled, label: t(.stalledN), tone: .stalled)) }
-        if all.yourTurn > 0 { counts.append(Count(count: all.yourTurn, label: t(.yourTurnN), tone: .idle)) }
+        if all.yourTurn > 0 { counts.append(Count(count: all.yourTurn, label: t(.yourTurnN), tone: .done)) }
 
         let title: String
         if !counts.isEmpty {
@@ -258,6 +258,12 @@ package enum TrayOrder {
 package enum TrayKeys {
     package enum Key: Equatable {
         case up, down, left, right, space, enter, escape
+        /// Tab: cycle through blocked ("needs you") rows.
+        case tab
+        /// ⌘1–⌘9: jump straight to the Nth row (1-based).
+        case jump(Int)
+        /// ⌘B: toggle "tell me when this turn is done" on the selected row.
+        case watchTurn
         /// ⌘D or ⌘⌫
         case dismiss
         /// ⌘R
@@ -292,18 +298,25 @@ package enum TrayKeys {
         package var canFocus: Bool
         /// Its timeline has a run of steps to disclose (`SessionFacts`).
         package var discloses: Bool
+        /// Its turn is live and can be watched (`TurnWatch.canWatch`).
+        package var canWatch: Bool
 
-        package init(key: SessionKey, blocked: Bool = false, canFocus: Bool = false, discloses: Bool = false) {
+        package init(
+            key: SessionKey, blocked: Bool = false, canFocus: Bool = false,
+            discloses: Bool = false, canWatch: Bool = false
+        ) {
             self.key = key
             self.blocked = blocked
             self.canFocus = canFocus
             self.discloses = discloses
+            self.canWatch = canWatch
         }
 
         package init(_ row: AgentRow, facts: SessionFacts? = nil) {
             self.init(
                 key: row.key, blocked: row.isBlocked, canFocus: row.canFocusTerminal,
-                discloses: facts.map(Self.hasRun) ?? false
+                discloses: facts.map(Self.hasRun) ?? false,
+                canWatch: TurnWatch.canWatch(row)
             )
         }
 
@@ -320,6 +333,7 @@ package enum TrayKeys {
     package enum Effect: Equatable {
         case focus(SessionKey)
         case dismiss(SessionKey)
+        case watchTurn(SessionKey)
         case refresh
         case openSettings
         case closeTray
@@ -367,6 +381,9 @@ package enum TrayKeys {
             case .dismiss:
                 guard let row, row.blocked else { return done() }
                 return done(.dismiss(row.key))
+            case .watchTurn:
+                guard let row, row.canWatch else { return done() }
+                return done(.watchTurn(row.key))
             default:
                 return done()
             }
@@ -381,6 +398,18 @@ package enum TrayKeys {
             return done()
         case .down:
             next.selected = step(from: selected?.key, by: 1, in: rows)
+            return done()
+        case .tab:
+            next.selected = nextBlocked(after: selected?.key, in: rows)
+            return done()
+        case .jump(let number):
+            let index = number - 1
+            guard rows.indices.contains(index) else { return done() }
+            let target = rows[index]
+            next.selected = target.key
+            if target.canFocus { return done(.focus(target.key)) }
+            next.detail = target.key
+            next.disclosed = false
             return done()
         case .enter:
             guard let selected else { return done() }
@@ -398,6 +427,9 @@ package enum TrayKeys {
         case .dismiss:
             guard let selected, selected.blocked else { return done() }
             return done(.dismiss(selected.key))
+        case .watchTurn:
+            guard let selected, selected.canWatch else { return done() }
+            return done(.watchTurn(selected.key))
         case .refresh, .settings, .quit, .close:
             return done()
         }
@@ -422,6 +454,15 @@ package enum TrayKeys {
         return rows[min(max(index + delta, 0), rows.count - 1)].key
     }
 
+    private static func nextBlocked(after key: SessionKey?, in rows: [Row]) -> SessionKey? {
+        let blocked = rows.filter(\.blocked)
+        guard !blocked.isEmpty else { return key ?? rows.first?.key }
+        guard let key, let index = blocked.firstIndex(where: { $0.key == key }) else {
+            return blocked.first?.key
+        }
+        return blocked[(index + 1) % blocked.count].key
+    }
+
     // MARK: - Events
 
     /// An event as a `Key`, or nil when it is not the tray's.
@@ -434,12 +475,23 @@ package enum TrayKeys {
             case "q": return .quit
             case "w": return .close
             case "d": return .dismiss
+            case "b": return .watchTurn
+            case "1": return .jump(1)
+            case "2": return .jump(2)
+            case "3": return .jump(3)
+            case "4": return .jump(4)
+            case "5": return .jump(5)
+            case "6": return .jump(6)
+            case "7": return .jump(7)
+            case "8": return .jump(8)
+            case "9": return .jump(9)
             default: return nil
             }
         }
         switch keyCode {
         case 53: return .escape
         case 36, 76: return .enter
+        case 48: return .tab
         case 123: return .left
         case 124: return .right
         case 125: return .down

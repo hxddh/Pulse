@@ -26,7 +26,7 @@ package struct TrayRowModel: Equatable {
     package enum Action: String, Equatable, Hashable {
         /// Go: focus the terminal when there is a handle, else the detail.
         case primary
-        case details, dismiss, focus
+        case details, watchTurn, dismiss, focus
     }
 
     /// Where on the row a click landed: its body (both lines) or the
@@ -54,6 +54,7 @@ package struct TrayRowModel: Equatable {
             switch action {
             case .focus: return .enter
             case .details: return .right
+            case .watchTurn: return .watchTurn
             case .dismiss: return .dismiss
             case .primary: return nil
             }
@@ -106,6 +107,8 @@ package struct TrayRowModel: Equatable {
     /// The plan's progress, "3/7", quietly, on a live row whose agent
     /// reported a plan this turn (`planBadge`); never red.
     package var planProgress: String?
+    /// One-shot "tell me when this turn is done" is armed on this row.
+    package var watchingTurn = false
     package var secondLine: SecondLine?
     /// `why(_:lang:nowMs:)`: which evidence put this row in its state.
     package var why: String
@@ -129,10 +132,15 @@ package struct TrayRowModel: Equatable {
         /// Pulse's hook is installed for the row's agent — what a
         /// process-only row's why says it is waiting for.
         package var connected: Bool
+        /// True when the tray is grouped by project so the row does not repeat
+        /// its group heading's project name.
+        package var hideProject: Bool
+        /// True when the person armed one-shot "tell me when done" on this row.
+        package var watching: Bool
 
         package init(
             row: AgentRow, facts: SessionFacts = SessionFacts(), lang: ResolvedLanguage, nowMs: Int64,
-            notice: RowNotice? = nil, connected: Bool = true
+            notice: RowNotice? = nil, connected: Bool = true, hideProject: Bool = false, watching: Bool = false
         ) {
             self.row = row
             self.facts = facts
@@ -140,6 +148,8 @@ package struct TrayRowModel: Equatable {
             self.nowMs = nowMs
             self.notice = notice
             self.connected = connected
+            self.hideProject = hideProject
+            self.watching = watching
         }
     }
 
@@ -153,16 +163,20 @@ package struct TrayRowModel: Equatable {
         let lamp = row.lamp
         let age = Self.rowTime(row, facts: facts, nowMs: input.nowMs, lang: lang)
         let place = row.project
-        let project = place == headline ? "" : place
+        let project = (input.hideProject || place == headline) ? "" : place
         let second = secondLine(row, facts: facts, why: why, lang: lang, nowMs: input.nowMs)
         let turnLabel = row.isYourTurn ? t(.yourTurn) : nil
         let plan = Self.planBadge(row, facts: facts)
+        let watching = input.watching && TurnWatch.canWatch(row)
 
         var menu: [Button] = []
         if row.canFocusTerminal {
             menu.append(Button(action: .focus, title: Self.focusTitle(row, lang: lang)))
         }
         menu.append(Button(action: .details, title: t(.details)))
+        if TurnWatch.canWatch(row) {
+            menu.append(Button(action: .watchTurn, title: t(watching ? .unwatchTurn : .watchTurn)))
+        }
         if row.isBlocked { menu.append(Button(action: .dismiss, title: t(.ignoreWait))) }
 
         // VoiceOver hears whole words: "4 minutes", never the drawn "4m".
@@ -185,6 +199,7 @@ package struct TrayRowModel: Equatable {
             age: age,
             turnLabel: turnLabel,
             planProgress: plan,
+            watchingTurn: watching,
             secondLine: second,
             why: why,
             canFocus: row.canFocusTerminal,
@@ -329,6 +344,8 @@ extension TrayRowModel {
             return String(format: t(.explainQuiet), quiet)
         case .recent(.silent):
             return String(format: t(.explainSilent), quiet)
+        case .recent(.dismissedWait):
+            return said(t(.explainDismissedWait), at: last)
         }
     }
 
@@ -537,6 +554,8 @@ package struct DetailModel: Equatable {
         case toggleSteps
         /// Copy this turn's summary (`TurnSummary`) to the clipboard.
         case copySummary
+        /// Copy the blocked row's ask (command or question) to the clipboard.
+        case copyAsk
         /// "Tell me when this turn is done" (`TurnWatch`), on or off.
         case watchTurn
     }

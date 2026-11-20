@@ -43,8 +43,20 @@ package struct SettingsModel: Equatable {
         case openReleases
         /// The global shortcut, on or off.
         case setGlobalShortcut(Bool)
+        /// The direct-jump global shortcut (⌃⌥⌘↩), on or off.
+        case setDirectJumpShortcut(Bool)
         /// One agent's banners, muted or not.
         case setMuted(AgentID, Bool)
+        /// One agent's automatic turn-done banner, on or off.
+        case setNotifyDone(AgentID, Bool)
+        /// Automatic turn-done banner threshold for long turns (seconds; 0 off).
+        case setLongTurnSeconds(Int)
+        /// Notification banner sound preference.
+        case setNotificationSound(NotificationSound)
+        /// Install or update one agent's hook.
+        case installAgent(AgentID)
+        /// Remove one agent's hook.
+        case uninstallAgent(AgentID)
         /// Run the installed launcher once (`HookPing`).
         case testConnection
         /// The global shortcut's chord.
@@ -103,7 +115,16 @@ package struct SettingsModel: Equatable {
     package var pingWarning = false
     /// The global shortcut's chord.
     package var shortcutChoice: ShortcutChoice = .default
+    /// Direct jump to oldest wait (⌃⌥⌘↩).
+    package var directJumpShortcut = false
+    /// Said under it when macOS refused ⌃⌥⌘↩.
+    package var directJumpNote: String?
     package var groupByProject = false
+    /// Agents whose finished turns can be opted into "Done" banners (present on this Mac).
+    package var notifyDoneCandidates: [AgentID] = []
+    package var notifyDoneAgents: Set<AgentID> = []
+    package var notifyLongTurnSeconds = 0
+    package var notificationSound: NotificationSound = .default
     /// Each running terminal's Apple Events permission; empty when none
     /// runs or it was not asked yet.
     package var automation: [AutomationLine] = []
@@ -168,10 +189,27 @@ package struct SettingsModel: Equatable {
         return String(format: L10n.t(.settingsShortcutTaken, lang), choice.display)
     }
 
+    /// Why the direct-jump shortcut (⌃⌥⌘↩) is not working when macOS refused it.
+    package static func directJumpNote(on: Bool, registered: Bool?, lang: ResolvedLanguage) -> String? {
+        guard on, registered == false else { return nil }
+        return String(format: L10n.t(.settingsShortcutTaken, lang), "⌃⌥⌘↩")
+    }
+
     /// The agents whose banners can be muted: on this Mac and able to
     /// report a wait.
     package static func muteCandidates(present: Set<AgentID>) -> [AgentID] {
         AgentID.priority.filter { present.contains($0) && $0.waitingSource != .none }
+    }
+
+    /// The agents on this Mac that can opt into automatic "Done" banners.
+    package static func notifyDoneCandidates(present: Set<AgentID>) -> [AgentID] {
+        AgentID.priority.filter { present.contains($0) }
+    }
+
+    /// Label for one long-turn threshold option.
+    package static func longTurnLabel(_ seconds: Int, lang: ResolvedLanguage) -> String {
+        guard seconds > 0 else { return L10n.t(.settingsLongTurnOff, lang) }
+        return String(format: L10n.t(.settingsLongTurnMinutes, lang), max(1, seconds / 60))
     }
 
     /// What the connection test found, in words, and whether it is a

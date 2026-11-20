@@ -29,6 +29,15 @@ struct SessionDetailView: View {
     }
 }
 
+/// Measured height of the detail page's body, so `NSPopover` sizes the scroll
+/// view to its content instead of collapsing it.
+private struct DetailContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 /// Renders a `DetailModel` and nothing else: the header (back, lamp, the
 /// agent's icon and the headline — the page's title), then the ask with Go
 /// and Ignore, the landing notice, the why, Now (the tools still going and
@@ -45,6 +54,8 @@ struct SessionDetailFace: View {
     /// ⌥ held: the vendor's event names beside each entry.
     var showsEvents = false
     var send: (DetailModel.Action) -> Void = { _ in }
+    @State private var measuredHeight: CGFloat = 0
+    @State private var copiedAsk = false
 
     private func t(_ key: L10n.Key) -> String { L10n.t(key, model.lang) }
 
@@ -53,8 +64,19 @@ struct SessionDetailFace: View {
             header
             Divider().opacity(0.5)
             if scrolls {
-                ScrollView { content }
-                    .frame(maxHeight: maxHeight)
+                ScrollView {
+                    content
+                        .background(
+                            GeometryReader { geo in
+                                Color.clear.preference(key: DetailContentHeightKey.self, value: geo.size.height)
+                            }
+                        )
+                }
+                .frame(height: measuredHeight > 0 ? min(max(measuredHeight, 120), maxHeight) : nil)
+                .frame(maxHeight: maxHeight)
+                .onPreferenceChange(DetailContentHeightKey.self) { height in
+                    if height > 0, abs(measuredHeight - height) > 0.5 { measuredHeight = height }
+                }
             } else {
                 content
             }
@@ -97,11 +119,29 @@ struct SessionDetailFace: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: PulseTheme.Space.m) {
             if let ask = model.ask {
-                Text(ask)
-                    .font(PulseTheme.Font.bodyEmphasis)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .pulseInner()
+                let codeLike = ask.contains(":") || ask.contains("/") || ask.contains("`")
+                HStack(alignment: .top, spacing: PulseTheme.Space.s) {
+                    Text(ask)
+                        .font(codeLike ? PulseTheme.Font.code : PulseTheme.Font.bodyEmphasis)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button {
+                        send(.copyAsk)
+                        copiedAsk = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            copiedAsk = false
+                        }
+                    } label: {
+                        Image(systemName: copiedAsk ? "checkmark" : "doc.on.doc")
+                            .font(PulseTheme.Font.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(t(copiedAsk ? .copied : .copyAsk))
+                    .accessibilityLabel(t(copiedAsk ? .copied : .copyAsk))
+                }
+                .pulseInner()
             }
             if model.canFocus || model.canDismiss {
                 actions

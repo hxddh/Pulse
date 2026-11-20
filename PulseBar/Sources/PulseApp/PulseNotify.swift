@@ -20,6 +20,7 @@ final class PulseNotifyDelegate: NSObject, UNUserNotificationCenterDelegate {
         let agent = info["agent"] as? String ?? ""
         let session = info["session"] as? String ?? ""
         let rowKey = info["rowKey"] as? String ?? ""
+        let kind = info["kind"] as? String ?? PulseNotify.BannerKind.waiting.rawValue
         let intent = BannerIntent.decide(
             actionID: response.actionIdentifier,
             dismissActionID: UNNotificationDismissActionIdentifier
@@ -28,7 +29,7 @@ final class PulseNotifyDelegate: NSObject, UNUserNotificationCenterDelegate {
             let notifier = AppServices.store.notifier
             switch intent {
             case .go:
-                notifier.handleBannerClick(agent: agent, session: session, rowKey: rowKey)
+                notifier.handleBannerClick(agent: agent, session: session, rowKey: rowKey, kind: kind)
             case .ignore:
                 notifier.handleBannerIgnore(rowKey: rowKey)
             case .nothing:
@@ -50,12 +51,17 @@ enum PulseNotify {
     }
     nonisolated(unsafe) private static let delegate = PulseNotifyDelegate()
 
+    enum BannerKind: String {
+        case waiting
+        case done
+    }
+
     static let waitingCategoryID = "pulse.waiting"
+    static let turnDoneCategoryID = "pulse.turnDone"
 
     /// The waiting banner's buttons: go to the session, or ignore the wait
     /// (the tray's ⌘D — Pulse's own `done`, never an answer to the agent;
-    /// it does not bring Pulse forward). There is no "Later": a wait is a
-    /// wait.
+    /// it does not bring Pulse forward). Turn-done banners carry Go only.
     ///
     /// Registered once, in the system's language.
     static func registerCategories(lang: ResolvedLanguage) {
@@ -70,13 +76,19 @@ enum PulseNotify {
             title: L10n.t(.ignoreWait, lang),
             options: []
         )
-        let category = UNNotificationCategory(
+        let waitingCategory = UNNotificationCategory(
             identifier: waitingCategoryID,
             actions: [focus, ignore],
             intentIdentifiers: [],
             options: []
         )
-        center.setNotificationCategories([category])
+        let doneCategory = UNNotificationCategory(
+            identifier: turnDoneCategoryID,
+            actions: [focus],
+            intentIdentifiers: [],
+            options: []
+        )
+        center.setNotificationCategories([waitingCategory, doneCategory])
     }
 
     /// Reports whether the user actually granted permission. Dropping this
@@ -150,14 +162,16 @@ enum PulseNotify {
         center.removePendingNotificationRequests(withIdentifiers: ids)
     }
 
-    /// One banner per wait (`WaitLedger.bannerID`): a later ask on the same
-    /// row replaces it. Its words and its thread are `WaitingBanner`'s.
+    /// One banner per wait (`WaitLedger.bannerID`) or finished turn
+    /// (`TurnWatch.bannerID`): a later ask on the same row replaces it.
     static func postWaiting(
         id: String,
         banner: WaitingBanner,
         agent: String,
         session: String = "",
         rowKey: String = "",
+        kind: BannerKind = .waiting,
+        sound: NotificationSound = .default,
         completion: @escaping (Bool) -> Void = { _ in }
     ) {
         // Delivery is asynchronous. The caller must not mark a wait as
@@ -174,23 +188,22 @@ enum PulseNotify {
         content.title = ContentSanitizer.redact(banner.title)
         if !banner.subtitle.isEmpty { content.subtitle = ContentSanitizer.redact(banner.subtitle) }
         content.body = ContentSanitizer.redact(banner.body)
-        content.sound = .default
+        content.sound = sound == .default ? .default : nil
         // One thread per session: a second ask from the same session stacks
         // with its first, never with another agent's — a burst of
         // approvals still shows who needs an answer.
         content.threadIdentifier = banner.threadID
         // A wait that blocks an agent may break through a Focus — but only
         // where macOS says Pulse may (the Time Sensitive entitlement, which
-        // only a Developer ID build can carry). Elsewhere the setting reads
-        // unsupported and the banner is an ordinary one.
-        if timeSensitiveAllowed.snapshot {
+        // only a Developer ID build can carry). Turn-done banners stay active.
+        if kind == .waiting, timeSensitiveAllowed.snapshot {
             content.interruptionLevel = .timeSensitive
         }
-        // A banner that names a session carries Go and Ignore.
+        // Waiting banners carry Go + Ignore; turn-done banners carry Go only.
         if !rowKey.isEmpty || !agent.isEmpty {
-            content.categoryIdentifier = waitingCategoryID
+            content.categoryIdentifier = kind == .waiting ? waitingCategoryID : turnDoneCategoryID
         }
-        var info: [String: Any] = [:]
+        var info: [String: Any] = ["kind": kind.rawValue]
         if !agent.isEmpty { info["agent"] = agent }
         if !session.isEmpty { info["session"] = session }
         if !rowKey.isEmpty { info["rowKey"] = rowKey }

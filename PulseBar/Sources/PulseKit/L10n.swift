@@ -295,6 +295,23 @@ package enum L10n {
         case timelineShowLess
         case timelineHideSteps
         case copyTurnSummary
+        case explainDismissedWait
+        case unwatchTurn
+        case copyAsk
+        case copied
+        case settingsDirectJump
+        case settingsDirectJumpHint
+        case settingsSoundTitle
+        case settingsSoundDefault
+        case settingsSoundSilent
+        case settingsDoneNotifyTitle
+        case settingsDoneNotifyHint
+        case settingsLongTurnTitle
+        case settingsLongTurnOff
+        case settingsLongTurnMinutes
+        case installOne
+        case updateOne
+        case removeOne
     }
 }
 
@@ -530,6 +547,23 @@ extension L10n.Key {
         case .timelineShowLess: return ("Show less", "收起")
         case .timelineHideSteps: return ("Hide the steps", "收起每一步")
         case .copyTurnSummary: return ("Copy this turn's summary", "复制本轮摘要")
+        case .explainDismissedWait: return ("Ignored wait", "已忽略等待")
+        case .unwatchTurn: return ("Stop watching this turn", "取消本轮完成提醒")
+        case .copyAsk: return ("Copy", "复制")
+        case .copied: return ("Copied", "已复制")
+        case .settingsDirectJump: return ("Jump straight to oldest wait with ⌃⌥⌘↩", "用 ⌃⌥⌘↩ 直接跳到最早等待")
+        case .settingsDirectJumpHint: return ("Brings the waiting terminal straight to the front without opening the tray.", "直接把等待中的终端带到前面，不打开托盘。")
+        case .settingsSoundTitle: return ("Notification sound", "通知声音")
+        case .settingsSoundDefault: return ("Default", "默认")
+        case .settingsSoundSilent: return ("Silent", "静音")
+        case .settingsDoneNotifyTitle: return ("Notify when a turn finishes", "回合结束时发横幅")
+        case .settingsDoneNotifyHint: return ("Quiet by default. Useful for agents that don't report waits (such as Codex and Cursor).", "默认安静。适合不报告等待的 Agent（如 Codex、Cursor）。")
+        case .settingsLongTurnTitle: return ("Auto-notify long turns", "长回合自动提醒")
+        case .settingsLongTurnOff: return ("Off", "关闭")
+        case .settingsLongTurnMinutes: return ("After %d min", "超过 %d 分钟")
+        case .installOne: return ("Install", "安装")
+        case .updateOne: return ("Update", "更新")
+        case .removeOne: return ("Remove", "移除")
         }
     }
 }

@@ -1,18 +1,29 @@
 import Carbon.HIToolbox
 import Foundation
 
-/// The one global shortcut — ⌃⌥⌘P unless the person picked another
-/// (`ShortcutChoice`): open the tray on the oldest wait (or close it). A Carbon hot key — no Accessibility or Input Monitoring permission,
-/// and macOS refuses it (it reports so) when another app holds the chord.
+/// Global Carbon hot keys — no Accessibility or Input Monitoring permission,
+/// and macOS refuses any chord another app holds:
+///
+/// 1. Open/close tray on the oldest wait (`ShortcutChoice`, default ⌃⌥⌘P).
+/// 2. Optional direct jump straight to the oldest blocked terminal (⌃⌥⌘↩).
 @MainActor
 final class GlobalShortcut {
     static let shared = GlobalShortcut()
 
-    /// What the chord does; set by the app delegate.
+    private static let signature = OSType(0x5055_4C53) // "PULS"
+    private static let trayHotKeyID: UInt32 = 1
+    private static let directJumpHotKeyID: UInt32 = 2
+
+    /// Open/close tray chord; set by the store.
     var onPress: (() -> Void)?
-    /// The chord is registered.
+    /// Direct jump chord (⌃⌥⌘↩); set by the store.
+    var onDirectJump: (() -> Void)?
+    /// Whether the tray chord is registered.
     private(set) var registered = false
+    /// Whether the direct-jump chord is registered.
+    private(set) var directJumpRegistered = false
     private var hotKey: EventHotKeyRef?
+    private var directJumpHotKey: EventHotKeyRef?
     private var handler: EventHandlerRef?
 
     /// The Carbon key code and modifiers of a chord.
@@ -24,7 +35,36 @@ final class GlobalShortcut {
         }
     }
 
-    /// Register or drop the chord. Returns whether it is registered.
+    private func ensureHandler() {
+        guard handler == nil else { return }
+        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, _ -> OSStatus in
+            var hotKeyID = EventHotKeyID()
+            let status = GetEventParameter(
+                event,
+                EventParamName(kEventParamDirectObject),
+                EventParamType(typeEventHotKeyID),
+                nil,
+                MemoryLayout<EventHotKeyID>.size,
+                nil,
+                &hotKeyID
+            )
+            let id = status == noErr ? hotKeyID.id : GlobalShortcut.trayHotKeyID
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    switch id {
+                    case GlobalShortcut.directJumpHotKeyID:
+                        GlobalShortcut.shared.onDirectJump?()
+                    default:
+                        GlobalShortcut.shared.onPress?()
+                    }
+                }
+            }
+            return noErr
+        }, 1, &spec, nil, &handler)
+    }
+
+    /// Register or drop the tray chord. Returns whether it is registered.
     @discardableResult
     func set(enabled: Bool, choice: ShortcutChoice = .default) -> Bool {
         if let hotKey {
@@ -33,16 +73,8 @@ final class GlobalShortcut {
         }
         registered = false
         guard enabled else { return false }
-        if handler == nil {
-            var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-            InstallEventHandler(GetApplicationEventTarget(), { _, _, _ -> OSStatus in
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated { GlobalShortcut.shared.onPress?() }
-                }
-                return noErr
-            }, 1, &spec, nil, &handler)
-        }
-        let id = EventHotKeyID(signature: OSType(0x5055_4C53), id: 1) // "PULS"
+        ensureHandler()
+        let id = EventHotKeyID(signature: Self.signature, id: Self.trayHotKeyID)
         var ref: EventHotKeyRef?
         let chord = Self.keys(choice)
         let status = RegisterEventHotKey(chord.code, chord.modifiers, id, GetApplicationEventTarget(), 0, &ref)
@@ -50,5 +82,31 @@ final class GlobalShortcut {
         registered = hotKey != nil
         DebugLog.write("shortcut \(registered ? "registered" : "refused status=\(status)")")
         return registered
+    }
+
+    /// Register or drop the optional direct-jump chord (⌃⌥⌘↩).
+    @discardableResult
+    func setDirectJump(enabled: Bool) -> Bool {
+        if let directJumpHotKey {
+            UnregisterEventHotKey(directJumpHotKey)
+            self.directJumpHotKey = nil
+        }
+        directJumpRegistered = false
+        guard enabled else { return false }
+        ensureHandler()
+        let id = EventHotKeyID(signature: Self.signature, id: Self.directJumpHotKeyID)
+        var ref: EventHotKeyRef?
+        let status = RegisterEventHotKey(
+            UInt32(kVK_Return),
+            UInt32(cmdKey | optionKey | controlKey),
+            id,
+            GetApplicationEventTarget(),
+            0,
+            &ref
+        )
+        directJumpHotKey = status == noErr ? ref : nil
+        directJumpRegistered = directJumpHotKey != nil
+        DebugLog.write("direct jump shortcut \(directJumpRegistered ? "registered" : "refused status=\(status)")")
+        return directJumpRegistered
     }
 }

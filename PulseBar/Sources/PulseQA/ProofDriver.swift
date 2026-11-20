@@ -168,6 +168,7 @@ enum ProofDriver {
             case .ended: out["reason"] = "ended"
             case .quiet: out["reason"] = "quiet"
             case .silent: out["reason"] = "silent"
+            case .dismissedWait: out["reason"] = "dismissedWait"
             }
         case .processOnly:
             out["status"] = "processOnly"

@@ -205,7 +205,18 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         }
     }
 
-    @objc private func trayWindowResignedKey() { close() }
+    @objc private func trayWindowResignedKey() {
+        // Opening the ⋯ menu or a row's context menu briefly transfers key
+        // focus to a popup menu window while Pulse remains active; keep the
+        // tray open instead of tearing down the menu.
+        if NSApp?.isActive == true,
+           let key = NSApp?.keyWindow,
+           key !== hosting.view.window,
+           key.level.rawValue >= NSWindow.Level.popUpMenu.rawValue {
+            return
+        }
+        close()
+    }
 
     func popoverWillClose(_ notification: Notification) {
         closedAt = Date()

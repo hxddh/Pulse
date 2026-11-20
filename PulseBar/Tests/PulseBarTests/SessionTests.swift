@@ -64,6 +64,7 @@ enum HookFeed {
         case .idle: return "idle"
         case .working: return "working"
         case .blocked(let block): return "blocked:\(block.kind.rawValue)"
+        case .dismissedWait: return "dismissed"
         case .yourTurn: return "turn"
         case .ended: return "ended"
         }
@@ -780,11 +781,28 @@ struct SessionBookTests {
             "notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash",
         ], at: t0 + 6 * second).lines
         feed(echo, at: t0 + 6 * second)
-        #expect(HookFeed.word(book.sessions[SessionKey(.claude, "s1")]?.state) == "working", "the echo of a dismissed ask is not a new wait")
-        // Work goes on, then a new ask: red again.
+        #expect(HookFeed.word(book.sessions[SessionKey(.claude, "s1")]?.state) == "dismissed", "the echo of a dismissed ask is not a new wait and never fakes green running")
+        let projected = TrayState.project(book: book, processes: [], context: TrayState.Context(nowMs: t0 + 7 * second, lang: .en))
+        #expect(projected.rows.first?.status == .recent(.dismissedWait))
+        #expect(projected.snapshot.lamp == .idle, "ignored wait stays grey, never green")
+        // Re-applying the exact same dismissal (optimistic + log read-back) adds no duplicate timeline entry.
+        feed([dismissal], at: t0 + 7 * second)
+        let dismissedEntries = book.facts(for: SessionKey(.claude, "s1")).timeline.filter { $0.effect == .dismissed }
+        #expect(dismissedEntries.count == 1)
+        // Work goes on, then a new ask: green again, then red again.
         feed(HookFeed.write(.claude, "PostToolUse", ["tool_name": "Read"], at: t0 + 9 * second).lines, at: t0 + 9 * second)
+        #expect(HookFeed.word(book.sessions[SessionKey(.claude, "s1")]?.state) == "working")
         feed(HookFeed.write(.claude, "PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "rm -rf build"]], at: t0 + 11 * second).lines, at: t0 + 11 * second)
         #expect(HookFeed.word(book.sessions[SessionKey(.claude, "s1")]?.state) == "blocked:permission")
+    }
+
+    @Test func shortChinesePromptsAreAcceptedAsTitles() {
+        #expect(TitleHeuristics.promptTitle("重构") == "重构")
+        #expect(TitleHeuristics.promptTitle("测试") == "测试")
+        #expect(TitleHeuristics.promptTitle("a") == "")
+        #expect(TitleHeuristics.promptTitle("ok") == "")
+        #expect(!TitleHeuristics.isMeaningful("继续"))
+        #expect(TitleHeuristics.isMeaningful("重构"))
     }
 
     /// Only Pulse's own dismissal is echoed. After the vendor's own
@@ -1927,7 +1945,8 @@ struct TrayStateTests {
         #expect(turn.liveProcess)
         let idle = world.rows.first { $0.key == SessionKey(.claude, "s2") }
         #expect(idle?.isYourTurn == true)
-        #expect(world.snapshot.lamp == .idle)
+        #expect(world.snapshot.lamp == .done)
+        #expect(world.snapshot.lamp.isGrey)
         #expect(world.snapshot.title == "")
         #expect(world.snapshot.tooltip == L10n.t(.lampRuleTurn, .en))
     }

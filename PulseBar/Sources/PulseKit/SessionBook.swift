@@ -332,7 +332,7 @@ package struct SessionBook: Equatable, Codable {
             // turn end (still working or blocked — an Esc on a prompt fires
             // no Stop — or a session met just now).
             switch session.state {
-            case .working, .blocked:
+            case .working, .blocked, .dismissedWait:
                 session.failedTurn = false
                 turn(&session, at: ms, front: record.front == true, event: event)
             case .idle where new:
@@ -401,6 +401,10 @@ package struct SessionBook: Equatable, Codable {
             break
         case .blocked(let block):
             if answers(record, block) { answer(&session, at: ms, event: event) }
+        case .dismissedWait:
+            // Work resumed after the person ignored a wait — keep this turn's
+            // clock and digest intact rather than starting a fresh turn.
+            set(&session, .working, at: ms, event: event)
         case .idle, .yourTurn, .ended:
             // A turn whose prompt Pulse did not see starts here; the error
             // of the last one is over, and its count is this line's step
@@ -440,7 +444,7 @@ package struct SessionBook: Equatable, Codable {
     private static func isLive(_ state: State) -> Bool {
         switch state {
         case .working, .blocked: return true
-        case .idle, .yourTurn, .ended: return false
+        case .dismissedWait, .idle, .yourTurn, .ended: return false
         }
     }
 
@@ -459,7 +463,7 @@ package struct SessionBook: Equatable, Codable {
             guard ms >= session.stateSinceMs else { return }
             set(&session, .idle, at: ms, event: event)
             session.stopped = true
-        case .working:
+        case .working, .dismissedWait:
             set(&session, .idle, at: ms, event: event)
             session.stopped = true
         case .idle, .ended:
@@ -639,7 +643,7 @@ package struct SessionBook: Equatable, Codable {
             if !new {
                 interrupted = Interrupted(state: session.state, sinceMs: session.stateSinceMs, event: session.stateEvent, stopped: session.stopped)
             }
-        case .working, .ended:
+        case .working, .dismissedWait, .ended:
             interrupted = nil
         }
         if case .blocked(let open) = session.state {
@@ -699,8 +703,8 @@ package struct SessionBook: Equatable, Codable {
         switch state {
         case .blocked: return
         case .working: break
-        case .idle, .yourTurn, .ended:
-            // The turn is over: nothing runs now.
+        case .dismissedWait, .idle, .yourTurn, .ended:
+            // The turn is over (or set aside): nothing runs now.
             session.runningSteps = []
         }
         session.heldTurn = nil
@@ -799,6 +803,10 @@ package struct SessionBook: Equatable, Codable {
             } else if let back = session.interrupted {
                 // Raised while no turn was live: back where it was.
                 restore(&session, back)
+            } else if dismissal {
+                // Pulse's own ignore never fakes green "Running": the vendor's
+                // prompt may still be waiting in its terminal.
+                Self.set(&session, .dismissedWait(sinceMs: ms), at: ms, event: event)
             } else {
                 Self.set(&session, .working, at: ms, event: event)
             }
@@ -806,7 +814,7 @@ package struct SessionBook: Equatable, Codable {
         case .yourTurn:
             Self.set(&session, .idle, at: ms, event: event)
             return true
-        case .idle, .working, .ended:
+        case .dismissedWait, .idle, .working, .ended:
             return false
         }
     }

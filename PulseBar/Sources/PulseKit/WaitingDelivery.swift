@@ -76,8 +76,12 @@ package struct WaitingDelivery: Equatable {
     // MARK: - The deferred banner
 
     /// How long a wait raised in front of the person is left to them before
-    /// it may have a banner.
+    /// it may have a banner when the app leaves the front.
     package static let deferAfterMs: Int64 = 30_000
+    /// How long an unanswered wait raised "in front" stays quiet before
+    /// Pulse assumes it is in another tab of the same terminal (or the
+    /// person stepped away) and delivers its one banner anyway.
+    package static let frontEscalationMs: Int64 = 90_000
 
     /// Waits raised while their prompt was in front that are due a second
     /// look now: still open, announced (not the launch replay's), not
@@ -93,6 +97,20 @@ package struct WaitingDelivery: Equatable {
             else { return false }
             let since = wait.sinceMs > 0 ? wait.sinceMs : open.seenMs
             return since > 0 && nowMs - since >= deferAfterMs
+        }
+    }
+
+    /// Waits raised "in front" that stayed unanswered past `frontEscalationMs`:
+    /// even if the same terminal app is still frontmost, an unanswered 90s
+    /// prompt is almost certainly in another tab. Pure.
+    package static func escalatedFront(rows: [AgentRow], ledger: WaitLedger, nowMs: Int64) -> [AgentRow] {
+        rows.filter { row in
+            guard let wait = row.wait, wait.inFront,
+                  let open = ledger.waits[row.key],
+                  open.announce, !open.frontDue, !open.notified, !open.dismissed
+            else { return false }
+            let since = wait.sinceMs > 0 ? wait.sinceMs : open.seenMs
+            return since > 0 && nowMs - since >= frontEscalationMs
         }
     }
 }
@@ -163,11 +181,49 @@ package enum TurnWatch {
     /// The banner's id: one per session, apart from its wait's.
     package static func bannerID(_ key: SessionKey) -> String { "pulse.done." + key.description }
 
-    /// "Claude · app" / the task / "Done".
-    package static func banner(_ row: AgentRow, lang: ResolvedLanguage) -> WaitingBanner {
+    /// Rows that just transitioned from live (running/blocked) to `.yourTurn`
+    /// and qualify for an automatic "Done" banner under `settings` (either
+    /// per-agent opt-in or long-turn threshold, never for muted agents). Pure.
+    package static func autoDone(
+        previous: [AgentRow],
+        current: [AgentRow],
+        facts: (SessionKey) -> SessionFacts,
+        settings: PulseSettings
+    ) -> [AgentRow] {
+        guard !settings.notifyDoneAgents.isEmpty || settings.notifyLongTurnSeconds > 0 else { return [] }
+        let priorLive = Set(previous.filter { $0.isRunning || $0.isBlocked }.map(\.key))
+        guard !priorLive.isEmpty else { return [] }
+        return current.filter { row in
+            guard case .yourTurn(let sinceMs) = row.status,
+                  priorLive.contains(row.key),
+                  !settings.isMuted(row.agent)
+            else { return false }
+            if settings.notifiesDone(row.agent) { return true }
+            if settings.notifyLongTurnSeconds > 0 {
+                let start = facts(row.key).turnStartMs
+                if start > 0, sinceMs >= start, (sinceMs - start) / 1000 >= Int64(settings.notifyLongTurnSeconds) {
+                    return true
+                }
+            }
+            return false
+        }
+    }
+
+    /// "Claude · app" / the task / "Done" (with last words or error when known).
+    package static func banner(_ row: AgentRow, facts: SessionFacts = SessionFacts(), lang: ResolvedLanguage) -> WaitingBanner {
         var banner = WaitingBanner.make(row, lang: lang)
-        banner.body = L10n.t(.turnDoneBanner, lang)
+        if facts.failedTurn, !facts.lastError.isEmpty {
+            banner.body = clip(String(format: L10n.t(.failedTurnLine, lang), facts.lastError))
+        } else if !facts.lastWords.isEmpty {
+            banner.body = clip("\(L10n.t(.yourTurn, lang)) · \(facts.lastWords)")
+        } else {
+            banner.body = L10n.t(.turnDoneBanner, lang)
+        }
         banner.threadID = "pulse.done." + row.key.description
         return banner
+    }
+
+    private static func clip(_ text: String) -> String {
+        text.count > 120 ? String(text.prefix(119)) + "…" : text
     }
 }

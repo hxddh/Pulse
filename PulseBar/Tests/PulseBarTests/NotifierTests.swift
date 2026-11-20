@@ -359,6 +359,24 @@ struct BannerWithdrawalTests {
         store.notifier.scanLanded(later, nowMs: now + 41_000, baseline: false)
         #expect(asked == 2, "due once: never asked again")
     }
+
+    /// Even if the same terminal app stays frontmost (user is in another tab),
+    /// an unanswered wait escalates after 90 s so it is never silently lost.
+    @MainActor
+    @Test func anUnansweredFrontWaitEscalatesAfterNinetySeconds() {
+        let store = StatusStore()
+        store.notifyAuthorized = nil
+        store.notifier.promptInFront = { _ in true }
+        let row = waiting("claude|bg-tab", since: now, inFront: true)
+        let raised = TrayState.assemble(rows: [row], context: TrayState.Context(nowMs: now))
+        store.notifier.scanLanded(raised, nowMs: now, baseline: false)
+        let at40 = TrayState.assemble(rows: [row], context: TrayState.Context(nowMs: now + 40_000, previousWaits: raised.waitingSince))
+        store.notifier.scanLanded(at40, nowMs: now + 40_000, baseline: false)
+        #expect(store.notifier.ledger.queuedKeys.isEmpty, "still held before 90 s while terminal is frontmost")
+        let at91 = TrayState.assemble(rows: [row], context: TrayState.Context(nowMs: now + 91_000, previousWaits: raised.waitingSince))
+        store.notifier.scanLanded(at91, nowMs: now + 91_000, baseline: false)
+        #expect(store.notifier.ledger.queuedKeys == ["claude|bg-tab"], "unanswered 90 s wait fires once")
+    }
 }
 
 /// Notification copy — the banner has to say what is wanted.
@@ -681,5 +699,56 @@ struct TurnWatchTests {
         state.rows = [row("claude|s1", .yourTurn(sinceMs: 2))]
         store.land(state, nowMs: 10)
         #expect(store.turnWatches.isEmpty)
+    }
+
+    @Test func autoDoneNotifiesConfiguredAgentsAndLongTurnsOnly() {
+        let liveCodex = row("codex|c1", .running(stalled: false))
+        let liveClaudeShort = row("claude|s1", .running(stalled: false))
+        let liveClaudeLong = row("claude|s2", .running(stalled: false))
+        let doneCodex = row("codex|c1", .yourTurn(sinceMs: 500_000))
+        let doneShort = row("claude|s1", .yourTurn(sinceMs: 500_000))
+        let doneLong = row("claude|s2", .yourTurn(sinceMs: 500_000))
+        var settings = PulseSettings()
+        settings = settings.notifyingDone(.codex, true)
+        settings.notifyLongTurnSeconds = 120
+        let facts: [SessionKey: SessionFacts] = [
+            "claude|s1": SessionFacts(turnStartMs: 470_000), // 30s
+            "claude|s2": SessionFacts(turnStartMs: 300_000), // 200s >= 120s
+        ]
+        let due = TurnWatch.autoDone(
+            previous: [liveCodex, liveClaudeShort, liveClaudeLong],
+            current: [doneCodex, doneShort, doneLong],
+            facts: { facts[$0] ?? SessionFacts() },
+            settings: settings
+        )
+        #expect(due.map(\.key) == ["codex|c1", "claude|s2"])
+        // Muting suppresses automatic done banners too.
+        let muted = TurnWatch.autoDone(
+            previous: [liveCodex],
+            current: [doneCodex],
+            facts: { _ in SessionFacts() },
+            settings: settings.muting(.codex, true)
+        )
+        #expect(muted.isEmpty)
+    }
+
+    @Test func doneBannerCarriesLastWordsOrFailureWhenKnown() {
+        let done = row("codex|s1", .yourTurn(sinceMs: 1))
+        let words = TurnWatch.banner(done, facts: SessionFacts(lastWords: "All 42 tests pass."), lang: .en)
+        #expect(words.body == "Done · All 42 tests pass.")
+        let failed = TurnWatch.banner(done, facts: SessionFacts(lastError: "rate limited", failedTurn: true), lang: .zh)
+        #expect(failed.body == "回合出错：rate limited")
+    }
+
+    @MainActor
+    @Test func clickingADoneBannerRoutesToItsRow() {
+        let store = StatusStore()
+        var done = row("codex|s1", .yourTurn(sinceMs: 100))
+        done.session = "s1"
+        store.rows = [done]
+        _ = store.takePendingReveal()
+        store.notifier.handleBannerClick(agent: "codex", session: "s1", rowKey: "codex|s1", kind: PulseNotify.BannerKind.done.rawValue)
+        #expect(store.pendingReveal?.key == "codex|s1")
+        #expect(store.pendingReveal?.detail == true)
     }
 }

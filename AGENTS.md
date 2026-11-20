@@ -87,9 +87,10 @@ switches on an agent or spells a vendor word (`catalog_check`).
 
 | Target | Holds |
 | --- | --- |
-| `PulseKit` (Foundation only) | adapters, protocol, `EventLog`, `BookSnapshot`, receiver + installer, libproc, `SessionBook` → `TrayState`, every surface model, `L10n` |
+| `PulseKit` (Foundation only) | adapters (with real JS templates in `Agents/JS/` synced via `scripts/sync_js_modules.py`), protocol, `EventLog`, `BookSnapshot`, receiver + installer, libproc, `SessionBook` → `TrayState`, every surface model, `L10n` |
+| `PulseHook` | lightweight native hook receiver (`Contents/MacOS/pulse-hook`, links only `PulseKit` + CoreGraphics) |
 | `PulseApp` | `ScanEngine`, `StatusStore`, `WaitNotifier`, `TerminalFocus`, `GlobalShortcut`, `AutomationCheck`, views, resources (`PulseResources`, never `Bundle.module`) |
-| `PulseBar` | the shipping executable |
+| `PulseBar` | the shipping app executable |
 | `PulseQA` | fixtures, captures, preview, `QADriver` |
 
 Flow: hook line → `AttentionWatcher` → `ScanEngine` applies lines past its
