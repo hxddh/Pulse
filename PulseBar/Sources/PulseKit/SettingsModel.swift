@@ -65,6 +65,8 @@ package struct SettingsModel: Equatable {
         case setGroupByProject(Bool)
         /// Menu bar display density beside the lamp.
         case setMenuBarStyle(MenuBarStyle)
+        /// Resume notifications immediately when quiet mode is active.
+        case resumeQuiet
         /// System Settings → Privacy & Security → Automation.
         case openAutomationSettings
     }
@@ -128,6 +130,8 @@ package struct SettingsModel: Equatable {
     package var notifyDoneAgents: Set<AgentID> = []
     package var notifyLongTurnSeconds = 0
     package var notificationSound: NotificationSound = .default
+    /// Remaining quiet-mode snooze duration label when active; nil when not snoozed.
+    package var quietRemaining: String? = nil
     /// Each running terminal's Apple Events permission; empty when none
     /// runs or it was not asked yet.
     package var automation: [AutomationLine] = []

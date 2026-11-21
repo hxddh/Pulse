@@ -2269,4 +2269,47 @@ struct GroupByProjectTests {
         let minimal = TrayState.assemble(rows: [running, r3], context: TrayState.Context(nowMs: 120_000, menuBarStyle: .minimal))
         #expect(minimal.snapshot.title == "")
     }
+
+    @Test func piHeadlessGhostSuppressionTtyOwnershipHiddenRowsAndQuietTooltip() {
+        let now: Int64 = 1_800_000_000_000
+        var book = SessionBook()
+        // Hooked Pi session in $HOME (so process hit has cwd == "") with pid 0 but same TTY.
+        book.apply(AttentionRecord(
+            agent: .pi, kind: .working, ms: now - 5_000, message: "Refactor parser",
+            session: "pi-live", cwd: "/Users/me", pid: 0, landing: "tty:/dev/ttys004", event: "message_start"
+        ), nowMs: now)
+        book.apply(AttentionRecord(
+            agent: .claude, kind: .end, ms: now - 60_000, session: "old-claude",
+            cwd: "/Users/me/code/app", event: "SessionEnd"
+        ), nowMs: now)
+
+        let headlessPi = AgentProcesses.Hit(agent: .pi, pid: 5001, cwd: "", tty: "")
+        let sameTtyPi = AgentProcesses.Hit(agent: .pi, pid: 5002, cwd: "", tty: "ttys004")
+        let otherInteractivePi = AgentProcesses.Hit(agent: .pi, pid: 5003, cwd: "/Users/me/code/web", branch: "feat/ui", tty: "ttys009")
+
+        let state = TrayState.project(
+            book: book,
+            processes: [headlessPi, sameTtyPi, otherInteractivePi],
+            context: TrayState.Context(nowMs: now, quietRemaining: "25m")
+        )
+        // Headless retitled Pi is dropped; same-TTY Pi is owned by pi-live; other interactive Pi keeps its branch.
+        #expect(state.rows.map(\.key) == [SessionKey(.pi, "pi-live"), SessionKey.process(.pi, pid: 5003), SessionKey(.claude, "old-claude")])
+        #expect(state.rows.first(where: { $0.isProcessOnly })?.branch == "feat/ui")
+        #expect(state.snapshot.tooltip.contains("Quiet · 25m"))
+
+        // Hiding a recent or process-only row removes it cleanly; recent row menu offers Hide.
+        let recentRow = state.rows.first { $0.key == SessionKey(.claude, "old-claude") }!
+        let rowModel = TrayRowModel.make(TrayRowModel.Input(row: recentRow, lang: .en, nowMs: now))
+        #expect(rowModel.menu.contains { $0.action == .hide })
+
+        let hidden = TrayState.project(
+            book: book,
+            processes: [headlessPi, sameTtyPi, otherInteractivePi],
+            context: TrayState.Context(
+                nowMs: now,
+                hiddenKeys: [SessionKey(.claude, "old-claude"), SessionKey.process(.pi, pid: 5003)]
+            )
+        )
+        #expect(hidden.rows.map(\.key) == [SessionKey(.pi, "pi-live")])
+    }
 }

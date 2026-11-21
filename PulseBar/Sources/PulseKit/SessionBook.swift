@@ -115,6 +115,9 @@ package struct SessionBook: Equatable, Codable {
     package static let maxStepsPerEntry = 8
     /// Subagent types kept per session.
     package static let maxSubagentTypes = 16
+    /// End reason recorded when a single-session CLI switches to a new
+    /// session id on the same live PID (`/new`, `/resume`, `/fork`).
+    package static let switchedEndReason = "switch"
 
     package init() {}
 
@@ -173,7 +176,43 @@ package struct SessionBook: Equatable, Codable {
         Self.digestFiles(record, into: &session)
         let heardSub = record.sub.trimmingCharacters(in: .whitespacesAndNewlines)
         Self.hear(&session, Self.heard(record, effect: Self.effect(of: record, prior: prior, now: session), sub: heardSub))
-        return land(session, before: before)
+        let superseded = supersedeSameProcess(
+            agent: agent,
+            pid: session.pid,
+            keeping: key,
+            spelled: spelled,
+            signal: signal,
+            atMs: ms
+        )
+        return land(session, before: before) || superseded
+    }
+
+    /// For a single-session CLI agent, starting or prompting a new session id
+    /// on the same live PID supersedes any older live session still bound to
+    /// that PID (e.g. Pi `/new` / `/resume` / `/fork` or Claude `/clear`).
+    private mutating func supersedeSameProcess(
+        agent: AgentID,
+        pid: Int32,
+        keeping key: SessionKey,
+        spelled: String,
+        signal: Signal,
+        atMs ms: Int64
+    ) -> Bool {
+        guard agent.spec.singleSessionPerProcess,
+              pid > 1,
+              !spelled.isEmpty,
+              signal == .started || signal == .prompt
+        else { return false }
+        var changed = false
+        for (otherKey, other) in sessions
+        where otherKey != key && other.agent == agent && other.pid == pid && !other.isEnded && other.lastEventMs <= ms {
+            var copy = other
+            copy.endReason = Self.switchedEndReason
+            Self.set(&copy, .ended(atMs: ms), at: ms, event: "")
+            sessions[otherKey] = copy
+            changed = true
+        }
+        return changed
     }
 
     // MARK: - The state machine

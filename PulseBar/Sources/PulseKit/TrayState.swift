@@ -51,19 +51,27 @@ package struct TrayState: Equatable {
         package var previousWaits: [SessionKey: Int64] = [:]
         /// Menu bar display density beside the lamp.
         package var menuBarStyle: MenuBarStyle = .minimal
+        /// Keys explicitly hidden by the user (cleared recent or process-only rows).
+        package var hiddenKeys: Set<SessionKey> = []
+        /// Remaining quiet-mode snooze label when active (reflected in menu-bar tooltip).
+        package var quietRemaining: String? = nil
 
         package init(
             nowMs: Int64,
             lang: ResolvedLanguage = .en,
             stalledSeconds: Double = AgentRow.stalledSeconds,
             previousWaits: [SessionKey: Int64] = [:],
-            menuBarStyle: MenuBarStyle = .minimal
+            menuBarStyle: MenuBarStyle = .minimal,
+            hiddenKeys: Set<SessionKey> = [],
+            quietRemaining: String? = nil
         ) {
             self.nowMs = nowMs
             self.lang = lang
             self.stalledSeconds = stalledSeconds
             self.previousWaits = previousWaits
             self.menuBarStyle = menuBarStyle
+            self.hiddenKeys = hiddenKeys
+            self.quietRemaining = quietRemaining
         }
     }
 
@@ -116,8 +124,12 @@ package struct TrayState: Equatable {
             // Only a session still working or blocked is kept by its
             // process; a recent one leaves after the window, live or not. A
             // silent one's window starts when it went silent — its last
-            // event is already past the window by then.
+            // event is already past the window by then. A session replaced
+            // in-place on the same terminal PID (`/new`, `/resume`) leaves
+            // immediately so switching sessions never leaves stale duplicates.
             if case .recent(let reason) = status {
+                if case .ended = reason, session.endReason == SessionBook.switchedEndReason { continue }
+                if context.hiddenKeys.contains(session.key) { continue }
                 let from = reason == .silent ? session.lastEventMs + silentBoundMs : session.lastEventMs
                 guard nowMs - from <= recentWindowMs else { continue }
             }
@@ -147,18 +159,29 @@ package struct TrayState: Equatable {
         }
 
         for hit in processes {
+            // Headless runs whose argv was overwritten by `process.title` (e.g.
+            // Pi subagents or RPC workers) have no TTY and no host app: never
+            // surface them as unclaimed process-only ghost rows.
+            if hit.agent.spec.process.requireTTYForProcessOnly, hit.tty.isEmpty, hit.hostApp == nil {
+                continue
+            }
+            let processKey = SessionKey.process(hit.agent, pid: hit.pid)
+            if context.hiddenKeys.contains(processKey) { continue }
             let sessions = claimed[hit.agent] ?? []
+            let hitTTY = LandingHandle.normalizeTTY(hit.tty)
             let owned = sessions.contains { session in
                 (session.pid > 0 && hit.family.contains(session.pid))
                     || (session.pid == 0 && !session.cwd.isEmpty && session.cwd == hit.cwd)
+                    || (!hitTTY.isEmpty && LandingHandle(session.landing).tty == hitTTY)
             }
             guard !owned else { continue }
-            var row = AgentRow(key: .process(hit.agent, pid: hit.pid), status: .processOnly)
+            var row = AgentRow(key: processKey, status: .processOnly)
             row.cwd = hit.cwd
+            row.branch = hit.branch
             row.pid = hit.pid
             row.liveProcess = true
             row.landing = LandingHandle(
-                tty: LandingHandle.normalizeTTY(hit.tty),
+                tty: hitTTY,
                 term: hit.viaWarp ? "WarpTerminal" : ""
             )
             row.landingPlan = LandingPlan.make(
@@ -323,7 +346,12 @@ package struct TrayState: Equatable {
         // one.
         let rule = lampRule(counts: counts)
         snap.lamp = Lamp(rule)
-        snap.tooltip = lampSentence(rule, lang: lang)
+        let baseTooltip = lampSentence(rule, lang: lang)
+        if let quiet = context.quietRemaining, !quiet.isEmpty {
+            snap.tooltip = "\(baseTooltip) · \(String(format: L10n.t(.quietActiveBadge, lang), quiet))"
+        } else {
+            snap.tooltip = baseTooltip
+        }
         snap.accessibilityLabel = snap.lamp.isGrey ? L10n.t(rule.accessibilityKey, lang) : snap.tooltip
         return snap
     }

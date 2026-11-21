@@ -25,6 +25,8 @@ package enum AgentProcesses {
         package var family: [Int32]
         /// The working directory, when it names user work (`usefulWorkingDirectory`).
         package var cwd: String = ""
+        /// Git branch resolved from `cwd`'s `.git/HEAD`; "" when unknown or detached.
+        package var branch: String = ""
         /// Kernel tty name without `/dev/` (`ttys004`); "" when none.
         package var tty: String = ""
         package var startedMs: Int64 = 0
@@ -36,6 +38,7 @@ package enum AgentProcesses {
             pid: Int32,
             family: [Int32] = [],
             cwd: String = "",
+            branch: String = "",
             tty: String = "",
             startedMs: Int64 = 0,
             viaWarp: Bool = false,
@@ -45,6 +48,7 @@ package enum AgentProcesses {
             self.pid = pid
             self.family = family.isEmpty ? [pid] : family
             self.cwd = cwd
+            self.branch = branch
             self.tty = tty
             self.startedMs = startedMs
             self.viaWarp = viaWarp
@@ -93,7 +97,9 @@ package enum AgentProcesses {
     package static func hits(
         in table: [Proc],
         cwd: (Int32) -> String,
-        serviceArguments: (AgentID) -> [String] = AgentProcesses.serviceArguments(of:)
+        serviceArguments: (AgentID) -> [String] = AgentProcesses.serviceArguments(of:),
+        serviceBasenames: (AgentID) -> [String] = AgentProcesses.serviceBasenames(of:),
+        branch: (String) -> String = GitBranch.resolve
     ) -> [Hit] {
         var byPid: [Int32: Proc] = [:]
         for proc in table { byPid[proc.pid] = proc }
@@ -101,11 +107,11 @@ package enum AgentProcesses {
         for proc in table {
             // Warp's own helpers carry agent-looking argv; they are the
             // terminal, not a session.
-            if proc.args.contains("Warp.app") { continue }
+            if isWarpApp(proc.args) { continue }
             guard let agent = match(args: proc.args) else { continue }
             // A service serves many sessions and outlives each: it is not
             // one, so it is no process-only row either.
-            if isService(args: proc.args, arguments: serviceArguments(agent)) { continue }
+            if isService(args: proc.args, arguments: serviceArguments(agent), basenames: serviceBasenames(agent)) { continue }
             matched[proc.pid] = agent
         }
 
@@ -135,12 +141,17 @@ package enum AgentProcesses {
             var hit = Hit(agent: agent, pid: root, family: members.sorted())
             hit.startedMs = proc.startedMs
             hit.tty = chain.lazy.map(\.tty).first { !$0.isEmpty } ?? ""
-            hit.viaWarp = chain.contains { $0.args.contains("Warp.app") }
+            hit.viaWarp = chain.contains { isWarpApp($0.args) }
             hit.hostApp = chain.lazy.compactMap { hostApp(in: $0.args) }.first
             hit.cwd = usefulWorkingDirectory(cwd(root))
+            if !hit.cwd.isEmpty { hit.branch = branch(hit.cwd) }
             out.append(hit)
         }
         return out.sorted { ($0.agent.rawValue, $0.pid) < ($1.agent.rawValue, $1.pid) }
+    }
+
+    private static func isWarpApp(_ args: String) -> Bool {
+        args.contains("Warp.app") || args.contains("WarpPreview.app")
     }
 
     package static func hostApp(in args: String) -> HostAppKind? {
@@ -157,24 +168,47 @@ package enum AgentProcesses {
         agent.spec.process.serviceArguments
     }
 
+    /// Executable or retitled basenames that always represent a service
+    /// (`pi-rpc`), never a standalone interactive session.
+    package static func serviceBasenames(of agent: AgentID) -> [String] {
+        agent.spec.process.serviceBasenames
+    }
+
     /// Whether a command line (`commandLine(path:argv:)`) runs the agent as
     /// a service. A needle that starts with `-` is a flag and matches any
-    /// whole argument; any other is a subcommand and matches only the first
+    /// whole argument (or a consecutive two-token flag/value pair such as
+    /// `"--mode json"`); any other is a subcommand and matches only the first
     /// argument that is not a flag, so `codex exec restart the app-server`
     /// is a session. The program (and an interpreter's script) is never an
-    /// argument. Pure.
-    package static func isService(args: String, arguments needles: [String]) -> Bool {
-        guard !needles.isEmpty else { return false }
-        var rest = args.split(whereSeparator: \.isWhitespace).map(String.init)
-        guard let exe = rest.first else { return false }
-        rest.removeFirst()
-        if interpreters.contains((exe as NSString).lastPathComponent.lowercased()),
-           let script = rest.firstIndex(where: { !$0.hasPrefix("-") }) {
-            rest.removeSubrange(...script)
+    /// argument, unless its basename is listed in `basenames` (`pi-rpc`). Pure.
+    package static func isService(args: String, arguments needles: [String], basenames: [String] = []) -> Bool {
+        guard !needles.isEmpty || !basenames.isEmpty else { return false }
+        let tokens = args.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard let exe = tokens.first else { return false }
+        var programs = [exe]
+        var restStart = 1
+        if let found = interpreterScript(in: tokens) {
+            programs.append(found.script)
+            restStart = found.index + 1
         }
+        if !basenames.isEmpty {
+            for program in programs {
+                let base = (program as NSString).lastPathComponent
+                if basenames.contains(where: { $0.caseInsensitiveCompare(base) == .orderedSame }) {
+                    return true
+                }
+            }
+        }
+        guard !needles.isEmpty else { return false }
+        let rest = restStart < tokens.count ? Array(tokens[restStart...]) : []
         let subcommand = rest.first { !$0.hasPrefix("-") }
         return needles.contains { needle in
-            needle.hasPrefix("-") ? rest.contains(needle) : subcommand == needle
+            if needle.contains(" ") {
+                let pair = needle.split(whereSeparator: \.isWhitespace).map(String.init)
+                guard pair.count == 2 else { return false }
+                return zip(rest, rest.dropFirst()).contains { $0 == pair[0] && $1 == pair[1] }
+            }
+            return needle.hasPrefix("-") ? rest.contains(needle) : subcommand == needle
         }
     }
 
@@ -187,6 +221,53 @@ package enum AgentProcesses {
     /// Interpreters whose first non-flag argument is the program they run
     /// (`node /opt/homebrew/bin/copilot`).
     package static let interpreters: Set<String> = ["node", "nodejs", "bun", "deno", "tsx"]
+
+    /// Interpreter flags that evaluate inline code (no script file follows).
+    private static let interpreterEvalFlags: Set<String> = ["-e", "--eval", "-p", "--print"]
+
+    /// Interpreter flags that take a following argument token before the script.
+    private static let interpreterValueFlags: Set<String> = [
+        "-r", "--require", "--import", "--loader", "--experimental-loader",
+        "--env-file", "--env-file-if-exists", "--conditions", "-C",
+        "--config", "-c", "--cwd", "--preload", "--inspect", "--inspect-brk",
+        "--max-old-space-size", "--title",
+    ]
+
+    /// Package-manager subcommands of `bun`/`deno` whose argument is a package
+    /// script name (`bun run pi`), not a direct executable path.
+    private static let interpreterSubcommands: Set<String> = [
+        "run", "test", "x", "exec", "eval", "repl", "install", "add", "remove",
+    ]
+
+    /// When `tokens.first` is a known JS/TS interpreter, find the script token
+    /// it actually executes (skipping interpreter flags and their values).
+    private static func interpreterScript(in tokens: [String]) -> (script: String, index: Int)? {
+        guard let exe = tokens.first else { return nil }
+        let base = (exe as NSString).lastPathComponent.lowercased()
+        guard interpreters.contains(base) else { return nil }
+        var index = 1
+        while index < tokens.count {
+            let token = tokens[index]
+            if token == "--" {
+                index += 1
+                break
+            }
+            if interpreterEvalFlags.contains(token) { return nil }
+            if interpreterValueFlags.contains(token) {
+                index += 2
+                continue
+            }
+            if token.hasPrefix("-") {
+                index += 1
+                continue
+            }
+            if (base == "bun" || base == "deno"), interpreterSubcommands.contains(token.lowercased()) {
+                return nil
+            }
+            return (token, index)
+        }
+        return index < tokens.count ? (tokens[index], index) : nil
+    }
 
     /// The agent a command line (executable path, then argv) belongs to.
     ///
@@ -201,9 +282,8 @@ package enum AgentProcesses {
         let tokens = args.split(whereSeparator: \.isWhitespace).map(String.init)
         guard let exe = tokens.first else { return nil }
         var programs = [exe]
-        if interpreters.contains((exe as NSString).lastPathComponent.lowercased()),
-           let script = tokens.dropFirst().first(where: { !$0.hasPrefix("-") }) {
-            programs.append(script)
+        if let found = interpreterScript(in: tokens) {
+            programs.append(found.script)
         }
         for (id, rule) in rules {
             if rule.denyNeedles.contains(where: { needle in programs.contains { $0.contains(needle) } }) { continue }

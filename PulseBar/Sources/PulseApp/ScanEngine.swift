@@ -53,6 +53,9 @@ final class ScanEngine {
     private(set) var logCursor: EventLog.Cursor?
     /// Agent processes the last process scan found.
     private(set) var processes: [AgentProcesses.Hit] = []
+    /// Recent or process-only rows hidden by the user (key → lastEventMs at
+    /// hide time). Automatically re-shown if the session receives newer events.
+    private var hiddenRows: [SessionKey: Int64] = [:]
     /// The newest line each agent's hook wrote — its vendor event and when —
     /// for Settings' connection lines and the report. Kept here so a redraw
     /// never reads a file.
@@ -522,18 +525,53 @@ final class ScanEngine {
         project(nowMs: nowMs)
     }
 
+    /// Hide a recent or process-only row until it has newer activity.
+    func hideRow(_ key: SessionKey, atMs nowMs: Int64 = ScanEngine.nowMs()) {
+        let stamp = max(book.sessions[key]?.lastEventMs ?? 0, nowMs)
+        hiddenRows[key] = stamp
+        project(nowMs: nowMs)
+    }
+
+    /// Hide a batch of recent rows until any of them gets newer activity.
+    func clearRecent(_ keys: [SessionKey], atMs nowMs: Int64 = ScanEngine.nowMs()) {
+        guard !keys.isEmpty else { return }
+        for key in keys {
+            hiddenRows[key] = max(book.sessions[key]?.lastEventMs ?? 0, nowMs)
+        }
+        project(nowMs: nowMs)
+    }
+
+    private func activeHiddenKeys(nowMs: Int64) -> Set<SessionKey> {
+        guard !hiddenRows.isEmpty else { return [] }
+        let liveProcessKeys = Set(processes.map { SessionKey.process($0.agent, pid: $0.pid) })
+        var kept: [SessionKey: Int64] = [:]
+        for (key, hiddenAt) in hiddenRows {
+            if let session = book.sessions[key] {
+                if case .recent = TrayState.status(of: session, nowMs: nowMs),
+                   session.lastEventMs <= hiddenAt {
+                    kept[key] = hiddenAt
+                }
+            } else if liveProcessKeys.contains(key) {
+                kept[key] = hiddenAt
+            }
+        }
+        hiddenRows = kept
+        return Set(kept.keys)
+    }
+
     /// The book as rows, landed on the model. Pure but for the landing.
     /// Held while the launch replay is being read.
     func project(nowMs: Int64 = ScanEngine.nowMs()) {
         guard let model, !holdProjection else { return }
         // Clear expired quiet-mode snooze automatically on tick.
         if model.settings.quietUntilMs > 0, !model.settings.isQuiet(at: nowMs) {
-            model.resumeQuiet()
+            model.set(\.quietUntilMs, 0)
         }
         // A turn held for a block lands once its grace has passed, even when
         // no event follows (a denied prompt, then Stop within 20 s).
         book.settleHeldTurns(nowMs: nowMs)
         book.prune(nowMs: nowMs)
+        let hiddenKeys = activeHiddenKeys(nowMs: nowMs)
         let state = TrayState.project(
             book: book,
             processes: processes,
@@ -541,7 +579,9 @@ final class ScanEngine {
                 nowMs: nowMs,
                 lang: model.lang,
                 previousWaits: lastWaits,
-                menuBarStyle: model.settings.menuBarStyle
+                menuBarStyle: model.settings.menuBarStyle,
+                hiddenKeys: hiddenKeys,
+                quietRemaining: model.settings.quietRemaining(at: nowMs, lang: model.lang)
             )
         )
         exitWatch.follow(book.livePids)

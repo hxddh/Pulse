@@ -86,17 +86,21 @@ struct TrayView: View {
     private var list: some View {
         let rows = ui.displayRows
         return VStack(alignment: .leading, spacing: 0) {
-            TrayHeaderFace(
-                model: store.trayHeaderModel,
-                doneCount: store.rows.filter(\.isYourTurn).count,
-                quietRemaining: store.quietRemaining()
-            ) { action in
-                switch action {
-                case .settings: store.openSettings()
-                case .quit: store.quit()
-                case .markAllSeen: store.markAllSeen()
-                case .quiet(let minutes): store.setQuiet(minutes: minutes)
-                case .resumeQuiet: store.resumeQuiet()
+            TimelineView(.periodic(from: .now, by: TrayChrome.clock)) { context in
+                TrayHeaderFace(
+                    model: store.trayHeaderModel,
+                    doneCount: store.rows.filter(\.isYourTurn).count,
+                    recentCount: store.rows.filter(\.isRecent).count,
+                    quietRemaining: store.quietRemaining(at: context.date)
+                ) { action in
+                    switch action {
+                    case .settings: store.openSettings()
+                    case .quit: store.quit()
+                    case .markAllSeen: store.markAllSeen()
+                    case .clearRecent: store.clearRecent()
+                    case .quiet(let minutes): store.setQuiet(minutes: minutes)
+                    case .resumeQuiet: store.resumeQuiet()
+                    }
                 }
             }
             if ui.filterActive {
@@ -244,11 +248,13 @@ struct TrayView: View {
 /// One line: the counts in their tones. The ⋯ menu holds Settings and Quit;
 /// ⌘R refreshes. Renders a `TrayHeaderModel`.
 struct TrayHeaderFace: View {
-    enum Action: Equatable { case settings, quit, markAllSeen, quiet(minutes: Int), resumeQuiet }
+    enum Action: Equatable { case settings, quit, markAllSeen, clearRecent, quiet(minutes: Int), resumeQuiet }
 
     let model: TrayHeaderModel
     /// Finished turns not yet looked at: "Mark all as seen" in the ⋯ menu.
     var doneCount = 0
+    /// Recent rows currently listed: "Clear recent" in the ⋯ menu.
+    var recentCount = 0
     /// Remaining duration when quiet mode is active; nil when not snoozed.
     var quietRemaining: String? = nil
     var send: (Action) -> Void = { _ in }
@@ -286,6 +292,11 @@ struct TrayHeaderFace: View {
             Menu {
                 if doneCount > 0 {
                     Button(String(format: t(.markAllSeen), doneCount)) { send(.markAllSeen) }
+                }
+                if recentCount > 0 {
+                    Button(String(format: t(.clearRecent), recentCount)) { send(.clearRecent) }
+                }
+                if doneCount > 0 || recentCount > 0 {
                     Divider()
                 }
                 if quietRemaining != nil {
@@ -741,8 +752,14 @@ final class TrayUI {
         applyPendingReveal()
     }
 
+    private func syncListHeightEstimate() {
+        let count = displayRows.count
+        listHeight = count == 0 ? 0 : min(CGFloat(count * 46 + 8), CGFloat(maxListHeight))
+    }
+
     func setFilter(_ text: String) {
         if filterText != text { filterText = text }
+        syncListHeightEstimate()
         let next = TrayKeys.normalize(keys, rows: displayRows.map { TrayKeys.Row($0) })
         if keys != next { keys = next }
     }
@@ -781,6 +798,7 @@ final class TrayUI {
         if key == .escape, keys.detail == nil, filterActive {
             filterActive = false
             filterText = ""
+            syncListHeightEstimate()
             let next = TrayKeys.normalize(keys, rows: displayRows.map { TrayKeys.Row($0) })
             if keys != next { keys = next }
             return true
@@ -807,6 +825,7 @@ final class TrayUI {
             } else {
                 filterActive = true
             }
+            syncListHeightEstimate()
             let next = TrayKeys.normalize(keys, rows: displayRows.map { TrayKeys.Row($0) })
             if keys != next { keys = next }
         case .refresh:
@@ -834,6 +853,7 @@ final class TrayUI {
         case .watchTurn: store.toggleTurnWatch(row)
         case .dismiss: store.dismissWaiting(row)
         case .focus: store.focusTerminal(row)
+        case .hide: store.hideRow(row)
         }
     }
 

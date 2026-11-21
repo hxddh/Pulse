@@ -2621,4 +2621,40 @@ struct ReducerInvariantTests {
         #expect(LandingPlan.termPrograms["alacritty"] == ["org.alacritty"])
         #expect(LandingPlan.editor(handle: LandingHandle("term:JetBrains-JediTerm"), hostApp: nil) == .jetbrains)
     }
+
+    @Test func piEmptySessionIsIgnoredAndSamePidSwitchSupersedesOldSession() {
+        // Pi events without a session id are ignored instead of creating a folder-keyed row.
+        let noSession = PulseHookReceiver.record(
+            agent: .pi,
+            event: "session_start",
+            payload: ["session_id": "", "cwd": "/Users/me/code/app"],
+            nowMs: t0
+        )
+        #expect(noSession.kind == .ignored)
+        #expect(noSession.message == PulseHookReceiver.Ignored.noSession.rawValue)
+
+        // Switching sessions on the same Pi PID ends and supersedes the prior session
+        // so only the active session stays listed in the tray.
+        var book = SessionBook()
+        book.apply(AttentionRecord(
+            agent: .pi, kind: .start, ms: t0, session: "pi-1", cwd: "/Users/me/code/app",
+            pid: 4242, event: "session_start"
+        ), nowMs: t0 + 1)
+        book.apply(AttentionRecord(
+            agent: .pi, kind: .working, ms: t0 + 1_000, message: "First task", session: "pi-1",
+            cwd: "/Users/me/code/app", pid: 4242, event: "message_start"
+        ), nowMs: t0 + 1_001)
+        book.apply(AttentionRecord(
+            agent: .pi, kind: .start, ms: t0 + 5_000, session: "pi-2", cwd: "/Users/me/code/app",
+            pid: 4242, event: "session_start"
+        ), nowMs: t0 + 5_001)
+        #expect(book.sessions[SessionKey(.pi, "pi-1")]?.isEnded == true)
+        #expect(book.sessions[SessionKey(.pi, "pi-1")]?.endReason == SessionBook.switchedEndReason)
+        let projected = TrayState.project(
+            book: book,
+            processes: [AgentProcesses.Hit(agent: .pi, pid: 4242, cwd: "/Users/me/code/app", tty: "ttys003")],
+            context: TrayState.Context(nowMs: t0 + 6_000)
+        )
+        #expect(projected.rows.map(\.session) == ["pi-2"])
+    }
 }

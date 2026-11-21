@@ -61,6 +61,7 @@ extension AgentSpec {
         // A subagent's events carry its `agent_id` (its thread); the main
         // agent's none. Every thread of a session shares its `session_id`.
         subagentKeys: ["agent_id"],
+        singleSessionPerProcess: true,
         // Codex's hook tool names (core tools/hook_names.rs and the
         // handlers' `tool_name`); an MCP tool is `mcp__<server>__<tool>`.
         toolCategories: Codex.toolCategories,

@@ -113,11 +113,12 @@ package enum PulseHookReceiver {
         // the user watched finish is not owed to them, and a blocked prompt
         // already on screen needs no banner.
         if written.kind.isOpen { written.front = front() }
-        // Read the Git branch on session start, user prompt, or block (zero
-        // subprocesses: `.git/HEAD` only) so parallel worktrees stay distinct.
+        // Read the Git branch on session start, user prompt, turn end, or block
+        // (zero subprocesses: `.git/HEAD` only) so parallel worktrees and
+        // mid-session checkouts stay fresh.
         if written.meta.branch.isEmpty,
            !written.cwd.isEmpty,
-           written.kind == .start || written.kind == .working || written.kind.isBlocking {
+           written.kind == .start || written.kind == .working || written.kind == .turn || written.kind == .failed || written.kind.isBlocking {
             let branch = branchOf(written.cwd)
             if !branch.isEmpty {
                 written.meta.branch = LineMeta.clean(ContentSanitizer.redact(branch), limit: LineMeta.branchLimit)
@@ -160,6 +161,15 @@ package enum PulseHookReceiver {
         // never shown blocked.
         if case .blocked = reading.action, agent.waitingSource == .none {
             return ignored(.cannotWait, agent: agent, event: event, context: context, nowMs: nowMs)
+        }
+        // Adapters whose runtime always issues a session id (e.g. Pi) drop
+        // session-less events instead of creating folder-keyed ghost rows.
+        if agent.spec.requiresSessionID, context.session.isEmpty {
+            switch reading.action {
+            case .ignore, .skip: break
+            default:
+                return ignored(.noSession, agent: agent, event: event, context: context, nowMs: nowMs)
+            }
         }
         // The adapter's own name for the tool (Cursor's shell, an MCP
         // server's tool), else the payload's.

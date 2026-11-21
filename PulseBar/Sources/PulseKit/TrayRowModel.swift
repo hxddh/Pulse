@@ -26,7 +26,7 @@ package struct TrayRowModel: Equatable {
     package enum Action: String, Equatable, Hashable {
         /// Go: focus the terminal when there is a handle, else the detail.
         case primary
-        case details, watchTurn, dismiss, focus
+        case details, watchTurn, dismiss, focus, hide
     }
 
     /// Where on the row a click landed: its body (both lines) or the
@@ -56,7 +56,7 @@ package struct TrayRowModel: Equatable {
             case .details: return .right
             case .watchTurn: return .watchTurn
             case .dismiss: return .dismiss
-            case .primary: return nil
+            case .primary, .hide: return nil
             }
         }
     }
@@ -187,6 +187,7 @@ package struct TrayRowModel: Equatable {
             menu.append(Button(action: .watchTurn, title: t(watching ? .unwatchTurn : .watchTurn)))
         }
         if row.isBlocked { menu.append(Button(action: .dismiss, title: t(.ignoreWait))) }
+        if row.isRecent || row.isProcessOnly { menu.append(Button(action: .hide, title: t(.hideRow))) }
 
         // VoiceOver hears whole words: "4 minutes", never the drawn "4m".
         var spoken = [row.agent.displayName, Self.stateText(row, lang: lang), headline]

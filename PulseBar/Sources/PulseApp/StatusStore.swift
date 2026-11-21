@@ -255,12 +255,14 @@ final class StatusStore {
     func setQuiet(minutes: Int, nowMs: Int64 = ScanEngine.nowMs()) {
         let until = nowMs + Int64(max(1, minutes)) * 60 * 1000
         set(\.quietUntilMs, until)
+        engine.project(nowMs: nowMs)
     }
 
     /// Resume notification banners immediately.
     func resumeQuiet() {
         guard settings.quietUntilMs != 0 else { return }
         set(\.quietUntilMs, 0)
+        engine.project()
     }
 
     /// Remaining quiet duration label at `date`, or nil when not snoozed.
@@ -284,6 +286,19 @@ final class StatusStore {
     /// click on each would write.
     func markAllSeen() {
         for row in rows where row.isYourTurn { markTurnSeen(row) }
+    }
+
+    /// Hide one recent or process-only row from the tray until it has newer activity.
+    func hideRow(_ row: AgentRow) {
+        guard !previewFixtureActive, row.isRecent || row.isProcessOnly else { return }
+        engine.hideRow(row.key)
+    }
+
+    /// Clear all recent rows currently shown in the tray.
+    func clearRecent() {
+        guard !previewFixtureActive else { return }
+        let keys = rows.filter(\.isRecent).map(\.key)
+        engine.clearRecent(keys)
     }
 
     /// Ask macOS, without prompting, what it allows for each terminal.

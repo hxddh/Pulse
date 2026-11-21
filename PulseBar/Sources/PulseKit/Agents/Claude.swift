@@ -72,6 +72,7 @@ extension AgentSpec {
         // Inside a subagent (the Task tool) every event carries the
         // subagent's `agent_id`; the main agent's carry none.
         subagentKeys: ["agent_id"],
+        singleSessionPerProcess: true,
         // Claude's tool names (tools-reference, the Agent SDK's
         // `ToolInputSchemas`); an MCP tool is `mcp__<server>__<tool>`.
         toolCategories: Claude.toolCategories,

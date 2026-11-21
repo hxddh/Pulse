@@ -325,6 +325,8 @@ package enum L10n {
         case settingsMenuBarMinimal
         case settingsMenuBarCompact
         case settingsMenuBarCounts
+        case hideRow
+        case clearRecent
     }
 }
 
@@ -590,6 +592,8 @@ extension L10n.Key {
         case .settingsMenuBarMinimal: return ("Default (count only when waiting)", "默认（仅等待时显示计数）")
         case .settingsMenuBarCompact: return ("Icon only", "仅显示灯标")
         case .settingsMenuBarCounts: return ("Show active & done counts", "显示运行与完成计数")
+        case .hideRow: return ("Hide", "隐藏")
+        case .clearRecent: return ("Clear recent (%d)", "清理近期会话（%d）")
         }
     }
 }
