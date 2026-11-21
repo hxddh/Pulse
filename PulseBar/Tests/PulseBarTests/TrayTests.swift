@@ -2394,11 +2394,11 @@ struct GroupByProjectTests {
 
     @Test func v40ApexSanitizerTitlesKeysConflictPeersAndBeaconPreview() throws {
         // 1. ContentSanitizer redacts DB URIs, cloud/package tokens, and compact JWTs.
-        let pg = ContentSanitizer.clean("psql postgres://admin:s3cr3tPass@db.internal:5432/prod")
+        let pg = ContentSanitizer.redact("psql postgres://admin:s3cr3tPass@db.internal:5432/prod")
         #expect(!pg.contains("s3cr3tPass"))
         #expect(pg.contains("postgres://admin:••••@db.internal:5432/prod"))
 
-        let redis = ContentSanitizer.clean("redis-cli -u rediss://:myredispass@cache.example.com:6379")
+        let redis = ContentSanitizer.redact("redis-cli -u rediss://:myredispass@cache.example.com:6379")
         #expect(!redis.contains("myredispass"))
         #expect(redis.contains("rediss://:••••@cache.example.com:6379"))
 
@@ -2408,7 +2408,7 @@ struct GroupByProjectTests {
         let stripeTok = "sk_" + "live_" + "1234567890abcdefghijklmnop"
         let awsTok = "ASIA" + "IOSFODNN7EXAMPLE"
         let jwtTok = "eyJ" + "hbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." + "eyJ" + "zdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
-        let tokens = ContentSanitizer.clean(
+        let tokens = ContentSanitizer.redact(
             "GOOGLE=\(googleTok) NPM=\(npmTok) STRIPE=\(stripeTok) AWS=\(awsTok) JWT=\(jwtTok)"
         )
         #expect(!tokens.contains(googleTok))
