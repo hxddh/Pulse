@@ -128,6 +128,27 @@ final class WaitNotifier {
     /// ids are withdrawn.
     var withdrawBanners: ([String]) -> Void = { PulseNotify.withdraw(ids: $0) }
 
+    /// How waiting banners are handed to Notification Center. Tests replace it
+    /// to observe exact delivery without a `.app` bundle.
+    var deliverWaitingBanner: (
+        _ id: String,
+        _ banner: WaitingBanner,
+        _ waiting: AgentRow,
+        _ sound: NotificationSound,
+        _ completion: @escaping (Bool) -> Void
+    ) -> Void = { id, banner, waiting, sound, completion in
+        PulseNotify.postWaiting(
+            id: id,
+            banner: banner,
+            agent: waiting.agent.rawValue,
+            session: waiting.session,
+            rowKey: waiting.key.description,
+            kind: .waiting,
+            sound: sound,
+            completion: completion
+        )
+    }
+
     /// Take these banners out of Notification Center — delivered or still
     /// pending.
     private func withdraw(_ ids: Set<String>) {
@@ -178,20 +199,16 @@ final class WaitNotifier {
         for waiting in candidates {
             inFlight.insert(waiting.key)
             let id = WaitLedger.bannerID(waiting.key)
-            PulseNotify.postWaiting(
-                id: id,
-                banner: WaitingBanner.make(waiting, lang: model.lang),
-                agent: waiting.agent.rawValue,
-                session: waiting.session,
-                rowKey: waiting.key.description,
-                kind: .waiting,
-                sound: model.settings.notificationSound,
-                completion: { [weak self] success in
-                    // Each request owns one wait; commit it on its own so
-                    // one rejected request never hides the others.
-                    self?.finishDelivery(key: waiting.key, bannerID: id, success: success)
-                }
-            )
+            deliverWaitingBanner(
+                id,
+                WaitingBanner.make(waiting, lang: model.lang),
+                waiting,
+                model.settings.notificationSound
+            ) { [weak self] success in
+                // Each request owns one wait; commit it on its own so
+                // one rejected request never hides the others.
+                self?.finishDelivery(key: waiting.key, bannerID: id, success: success)
+            }
         }
     }
 

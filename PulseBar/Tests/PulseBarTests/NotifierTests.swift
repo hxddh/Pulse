@@ -779,32 +779,36 @@ struct TurnWatchTests {
     @Test func quietModeQueuesOpenWaitsAndCatchesUpWhenResumed() {
         let store = StatusStore()
         store.notifyAuthorized = true
+        var posted: [SessionKey] = []
+        store.notifier.deliverWaitingBanner = { _, _, waiting, _, completion in
+            posted.append(waiting.key)
+            completion(true)
+        }
         let now = Int64(Date().timeIntervalSince1970 * 1000)
+        // Complete an empty launch replay so subsequent events are live (not baseline).
+        store.engine.landLog(EventLog.Chunk.empty, nowMs: now - 30_000)
         store.settings.quietUntilMs = now + 600_000
 
-        let w1 = row("claude|qw1", .needsYou(Block(kind: .permission, ask: "Bash: swift test", sinceMs: now - 10_000)))
-        let w2 = row("claude|qw2", .needsYou(Block(kind: .question, ask: "Keep old migration?", sinceMs: now - 5_000)))
-        var state1 = TrayState()
-        state1.rows = [w1, w2]
-        state1.newlyBlocked = [w1, w2]
+        // Two new waits arrive while quiet mode is active.
+        store.engine.apply(records: [
+            AttentionRecord(agent: .claude, kind: .permission, ms: now - 10_000, message: "Bash: swift test", session: "qw1", cwd: "/tmp/p", tool: "Bash", event: "PermissionRequest"),
+            AttentionRecord(agent: .claude, kind: .question, ms: now - 5_000, message: "Keep old migration?", session: "qw2", cwd: "/tmp/p", event: "Notification"),
+        ], nowMs: now)
 
-        store.rows = state1.rows
-        store.notifier.scanLanded(state1, nowMs: now, baseline: false)
-        #expect(store.notifier.inFlight.isEmpty, "quiet mode must not post banners immediately")
-        #expect(store.notifier.ledger.queuedKeys == [w1.key, w2.key], "new waits during quiet mode are queued for catch-up")
+        let k1 = SessionKey(.claude, "qw1")
+        let k2 = SessionKey(.claude, "qw2")
+        #expect(posted.isEmpty, "quiet mode must not post banners immediately")
+        #expect(store.notifier.ledger.queuedKeys == [k1, k2], "new waits during quiet mode are queued for catch-up")
 
-        // w2 resolves while still in quiet mode -> must drop out of the catch-up queue.
-        let r2 = row("claude|qw2", .running(stalled: false))
-        var state2 = TrayState()
-        state2.rows = [w1, r2]
-        state2.newlyBlocked = []
-        store.rows = state2.rows
-        store.notifier.scanLanded(state2, nowMs: now + 5_000, baseline: false)
-        #expect(store.notifier.ledger.queuedKeys == [w1.key], "resolved wait is dropped before quiet ends")
+        // qw2 resolves while still in quiet mode -> must drop out of the catch-up queue.
+        store.engine.apply(records: [
+            AttentionRecord(agent: .claude, kind: .done, ms: now + 5_000, session: "qw2", cwd: "/tmp/p", event: "PostToolUse"),
+        ], nowMs: now + 5_000)
+        #expect(posted.isEmpty)
+        #expect(store.notifier.ledger.queuedKeys == [k1], "resolved wait is dropped before quiet ends")
 
-        // Resume quiet mode -> still-open w1 catches up automatically; resolved w2 never fires.
+        // Resume quiet mode -> still-open qw1 catches up automatically; resolved qw2 never fires.
         store.resumeQuiet()
-        #expect(store.notifier.inFlight.contains(w1.key), "still-open wait catches up when quiet mode ends")
-        #expect(!store.notifier.inFlight.contains(w2.key), "resolved wait never ghost-notifies after quiet ends")
+        #expect(posted == [k1], "still-open wait catches up when quiet mode ends and resolved wait never ghost-notifies")
     }
 }
