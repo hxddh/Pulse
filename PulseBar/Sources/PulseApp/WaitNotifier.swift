@@ -81,8 +81,6 @@ final class WaitNotifier {
             }
         }
         guard !baseline, let model else { return }
-        // Quiet mode snoozes all banners while keeping the menu-bar lamp red.
-        if model.settings.isQuiet(at: nowMs) { return }
         // Two-tier hold for waits raised while their terminal app was in front:
         // 1. After 30s (`deferAfterMs`), fire as soon as the app leaves the front.
         // 2. After 90s (`frontEscalationMs`), fire unconditionally — an unanswered
@@ -98,6 +96,13 @@ final class WaitNotifier {
         // A muted agent's wait is in the lamp and the tray, never a banner.
         let edges = (state.newlyBlocked.filter { $0.wait?.inFront != true } + due)
             .filter { !model.settings.isMuted($0.agent) }
+        // Quiet mode snoozes banners while keeping the menu-bar lamp red —
+        // queue any new edge so waits still open when quiet mode ends catch up
+        // automatically instead of being silently lost.
+        if model.settings.isQuiet(at: nowMs) {
+            for waiting in edges { ledger.markQueued(waiting.key) }
+            return
+        }
         // Owed banners are rebuilt from this projection's rows: a wait that
         // resolved has no open record, so it can neither linger in a queue
         // nor bring back a banner for a prompt that is gone.
@@ -122,6 +127,27 @@ final class WaitNotifier {
     /// How banners leave Notification Center. Tests replace it to see which
     /// ids are withdrawn.
     var withdrawBanners: ([String]) -> Void = { PulseNotify.withdraw(ids: $0) }
+
+    /// How waiting banners are handed to Notification Center. Tests replace it
+    /// to observe exact delivery without a `.app` bundle.
+    var deliverWaitingBanner: (
+        _ id: String,
+        _ banner: WaitingBanner,
+        _ waiting: AgentRow,
+        _ sound: NotificationSound,
+        _ completion: @escaping (Bool) -> Void
+    ) -> Void = { id, banner, waiting, sound, completion in
+        PulseNotify.postWaiting(
+            id: id,
+            banner: banner,
+            agent: waiting.agent.rawValue,
+            session: waiting.session,
+            rowKey: waiting.key.description,
+            kind: .waiting,
+            sound: sound,
+            completion: completion
+        )
+    }
 
     /// Take these banners out of Notification Center — delivered or still
     /// pending.
@@ -173,20 +199,16 @@ final class WaitNotifier {
         for waiting in candidates {
             inFlight.insert(waiting.key)
             let id = WaitLedger.bannerID(waiting.key)
-            PulseNotify.postWaiting(
-                id: id,
-                banner: WaitingBanner.make(waiting, lang: model.lang),
-                agent: waiting.agent.rawValue,
-                session: waiting.session,
-                rowKey: waiting.key.description,
-                kind: .waiting,
-                sound: model.settings.notificationSound,
-                completion: { [weak self] success in
-                    // Each request owns one wait; commit it on its own so
-                    // one rejected request never hides the others.
-                    self?.finishDelivery(key: waiting.key, bannerID: id, success: success)
-                }
-            )
+            deliverWaitingBanner(
+                id,
+                WaitingBanner.make(waiting, lang: model.lang),
+                waiting,
+                model.settings.notificationSound
+            ) { [weak self] success in
+                // Each request owns one wait; commit it on its own so
+                // one rejected request never hides the others.
+                self?.finishDelivery(key: waiting.key, bannerID: id, success: success)
+            }
         }
     }
 

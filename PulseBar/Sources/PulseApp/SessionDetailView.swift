@@ -160,10 +160,35 @@ struct SessionDetailFace: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let conflict = model.conflictWarning {
-                Label(conflict, systemImage: "exclamationmark.triangle.fill")
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(PulseTheme.warning)
-                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: PulseTheme.Space.xs) {
+                    Label(conflict, systemImage: "exclamationmark.triangle.fill")
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(PulseTheme.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if !model.conflictPeers.isEmpty {
+                        ForEach(model.conflictPeers) { peer in
+                            HStack(spacing: PulseTheme.Space.s) {
+                                AgentIconView(id: peer.agent)
+                                Text(peer.label)
+                                    .font(PulseTheme.Font.caption.weight(.medium))
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                Spacer(minLength: PulseTheme.Space.xs)
+                                Button(t(.conflictJumpPeer)) {
+                                    send(.focusPeer(peer.key))
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.mini)
+                            }
+                        }
+                    }
+                }
+                .padding(PulseTheme.Space.s)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    PulseTheme.warning.opacity(PulseTheme.Fill.waitTint),
+                    in: RoundedRectangle(cornerRadius: PulseTheme.Radius.card, style: .continuous)
+                )
             }
             if !model.now.isEmpty {
                 section(t(.detailNowHeading)) {

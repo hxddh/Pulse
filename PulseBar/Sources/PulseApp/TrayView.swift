@@ -613,17 +613,11 @@ struct TrayRowFace: View {
                     .fixedSize()
             }
             if let conflict = model.conflictBadge {
-                HStack(spacing: 2) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 9))
-                    Text(conflict)
-                        .font(PulseTheme.Font.caption)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                .foregroundStyle(PulseTheme.warning)
-                .frame(maxWidth: 96, alignment: .trailing)
-                .fixedSize()
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(PulseTheme.warning)
+                    .help(model.conflictTooltip ?? conflict)
+                    .accessibilityLabel(model.conflictTooltip ?? conflict)
             }
             if model.watchingTurn {
                 Image(systemName: "bell.fill")
@@ -885,6 +879,14 @@ final class TrayUI {
         case .copySummary: store.copyTurnSummary(row)
         case .copyAsk: store.copyAsk(row)
         case .watchTurn: store.toggleTurnWatch(row)
+        case .focusPeer(let peerKey):
+            if let peer = lookup(peerKey) {
+                if peer.canFocusTerminal {
+                    store.focusTerminal(peer)
+                } else {
+                    showDetail(peer.key)
+                }
+            }
         }
     }
 

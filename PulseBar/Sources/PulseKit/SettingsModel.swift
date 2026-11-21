@@ -67,6 +67,8 @@ package struct SettingsModel: Equatable {
         case setMenuBarStyle(MenuBarStyle)
         /// Show or hide the floating waiting beacon HUD.
         case setFloatingBeacon(Bool)
+        /// Temporarily preview the floating beacon for 5 seconds so the user can position it.
+        case previewBeacon
         /// Resume notifications immediately when quiet mode is active.
         case resumeQuiet
         /// System Settings → Privacy & Security → Automation.

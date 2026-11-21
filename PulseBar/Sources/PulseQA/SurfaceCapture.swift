@@ -63,6 +63,8 @@ enum SurfaceCapture {
             return AnyView(SessionDetailFace(model: model, scrolls: false))
         case .settings(let model):
             return AnyView(SettingsFace(model: model).frame(height: 900))
+        case .beacon(let model):
+            return AnyView(FloatingBeaconFace(model: model))
         }
     }
 

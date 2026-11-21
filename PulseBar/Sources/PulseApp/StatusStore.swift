@@ -258,11 +258,12 @@ final class StatusStore {
         engine.project(nowMs: nowMs)
     }
 
-    /// Resume notification banners immediately.
+    /// Resume notification banners immediately and deliver any still-open waits queued during quiet mode.
     func resumeQuiet() {
         guard settings.quietUntilMs != 0 else { return }
         set(\.quietUntilMs, 0)
         engine.project()
+        notifier.deliverPendingIfPossible()
     }
 
     /// Remaining quiet duration label at `date`, or nil when not snoozed.

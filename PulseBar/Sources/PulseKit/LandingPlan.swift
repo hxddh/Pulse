@@ -98,10 +98,9 @@ package enum LandingStep: Hashable, Sendable {
     /// found from the client's pid, else `hostBundleIDs`. No Automation.
     case tmuxPane(pane: String, socket: String, hostBundleIDs: [String])
     /// Focus the pane in its Zellij session (`zellij --session <name>
-    /// action focus-pane-id <N>`, Zellij 0.44.1+), then bring forward the
-    /// terminal app (`hostBundleIDs`) — the pane focused with no app in
-    /// front is no landing. No Automation.
-    case zellijPane(session: String, pane: String, hostBundleIDs: [String])
+    /// action focus-pane-id <N>`, Zellij 0.44.1+), then select its outer
+    /// iTerm2 tab when known and bring forward the terminal app (`hostBundleIDs`).
+    case zellijPane(session: String, pane: String, hostBundleIDs: [String], itermUniqueID: String = "")
     /// `wezterm cli activate-pane` with the CLI inside the running
     /// WezTerm.app, then bring WezTerm forward. No Automation.
     case weztermPane(pane: String, socket: String)
@@ -199,8 +198,11 @@ package struct LandingPlan: Hashable, Sendable {
         } else if isNumericID(handle.zellijPane), isZellijSession(handle.zellijSession) {
             // Inside Zellij the tty is the pane's too: the pane is the
             // handle, and the terminal is what `TERM_PROGRAM` / `app:` say.
+            // If `ITERM_SESSION_ID` was inherited from an outer iTerm2 tab,
+            // carry it so focus lands on the exact iTerm2 tab AND Zellij pane.
             if !hostBundles.isEmpty {
-                steps.append(.zellijPane(session: handle.zellijSession, pane: handle.zellijPane, hostBundleIDs: hostBundles))
+                let outerITerm = hostBundles.contains(iTermBundleID) ? handle.itermUniqueID : ""
+                steps.append(.zellijPane(session: handle.zellijSession, pane: handle.zellijPane, hostBundleIDs: hostBundles, itermUniqueID: outerITerm))
             }
         } else {
             // A pane id is the terminal's own only while that terminal is

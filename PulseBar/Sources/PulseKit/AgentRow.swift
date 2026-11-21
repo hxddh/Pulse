@@ -254,6 +254,8 @@ package struct AgentRow: Identifiable, Hashable {
     /// Short names of files this active session is editing concurrently with
     /// another active session (`SessionConflicts`); empty when none.
     package var conflictingFiles: [String] = []
+    /// Other active sessions concurrently editing the same file(s).
+    package var conflictPeers: [ConflictPeer] = []
 
     // MARK: The process and how to reach it
 

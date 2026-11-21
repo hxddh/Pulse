@@ -146,6 +146,11 @@ send claude UserPromptSubmit
 send claude PostToolUse
 send claude PermissionRequest
 snapshot blocked claude
+status_json="$(deadline 10 "$LAUNCHER" --status --json)" || fail "launcher --status --json failed"
+python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["lamp"]=="waiting" and d["counts"]["blocked"]==1, d' "$status_json" \
+  || fail "launcher --status --json unexpected output: $status_json"
+status_tmux="$(deadline 10 "$LAUNCHER" --status --tmux)" || fail "launcher --status --tmux failed"
+[[ "$status_tmux" == *"● 1"* ]] || fail "launcher --status --tmux unexpected output: $status_tmux"
 send claude PostToolUse
 snapshot answered claude
 send claude Stop

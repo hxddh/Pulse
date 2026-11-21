@@ -774,4 +774,41 @@ struct TurnWatchTests {
         store.notifier.withdrawTurnDone(done2.key)
         #expect(store.notifier.doneQueue.isEmpty)
     }
+
+    @MainActor
+    @Test func quietModeQueuesOpenWaitsAndCatchesUpWhenResumed() {
+        let store = StatusStore()
+        store.notifyAuthorized = true
+        var posted: [SessionKey] = []
+        store.notifier.deliverWaitingBanner = { _, _, waiting, _, completion in
+            posted.append(waiting.key)
+            completion(true)
+        }
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        // Complete an empty launch replay so subsequent events are live (not baseline).
+        store.engine.landLog(EventLog.Chunk.empty, nowMs: now - 30_000)
+        store.settings.quietUntilMs = now + 600_000
+
+        // Two new waits arrive while quiet mode is active.
+        store.engine.apply(records: [
+            AttentionRecord(agent: .claude, kind: .permission, ms: now - 10_000, message: "Bash: swift test", session: "qw1", cwd: "/tmp/p", tool: "Bash", event: "PermissionRequest"),
+            AttentionRecord(agent: .claude, kind: .question, ms: now - 5_000, message: "Keep old migration?", session: "qw2", cwd: "/tmp/p", event: "Notification"),
+        ], nowMs: now)
+
+        let k1 = SessionKey(.claude, "qw1")
+        let k2 = SessionKey(.claude, "qw2")
+        #expect(posted.isEmpty, "quiet mode must not post banners immediately")
+        #expect(store.notifier.ledger.queuedKeys == [k1, k2], "new waits during quiet mode are queued for catch-up")
+
+        // qw2 resolves while still in quiet mode -> must drop out of the catch-up queue.
+        store.engine.apply(records: [
+            AttentionRecord(agent: .claude, kind: .done, ms: now + 5_000, session: "qw2", cwd: "/tmp/p", event: "PostToolUse"),
+        ], nowMs: now + 5_000)
+        #expect(posted.isEmpty)
+        #expect(store.notifier.ledger.queuedKeys == [k1], "resolved wait is dropped before quiet ends")
+
+        // Resume quiet mode -> still-open qw1 catches up automatically; resolved qw2 never fires.
+        store.resumeQuiet()
+        #expect(posted == [k1], "still-open wait catches up when quiet mode ends and resolved wait never ghost-notifies")
+    }
 }

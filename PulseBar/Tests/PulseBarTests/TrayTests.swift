@@ -791,7 +791,7 @@ struct LandingPlanTests {
         #expect(handle.zellijSession == "pretentious-cat")
         let plan = LandingPlan.make(handle: handle, cwd: "")
         #expect(plan.steps == [
-            .zellijPane(session: "pretentious-cat", pane: "2", hostBundleIDs: [LandingPlan.iTermBundleID]),
+            .zellijPane(session: "pretentious-cat", pane: "2", hostBundleIDs: [LandingPlan.iTermBundleID], itermUniqueID: "AB"),
             .activateApp(bundleIDs: [LandingPlan.iTermBundleID]),
         ])
         #expect(plan.precision == .exact)
@@ -2390,5 +2390,101 @@ struct GroupByProjectTests {
         try FileManager.default.createDirectory(at: repo.appendingPathComponent(".git"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
         #expect(GitBranch.worktreeRoot(cwd: nested.path) == repo.standardizedFileURL.path)
+    }
+
+    @Test func v40ApexSanitizerTitlesKeysConflictPeersAndBeaconPreview() throws {
+        // 1. ContentSanitizer redacts DB URIs, cloud/package tokens, and compact JWTs.
+        let pg = ContentSanitizer.redact("psql postgres://admin:s3cr3tPass@db.internal:5432/prod")
+        #expect(!pg.contains("s3cr3tPass"))
+        #expect(pg.contains("postgres://admin:••••@db.internal:5432/prod"))
+
+        let redis = ContentSanitizer.redact("redis-cli -u rediss://:myredispass@cache.example.com:6379")
+        #expect(!redis.contains("myredispass"))
+        #expect(redis.contains("rediss://:••••@cache.example.com:6379"))
+
+        // Assemble synthetic test fixtures dynamically so static secret scanners don't false-positive.
+        let googleTok = "AIza" + "SyDummyKey1234567890123456789012345"
+        let npmTok = "npm_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"
+        let stripeTok = "sk_" + "live_" + "1234567890abcdefghijklmnop"
+        let awsTok = "ASIA" + "IOSFODNN7EXAMPLE"
+        let jwtTok = "eyJ" + "hbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." + "eyJ" + "zdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+        let tokens = ContentSanitizer.redact(
+            "GOOGLE=\(googleTok) NPM=\(npmTok) STRIPE=\(stripeTok) AWS=\(awsTok) JWT=\(jwtTok)"
+        )
+        #expect(!tokens.contains(googleTok))
+        #expect(!tokens.contains(npmTok))
+        #expect(!tokens.contains(stripeTok))
+        #expect(!tokens.contains(awsTok))
+        #expect(!tokens.contains(jwtTok))
+
+        // 2. TitleHeuristics extracts <user_request> and strips modern IDE/harness tags.
+        let wrapped = """
+        <t3_code_instructions>Internal harness instructions that should not become the title.</t3_code_instructions>
+        <ide_opened_file>/Users/me/code/Pulse/Package.swift</ide_opened_file>
+        <user_request>Fix the Zellij outer iTerm tab focus</user_request>
+        """
+        #expect(TitleHeuristics.promptTitle(wrapped) == "Fix the Zellij outer iTerm tab focus")
+
+        let strippedOnly = "<runtime_info>os=macos</runtime_info><ide_selection>foo</ide_selection>Audit sanitizer rules"
+        #expect(TitleHeuristics.promptTitle(strippedOnly) == "Audit sanitizer rules")
+
+        // 3. TrayKeys supports ⇧Tab backward wait cycling and ⌘K search.
+        #expect(TrayKeys.key(keyCode: 48, characters: "\t", command: false, shift: true) == .shiftTab)
+        #expect(TrayKeys.key(keyCode: 40, characters: "k", command: true, shift: false) == .search)
+        let k1 = SessionKey(.claude, "b1")
+        let k2 = SessionKey(.claude, "b2")
+        let k3 = SessionKey(.codex, "r1")
+        let keyRows = [
+            TrayKeys.Row(key: k1, blocked: true, canFocus: true),
+            TrayKeys.Row(key: k2, blocked: true, canFocus: true),
+            TrayKeys.Row(key: k3, blocked: false, canFocus: true),
+        ]
+        var ks = TrayKeys.State(selected: k1)
+        ks = TrayKeys.reduce(ks, .shiftTab, rows: keyRows).state
+        #expect(ks.selected == k2, "⇧Tab wraps backward to the last blocked row")
+        ks = TrayKeys.reduce(ks, .shiftTab, rows: keyRows).state
+        #expect(ks.selected == k1, "⇧Tab moves backward through blocked rows")
+
+        // 4. ConflictPeer population, non-crowding row tooltip, second-line fallback, and Beacon preview.
+        let now: Int64 = 1_800_000_000_000
+        var book = SessionBook()
+        book.apply(AttentionRecord(
+            agent: .claude, kind: .working, ms: now - 120_000, message: "Harden auth",
+            session: "c1", cwd: "/Users/me/code/Pulse", event: "UserPromptSubmit"
+        ), nowMs: now)
+        book.apply(AttentionRecord(
+            agent: .claude, kind: .tool, ms: now - 60_000, message: "Sources/Auth.swift",
+            session: "c1", cwd: "/Users/me/code/Pulse", tool: "Edit", event: "PostToolUse", category: .edit
+        ), nowMs: now)
+        book.apply(AttentionRecord(
+            agent: .codex, kind: .working, ms: now - 100_000, message: "Refactor login",
+            session: "x1", cwd: "/Users/me/code/Pulse", event: "UserPromptSubmit"
+        ), nowMs: now)
+        book.apply(AttentionRecord(
+            agent: .codex, kind: .tool, ms: now - 50_000, message: "Sources/Auth.swift",
+            session: "x1", cwd: "/Users/me/code/Pulse", tool: "apply_patch", event: "PostToolUse",
+            category: .edit, meta: LineMeta(files: ["Sources/Auth.swift"])
+        ), nowMs: now)
+
+        let state = TrayState.project(book: book, processes: [], context: TrayState.Context(nowMs: now))
+        let claudeRow = try #require(state.rows.first { $0.key == SessionKey(.claude, "c1") })
+        #expect(claudeRow.conflictPeers.count == 1)
+        #expect(claudeRow.conflictPeers.first?.key == SessionKey(.codex, "x1"))
+        #expect(claudeRow.conflictPeers.first?.label == "Refactor login")
+
+        let rowModel = TrayRowModel.make(TrayRowModel.Input(row: claudeRow, lang: .en, nowMs: now))
+        #expect(rowModel.conflictTooltip?.contains("Auth.swift") == true)
+        #expect(rowModel.secondLine?.kind == .warning)
+        #expect(rowModel.secondLine?.text.contains("Auth.swift") == true)
+
+        let detail = DetailModel.make(row: claudeRow, lang: .en, nowMs: now)
+        #expect(detail.conflictPeers.count == 1)
+        #expect(detail.conflictPeers.first?.agent == .codex)
+
+        let preview = BeaconModel.preview(lang: .en)
+        #expect(preview.isPreview)
+        #expect(preview.blockedCount == 2)
+        #expect(preview.queueIndex == 1)
+        #expect(preview.hasConflict)
     }
 }
