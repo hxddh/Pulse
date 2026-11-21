@@ -89,7 +89,9 @@ package struct TrayRowModel: Equatable {
         package var text: String
         /// True when an `.ask` line looks like a tool/command descriptor (`Bash: ...`)
         /// and reads more clearly in monospaced type.
-        package var isCode: Bool = false
+        package var isCode: Bool {
+            kind == .ask && (text.contains(":") || text.contains("/") || text.contains("`"))
+        }
     }
 
     package var lang: ResolvedLanguage
@@ -246,8 +248,7 @@ package struct TrayRowModel: Equatable {
         switch row.status {
         case .needsYou(let block):
             let text = ask(row) ?? L10n.waitKind(block.kind, lang)
-            let isCode = text.contains(":") || text.contains("/") || text.contains("`")
-            return SecondLine(kind: .ask, text: truncate(text, 140), isCode: isCode)
+            return SecondLine(kind: .ask, text: truncate(text, 140))
         case .running(stalled: true):
             return SecondLine(kind: .warning, text: why)
         case .running(stalled: false):
