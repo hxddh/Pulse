@@ -2,6 +2,34 @@
 
 All notable changes to Pulse are documented here.
 
+## 37.0.0 — Focus（专）
+
+面向 10+ 并行 Agent 与多 Git worktree 工作流的零摩擦指挥台升级：**事件日志仍是 v10（`meta` 新增向后兼容的 `branch` 字段）**，快照版本号升级到 v3（首次启动自动从事件日志无损重放）。
+
+### 并行开发与多会话体验质变
+
+- **Git 分支 / Worktree 原生感知（零子进程）**：`pulse-hook` 在会话启动、提问或阻塞时直接读取 `.git/HEAD`（兼容普通仓库与 `git worktree` 的 `gitdir:` 指针文件，零 `git` 子进程），记录 `branch`。当同一仓库有多个分支并行或在按项目分组模式下，托盘自然展示 `项目 · 分支`（单分支时保持安静），详情页同步显示「分支」。
+- **循环式全局直跳 `⌃⌥⌘↩`**：存在多个阻塞会话时，若最早等待的终端已在前台（或刚跳转过），再次按下 `⌃⌥⌘↩` 自动轮转到下一个阻塞终端，成为 AI 阻塞队列的专属 `⌘Tab`。
+- **`⌘` 按住浮现 `⌘1`–`⌘9` 键帽提示**：平时零视觉噪音；打开托盘后按住 `⌘`，前 9 行右侧轻柔浮现等宽数字键帽，直观建立肌肉记忆。
+- **零占位瞬时筛选（`/` 或 `⌘F`）**：平时完全隐藏；按下 `/` 或 `⌘F` 在托盘顶部展开单行搜索栏，支持按项目、分支、Agent、标题、请求内容与状态词多词联合筛选，`Esc` 先清空筛选再关闭托盘。
+- **一键静音小憩（Quiet Mode）**：开会或共享屏幕时，从托盘 `⋯` 或菜单栏右键菜单一键静音横幅 30 分钟 / 1 小时（菜单栏红灯依然诚实点亮），顶部显示轻柔胶囊倒计时，点击或到期自动恢复。
+- **菜单栏 3 档显示密度**：设置 → 通用新增「菜单栏显示」，支持「默认（仅等待时显示计数）」「仅显示灯标（刘海屏省宽）」「显示运行与完成计数」三档。
+- **菜单栏右键快捷菜单增强**：右键点击菜单栏图标即可直接「跳到最早等待」「全部看过」「静音通知」，不必先展开托盘。
+
+### 核心正确性、着陆与分发修复
+
+- **修复 `pulse-hook` 前台判定失真**：改用 LaunchServices 精确的 `NSWorkspace.shared.frontmostApplication`（仍不启动 `NSApplication`，零 SwiftUI/Carbon），彻底消除画中画、浮窗或多显示器置顶窗口导致的前台误判。
+- **消除 `pulse-hook` 壳脚本多余子进程**：启动器改用纯 POSIX 参数展开与内建 `read`，去掉每次 Hook 调用额外的 `dirname` / 子 shell / `cat` fork。
+- **回合完成横幅限流队列 + 静音演示修正**：`postTurnDone` 纳入 `WaitNotifier` 限流队列并遵循静音小憩，多会话同时收尾不再连轰通知；`willPresent` 在静音模式下不再附带 `.sound`。
+- **tmux 客户端后台标签页精准着陆**：切完 tmux pane 后优先按 `client_tty` 选通 Terminal.app / iTerm2 的后台标签页，再回退到激活宿主进程；`tmux` / `zellij` 路径搜索新增 Nix 常见位置。
+- **主流开发宿主补齐**：`HostAppKind` 与 `LandingPlan` 新增 JetBrains 全家桶、Xcode、Sublime Text、Neovide、T3 Code 以及 Alacritty、Hyper、Tabby、Rio、Warp Preview。
+- **弹窗高度与详情状态隔离**：每次打开托盘按当前行数预估高度消除 10→1 行闪烁；详情页绑定 `.id(row.key)` 防止直接切换详情时高度与复制反馈串台。
+- **Release 自动产出真实 SHA-256 的 `pulse.rb`**：新增 `scripts/render_cask.py` 并接入 `.github/workflows/release.yml`，每个 Release 自动附带校验好 SHA-256 的 Homebrew Cask 文件。
+
+### 已知限制
+
+- **仍没有在真机上跑过 `scripts/smoke.sh`**，且仓库未配置 Apple Developer ID 凭据，因此分发包仍是 ad-hoc 签名、未公证的 `preview` 构建（全部源码门禁、Swift 单元测试、Universal Binary 打包、端到端 hook 链路与 QA 截图均已在 GitHub Actions `macos-26` 上通过）。
+
 ## 36.0.0 — Craft（致）
 
 围绕「不漏报、不撒谎、零摩擦直达、超轻内核」的一次全面打磨版本：**事件日志仍是 v10**；会话状态新增「已忽略等待」状态，快照版本号升级到 v2（首次启动自动从事件日志无损重放，不丢失历史事件）。

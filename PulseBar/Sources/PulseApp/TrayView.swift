@@ -54,6 +54,7 @@ struct TrayView: View {
     var store: StatusStore
     var ui: TrayUI
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @FocusState private var filterFocused: Bool
 
     init(store: StatusStore, ui: TrayUI) {
         self.store = store
@@ -66,6 +67,7 @@ struct TrayView: View {
         ZStack(alignment: .top) {
             if let row = ui.detailRow {
                 SessionDetailView(store: store, ui: ui, row: row)
+                    .id(row.key)
                     .transition(.opacity)
             } else {
                 list
@@ -84,12 +86,21 @@ struct TrayView: View {
     private var list: some View {
         let rows = ui.displayRows
         return VStack(alignment: .leading, spacing: 0) {
-            TrayHeaderFace(model: store.trayHeaderModel, doneCount: store.rows.filter(\.isYourTurn).count) { action in
+            TrayHeaderFace(
+                model: store.trayHeaderModel,
+                doneCount: store.rows.filter(\.isYourTurn).count,
+                quietRemaining: store.quietRemaining()
+            ) { action in
                 switch action {
                 case .settings: store.openSettings()
                 case .quit: store.quit()
                 case .markAllSeen: store.markAllSeen()
+                case .quiet(let minutes): store.setQuiet(minutes: minutes)
+                case .resumeQuiet: store.resumeQuiet()
                 }
+            }
+            if ui.filterActive {
+                filterBar
             }
             if let notice = store.trayNotice {
                 TrayNoticeFace(model: notice) { [store] action in store.performTrayNotice(action) }
@@ -97,7 +108,16 @@ struct TrayView: View {
                     .padding(.bottom, PulseTheme.Space.s)
             }
             if rows.isEmpty {
-                emptyState
+                if ui.filterActive, !ui.filterText.isEmpty, !store.rows.isEmpty {
+                    Text(t(.filterNoMatches))
+                        .font(PulseTheme.Font.body)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, TrayChrome.padX)
+                        .padding(.vertical, PulseTheme.Space.m)
+                } else {
+                    emptyState
+                }
             } else {
                 agentList(rows)
                     .padding(.bottom, PulseTheme.Space.s)
@@ -105,10 +125,49 @@ struct TrayView: View {
         }
     }
 
+    private var filterBar: some View {
+        HStack(spacing: PulseTheme.Space.s) {
+            Image(systemName: "magnifyingglass")
+                .font(PulseTheme.Font.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            TextField(
+                t(.filterPlaceholder),
+                text: Binding(
+                    get: { ui.filterText },
+                    set: { ui.setFilter($0) }
+                )
+            )
+            .textFieldStyle(.plain)
+            .font(PulseTheme.Font.body)
+            .focused($filterFocused)
+            if !ui.filterText.isEmpty {
+                Button {
+                    ui.setFilter("")
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, PulseTheme.Space.s)
+        .padding(.vertical, 6)
+        .background(
+            Color.primary.opacity(PulseTheme.Fill.subtle),
+            in: RoundedRectangle(cornerRadius: PulseTheme.Radius.card, style: .continuous)
+        )
+        .padding(.horizontal, TrayChrome.highlightInset)
+        .padding(.bottom, PulseTheme.Space.s)
+        .onAppear { filterFocused = true }
+    }
+
     // MARK: List
 
     private func agentList(_ rows: [AgentRow]) -> some View {
-        ScrollViewReader { proxy in
+        let multiBranch = TrayRowModel.multiBranchProjects(in: rows)
+        return ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
@@ -132,7 +191,9 @@ struct TrayView: View {
                             store: store,
                             ui: ui,
                             row: row,
-                            selected: ui.keys.selected == row.key
+                            selected: ui.keys.selected == row.key,
+                            showBranch: ui.groupedAtOpen || multiBranch.contains(row.project),
+                            shortcutDigit: ui.commandHeld && index < 9 ? index + 1 : nil
                         )
                         .id(row.key)
                     }
@@ -183,11 +244,13 @@ struct TrayView: View {
 /// One line: the counts in their tones. The ⋯ menu holds Settings and Quit;
 /// ⌘R refreshes. Renders a `TrayHeaderModel`.
 struct TrayHeaderFace: View {
-    enum Action: Equatable { case settings, quit, markAllSeen }
+    enum Action: Equatable { case settings, quit, markAllSeen, quiet(minutes: Int), resumeQuiet }
 
     let model: TrayHeaderModel
     /// Finished turns not yet looked at: "Mark all as seen" in the ⋯ menu.
     var doneCount = 0
+    /// Remaining duration when quiet mode is active; nil when not snoozed.
+    var quietRemaining: String? = nil
     var send: (Action) -> Void = { _ in }
 
     private func t(_ key: L10n.Key) -> String { L10n.t(key, model.lang) }
@@ -200,11 +263,40 @@ struct TrayHeaderFace: View {
                 .truncationMode(.tail)
                 .contentTransition(.numericText())
             Spacer(minLength: 0)
+            if let quietRemaining {
+                Button {
+                    send(.resumeQuiet)
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "bell.slash.fill")
+                            .font(.system(size: 9))
+                        Text(String(format: t(.quietActiveBadge), quietRemaining))
+                            .font(PulseTheme.Font.caption)
+                            .monospacedDigit()
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.primary.opacity(PulseTheme.Fill.subtle), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .help(t(.quietResume))
+                .accessibilityLabel(t(.quietResume))
+            }
             Menu {
                 if doneCount > 0 {
                     Button(String(format: t(.markAllSeen), doneCount)) { send(.markAllSeen) }
                     Divider()
                 }
+                if quietRemaining != nil {
+                    Button(t(.quietResume)) { send(.resumeQuiet) }
+                } else {
+                    Menu(t(.quietNotifications)) {
+                        Button(t(.quietFor30m)) { send(.quiet(minutes: 30)) }
+                        Button(t(.quietFor1h)) { send(.quiet(minutes: 60)) }
+                    }
+                }
+                Divider()
                 Button(t(.settings)) { send(.settings) }
                 Divider()
                 Button(t(.quit)) { send(.quit) }
@@ -294,12 +386,20 @@ private struct TrayRowButton: View {
     var ui: TrayUI
     let row: AgentRow
     var selected = false
+    var showBranch = false
+    var shortcutDigit: Int? = nil
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: TrayChrome.clock)) { context in
             TrayRowFace(
-                model: store.trayRowModel(row, at: context.date, hideProject: ui.groupedAtOpen),
-                selected: selected
+                model: store.trayRowModel(
+                    row,
+                    at: context.date,
+                    hideProject: ui.groupedAtOpen,
+                    showBranch: showBranch
+                ),
+                selected: selected,
+                shortcutDigit: shortcutDigit
             ) { action in
                 ui.send(action, row: row)
             }
@@ -325,6 +425,8 @@ private struct TrayRowButton: View {
 struct TrayRowFace: View {
     let model: TrayRowModel
     var selected = false
+    /// Shown softly as a `⌘N` keycap while Command is held on rows 1–9.
+    var shortcutDigit: Int? = nil
     var send: (TrayRowModel.Action) -> Void = { _ in }
 
     /// The "›" column: wide enough to hit without aiming, the full height
@@ -457,10 +559,20 @@ struct TrayRowFace: View {
             LampShapeView(lamp: model.lamp, size: TrayChrome.lampSize)
             AgentIconView(id: model.agent)
             if !model.project.isEmpty {
-                Text(model.project)
+                let label = model.branch.isEmpty ? model.project : "\(model.project) · \(model.branch)"
+                Text(label)
                     .font(PulseTheme.Font.body)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: model.branch.isEmpty ? TrayChrome.identityMaxWidth : TrayChrome.identityMaxWidth + 44, alignment: .leading)
+                    .fixedSize(horizontal: true, vertical: false)
+            } else if !model.branch.isEmpty {
+                Text(model.branch)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                     .frame(maxWidth: TrayChrome.identityMaxWidth, alignment: .leading)
                     .fixedSize(horizontal: true, vertical: false)
             }
@@ -492,7 +604,15 @@ struct TrayRowFace: View {
                     .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)
             }
-            if !model.age.isEmpty {
+            if let digit = shortcutDigit {
+                Text("⌘\(digit)")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.primary.opacity(PulseTheme.Fill.subtle), in: RoundedRectangle(cornerRadius: 3, style: .continuous))
+                    .fixedSize()
+            } else if !model.age.isEmpty {
                 Text(model.age)
                     .font(PulseTheme.Font.caption)
                     .foregroundStyle(model.lamp == .waiting ? AnyShapeStyle(model.lamp.color) : AnyShapeStyle(.secondary))
@@ -519,6 +639,11 @@ final class TrayUI {
     var keys = TrayKeys.State()
     /// ⌥ is held: the detail page's timeline shows the vendor's event names.
     var optionHeld = false
+    /// ⌘ is held: rows 1–9 softly show `⌘1`–`⌘9` direct-jump keycaps.
+    var commandHeld = false
+    /// Inline session filter (`/` or `⌘F`) is open.
+    var filterActive = false
+    var filterText = ""
     /// The order the rows had when the tray opened, newcomers appended.
     var frozen: [SessionKey] = []
     /// Every row that has been on screen this glance. While the tray is open
@@ -555,10 +680,16 @@ final class TrayUI {
     // MARK: - What the tray lists
 
     /// The rows on screen — every row, the ones already shown this glance
-    /// in the frozen order, then newcomers (`TrayOrder.openList`). The list
-    /// scrolls inside the tray's height.
+    /// in the frozen order, then newcomers (`TrayOrder.openList`), narrowed by
+    /// the inline filter when active.
     var displayRows: [AgentRow] {
-        TrayOrder.openList(all: store.rows, pinned: pinned, frozen: frozen)
+        let ordered = TrayOrder.openList(all: store.rows, pinned: pinned, frozen: frozen)
+        guard filterActive, !filterText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return ordered
+        }
+        return ordered.filter { row in
+            TrayFilter.matches(row, facts: store.facts(for: row.key), query: filterText)
+        }
     }
 
     /// The row whose detail page is open, while it still exists.
@@ -594,19 +725,26 @@ final class TrayUI {
     /// clock last).
     func open(pointer: CGPoint? = nil) {
         generation &+= 1
+        filterActive = false
+        filterText = ""
+        commandHeld = false
         groupedAtOpen = store.settings.groupByProject
         let initial = groupedAtOpen ? TrayOrder.groupedByProject(store.rows) : store.rows
         frozen = initial.map(\.key)
         pinned = Set(frozen)
-        if listHeight == 0, !initial.isEmpty {
-            listHeight = min(CGFloat(initial.count * 46 + 8), CGFloat(maxListHeight))
-        }
+        listHeight = initial.isEmpty ? 0 : min(CGFloat(initial.count * 46 + 8), CGFloat(maxListHeight))
         pointerSelection = nil
         self.pointer = pointer
         var next = TrayKeys.State()
         next.selected = displayRows.first?.key
         if keys != next { keys = next }
         applyPendingReveal()
+    }
+
+    func setFilter(_ text: String) {
+        if filterText != text { filterText = text }
+        let next = TrayKeys.normalize(keys, rows: displayRows.map { TrayKeys.Row($0) })
+        if keys != next { keys = next }
     }
 
     /// A reveal from a banner or a jump: select the row — and open its
@@ -640,6 +778,13 @@ final class TrayUI {
     /// One key from the tray's monitor. False: not the tray's key.
     func handle(_ key: TrayKeys.Key) -> Bool {
         pointerSelection = nil
+        if key == .escape, keys.detail == nil, filterActive {
+            filterActive = false
+            filterText = ""
+            let next = TrayKeys.normalize(keys, rows: displayRows.map { TrayKeys.Row($0) })
+            if keys != next { keys = next }
+            return true
+        }
         let outcome = TrayKeys.reduce(keys, key, rows: reducerRows())
         let next = TrayKeys.normalize(outcome.state, rows: displayRows.map { TrayKeys.Row($0) })
         if keys != next { keys = next }
@@ -655,6 +800,15 @@ final class TrayUI {
             if let row = lookup(key) { store.dismissWaiting(row) }
         case .watchTurn(let key):
             if let row = lookup(key) { store.toggleTurnWatch(row) }
+        case .toggleFilter:
+            if filterActive {
+                filterActive = false
+                filterText = ""
+            } else {
+                filterActive = true
+            }
+            let next = TrayKeys.normalize(keys, rows: displayRows.map { TrayKeys.Row($0) })
+            if keys != next { keys = next }
         case .refresh:
             store.engine.refresh(reason: "manual")
         case .openSettings:

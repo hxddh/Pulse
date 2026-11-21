@@ -8,7 +8,10 @@ final class PulseNotifyDelegate: NSObject, UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([.banner, .sound])
+        let options: UNNotificationPresentationOptions = notification.request.content.sound == nil
+            ? [.banner]
+            : [.banner, .sound]
+        completionHandler(options)
     }
 
     func userNotificationCenter(

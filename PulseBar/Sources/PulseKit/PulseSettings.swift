@@ -6,6 +6,16 @@ package enum NotificationSound: String, CaseIterable, Sendable, Codable {
     case silent
 }
 
+/// How much text sits beside the menu-bar lamp.
+package enum MenuBarStyle: String, CaseIterable, Sendable, Codable {
+    /// Default: icon alone unless blocked (then `2 · 4m`).
+    case minimal
+    /// Icon alone always — ideal for crowded MacBook notches.
+    case compact
+    /// Shows compact active/done counts even when nothing is blocked.
+    case counts
+}
+
 /// User settings as a value, saved as `settings.json` (0600, `PrivateFile`).
 ///
 /// Whether Pulse opens at login, whether the person removed the hooks on
@@ -33,17 +43,22 @@ package struct PulseSettings: Equatable, Codable, Sendable {
     package var notifyLongTurnSeconds = 0
     /// Whether Pulse banners play the system notification sound.
     package var notificationSound: NotificationSound = .default
+    /// Epoch ms until which all notification banners are snoozed (0 = off).
+    /// The menu-bar lamp still lights red honestly.
+    package var quietUntilMs: Int64 = 0
     /// The chord the global shortcut uses.
     package var shortcut: ShortcutChoice = .default
     /// The tray groups its rows by project.
     package var groupByProject = false
+    /// Menu bar label density beside the lamp.
+    package var menuBarStyle: MenuBarStyle = .minimal
 
     package init() {}
 
     private enum CodingKeys: String, CodingKey {
         case launchAtLogin, hooksNudgeOff, globalShortcut, directJumpShortcut
         case mutedAgents, notifyDoneAgents, notifyLongTurnSeconds, notificationSound
-        case shortcut, groupByProject
+        case quietUntilMs, shortcut, groupByProject, menuBarStyle
     }
 
     package init(from decoder: any Decoder) throws {
@@ -60,9 +75,13 @@ package struct PulseSettings: Equatable, Codable, Sendable {
         notifyLongTurnSeconds = max(0, longSeconds)
         let soundRaw = (try? c.decodeIfPresent(String.self, forKey: .notificationSound)) ?? nil
         notificationSound = soundRaw.flatMap(NotificationSound.init(rawValue:)) ?? .default
+        let quiet = (try? c.decodeIfPresent(Int64.self, forKey: .quietUntilMs)) ?? 0
+        quietUntilMs = max(0, quiet)
         let chord = (try? c.decodeIfPresent(String.self, forKey: .shortcut)) ?? nil
         shortcut = chord.flatMap(ShortcutChoice.init(rawValue:)) ?? .default
         groupByProject = (try? c.decodeIfPresent(Bool.self, forKey: .groupByProject)) ?? false
+        let barRaw = (try? c.decodeIfPresent(String.self, forKey: .menuBarStyle)) ?? nil
+        menuBarStyle = barRaw.flatMap(MenuBarStyle.init(rawValue:)) ?? .minimal
     }
 
     package func encode(to encoder: any Encoder) throws {
@@ -75,8 +94,22 @@ package struct PulseSettings: Equatable, Codable, Sendable {
         try c.encode(notifyDoneAgents.map(\.rawValue), forKey: .notifyDoneAgents)
         try c.encode(notifyLongTurnSeconds, forKey: .notifyLongTurnSeconds)
         try c.encode(notificationSound.rawValue, forKey: .notificationSound)
+        try c.encode(quietUntilMs, forKey: .quietUntilMs)
         try c.encode(shortcut.rawValue, forKey: .shortcut)
         try c.encode(groupByProject, forKey: .groupByProject)
+        try c.encode(menuBarStyle.rawValue, forKey: .menuBarStyle)
+    }
+
+    /// Whether banners are temporarily snoozed at `nowMs`.
+    package func isQuiet(at nowMs: Int64) -> Bool {
+        quietUntilMs > nowMs
+    }
+
+    /// Remaining quiet duration label at `nowMs`, or nil when not snoozed.
+    package func quietRemaining(at nowMs: Int64, lang: ResolvedLanguage) -> String? {
+        guard quietUntilMs > nowMs else { return nil }
+        let seconds = max(60, Double(quietUntilMs - nowMs) / 1000.0)
+        return L10n.duration(seconds, lang)
     }
 
     /// Whether `agent`'s banners are muted.
@@ -108,7 +141,7 @@ package struct PulseSettings: Equatable, Codable, Sendable {
 
     /// One-line summary for the debug log.
     package var debugDescription: String {
-        "login=\(launchAtLogin) hooksNudgeOff=\(hooksNudgeOff) shortcut=\(globalShortcut ? shortcut.display : "off") directJump=\(directJumpShortcut) group=\(groupByProject) sound=\(notificationSound.rawValue) longTurn=\(notifyLongTurnSeconds)s muted=\(mutedAgents.map(\.rawValue)) done=\(notifyDoneAgents.map(\.rawValue))"
+        "login=\(launchAtLogin) hooksNudgeOff=\(hooksNudgeOff) shortcut=\(globalShortcut ? shortcut.display : "off") directJump=\(directJumpShortcut) group=\(groupByProject) bar=\(menuBarStyle.rawValue) sound=\(notificationSound.rawValue) quiet=\(quietUntilMs) longTurn=\(notifyLongTurnSeconds)s muted=\(mutedAgents.map(\.rawValue)) done=\(notifyDoneAgents.map(\.rawValue))"
     }
 
     // MARK: - On disk

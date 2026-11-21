@@ -461,11 +461,15 @@ package struct LineMeta: Hashable, Sendable, Codable {
     /// The vendor's name for the session, carried by a line that is not a
     /// `title` or `start` (Claude's prompt with its custom title).
     package var name: String
+    /// The Git branch of the session's working tree (read from `.git/HEAD` by
+    /// the hook, zero subprocesses); "" when not in a repo or detached HEAD.
+    package var branch: String
 
     package static let planNowLimit = 120
     package static let errLimit = 160
     package static let tokenLimit = 40
     package static let nameLimit = 120
+    package static let branchLimit = 60
     package static let fileLimit = 160
     package static let maxFiles = 16
     /// The most the escaped `files` value takes.
@@ -474,7 +478,7 @@ package struct LineMeta: Hashable, Sendable, Codable {
 
     package init(
         plan: Plan? = nil, planNow: String = "", err: String = "", src: String = "", why: String = "",
-        agentType: String = "", files: [String] = [], name: String = ""
+        agentType: String = "", files: [String] = [], name: String = "", branch: String = ""
     ) {
         self.plan = plan
         self.planNow = planNow
@@ -484,6 +488,7 @@ package struct LineMeta: Hashable, Sendable, Codable {
         self.agentType = agentType
         self.files = files
         self.name = name
+        self.branch = branch
     }
 
     /// Nothing said.
@@ -514,6 +519,7 @@ package struct LineMeta: Hashable, Sendable, Codable {
         }
         if !kept.isEmpty { pairs.append("files=" + kept.joined(separator: "|")) }
         add("name", name, Self.nameLimit)
+        add("branch", branch, Self.branchLimit)
         return pairs.joined(separator: ";")
     }
 
@@ -541,6 +547,7 @@ package struct LineMeta: Hashable, Sendable, Codable {
                     .filter { !$0.isEmpty }
                     .prefix(Self.maxFiles))
             case "name": name = Self.clean(Self.unescape(raw), limit: Self.nameLimit)
+            case "branch": branch = Self.clean(Self.unescape(raw), limit: Self.branchLimit)
             default: continue
             }
         }

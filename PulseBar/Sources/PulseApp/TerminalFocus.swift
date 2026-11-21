@@ -43,11 +43,23 @@ enum TerminalFocus {
 
     // MARK: - tmux
 
-    static let tmuxPaths = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"]
+    static var tmuxPaths: [String] {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let user = NSUserName()
+        return [
+            "/opt/homebrew/bin/tmux",
+            "/usr/local/bin/tmux",
+            "/usr/bin/tmux",
+            home + "/.nix-profile/bin/tmux",
+            "/etc/profiles/per-user/\(user)/bin/tmux",
+            "/run/current-system/sw/bin/tmux",
+        ]
+    }
 
-    /// Select the pane, then bring forward the app hosting a client that
-    /// shows its session. The pane selected with no app in front is not a
-    /// landing: the person still sees whatever was there.
+    /// Select the pane, then bring forward the terminal tab/window hosting a
+    /// client that shows its session. When the tmux client lives inside a
+    /// background tab of Terminal.app or iTerm2, selecting its client TTY tab
+    /// first lands on the exact tab and exact pane.
     private static func focusTmuxPane(_ pane: String, socket: String, hostBundleIDs: [String]) -> Bool {
         guard let tmux = tmuxPaths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }),
               let selected = ProcessIO.run(
@@ -61,14 +73,18 @@ enum TerminalFocus {
         let session = String(decoding: selected.stdout, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         var listArgs: [String] = socket.isEmpty ? [] : ["-S", socket]
-        listArgs += ["list-clients", "-F", "#{session_id} #{client_pid}"]
+        listArgs += ["list-clients", "-F", "#{session_id}\t#{client_pid}\t#{client_tty}"]
         if !session.isEmpty,
            let clients = ProcessIO.run(executable: tmux, arguments: listArgs, timeout: 2, outputLimit: 16 * 1024),
            !clients.timedOut, clients.status == 0 {
             let lines = String(decoding: clients.stdout, as: UTF8.self).split(separator: "\n")
             for line in lines {
-                let fields = line.split(separator: " ")
-                guard fields.count == 2, fields[0] == session, let pid = Int32(fields[1]) else { continue }
+                let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
+                guard fields.count >= 2, fields[0] == session, let pid = Int32(fields[1]) else { continue }
+                if fields.count >= 3 {
+                    let clientTTY = String(fields[2])
+                    if !clientTTY.isEmpty, focusTTY(clientTTY) { return true }
+                }
                 if activateOwner(of: pid) { return true }
             }
         }
@@ -77,11 +93,19 @@ enum TerminalFocus {
 
     // MARK: - Zellij
 
-    /// Where Homebrew, a manual install and cargo put it: a GUI app has no
-    /// `PATH` to search.
+    /// Where Homebrew, a manual install, cargo, and Nix put it: a GUI app has
+    /// no `PATH` to search.
     static var zellijPaths: [String] {
-        ["/opt/homebrew/bin/zellij", "/usr/local/bin/zellij",
-         FileManager.default.homeDirectoryForCurrentUser.path + "/.cargo/bin/zellij"]
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let user = NSUserName()
+        return [
+            "/opt/homebrew/bin/zellij",
+            "/usr/local/bin/zellij",
+            home + "/.cargo/bin/zellij",
+            home + "/.nix-profile/bin/zellij",
+            "/etc/profiles/per-user/\(user)/bin/zellij",
+            "/run/current-system/sw/bin/zellij",
+        ]
     }
 
     /// Focus the pane in its session, then bring its terminal forward.

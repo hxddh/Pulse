@@ -264,6 +264,8 @@ package enum TrayKeys {
         case jump(Int)
         /// ⌘B: toggle "tell me when this turn is done" on the selected row.
         case watchTurn
+        /// `/` or `⌘F`: open/focus the inline session filter.
+        case search
         /// ⌘D or ⌘⌫
         case dismiss
         /// ⌘R
@@ -334,6 +336,7 @@ package enum TrayKeys {
         case focus(SessionKey)
         case dismiss(SessionKey)
         case watchTurn(SessionKey)
+        case toggleFilter
         case refresh
         case openSettings
         case closeTray
@@ -430,6 +433,8 @@ package enum TrayKeys {
         case .watchTurn:
             guard let selected, selected.canWatch else { return done() }
             return done(.watchTurn(selected.key))
+        case .search:
+            return done(.toggleFilter)
         case .refresh, .settings, .quit, .close:
             return done()
         }
@@ -476,6 +481,7 @@ package enum TrayKeys {
             case "w": return .close
             case "d": return .dismiss
             case "b": return .watchTurn
+            case "f": return .search
             case "1": return .jump(1)
             case "2": return .jump(2)
             case "3": return .jump(3)
@@ -492,6 +498,7 @@ package enum TrayKeys {
         case 53: return .escape
         case 36, 76: return .enter
         case 48: return .tab
+        case 44: return characters == "/" ? .search : nil
         case 123: return .left
         case 124: return .right
         case 125: return .down
@@ -632,4 +639,64 @@ package enum AutomationState: String, Equatable, Sendable {
     case notRunning
     /// macOS did not say.
     case unknown
+}
+
+/// Instant inline filter for the tray list (`/` or `⌘F`). Matches project,
+/// Git branch, agent name, headline, wait ask, last words, or status words.
+/// Every whitespace-separated token must match (AND). Pure.
+package enum TrayFilter {
+    package static func matches(_ row: AgentRow, facts: SessionFacts = SessionFacts(), query: String) -> Bool {
+        let terms = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !terms.isEmpty else { return true }
+        let statusWords: String
+        switch row.status {
+        case .needsYou: statusWords = "blocked wait waiting needs you permission question 等待 需要你"
+        case .running(stalled: true): statusWords = "stalled quiet running 没动静 安静"
+        case .running(stalled: false): statusWords = "running active working 运行中 运行"
+        case .yourTurn: statusWords = "done turn finished 好了 完成"
+        case .recent(.dismissedWait): statusWords = "ignored dismissed recent 已忽略 最近"
+        case .recent: statusWords = "recent idle ended 最近 空闲"
+        case .processOnly: statusWords = "detected process 已发现 进程"
+        }
+        let haystack = [
+            row.project,
+            row.branch,
+            row.agent.displayName,
+            row.agent.rawValue,
+            row.task,
+            row.wait?.ask ?? "",
+            facts.lastWords,
+            statusWords,
+        ].joined(separator: " ").lowercased()
+        return terms.allSatisfy { haystack.contains($0) }
+    }
+}
+
+/// Cycling direct-jump selector for `⌃⌥⌘↩`: jumps straight to the oldest
+/// blocked terminal, and cycles to the next blocked terminal when the person
+/// is already looking at the current one (or pressed the chord again within
+/// `cycleWindowMs`). Pure.
+package enum DirectJump {
+    package static let cycleWindowMs: Int64 = 15_000
+
+    package static func pick(
+        rows: [AgentRow],
+        frontmost: (AgentRow) -> Bool = { _ in false },
+        lastJumped: SessionKey? = nil,
+        lastJumpedAtMs: Int64 = 0,
+        nowMs: Int64 = 0
+    ) -> AgentRow? {
+        let blocked = rows.filter(\.isBlocked)
+        guard !blocked.isEmpty else { return nil }
+        if blocked.count == 1 { return blocked[0] }
+        if let last = lastJumped,
+           let index = blocked.firstIndex(where: { $0.key == last }),
+           (nowMs > 0 && lastJumpedAtMs > 0 && nowMs - lastJumpedAtMs < cycleWindowMs) || frontmost(blocked[index]) {
+            return blocked[(index + 1) % blocked.count]
+        }
+        if frontmost(blocked[0]) {
+            return blocked[1]
+        }
+        return blocked[0]
+    }
 }

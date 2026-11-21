@@ -12,7 +12,7 @@ import Foundation
 /// never a source: every fact in it came from a line.
 package struct BookSnapshot: Codable, Equatable {
     /// Bumped whenever a stored type changes shape or meaning.
-    package static let currentVersion = 2
+    package static let currentVersion = 3
     package static let fileName = "snapshot.json"
 
     package var version: Int

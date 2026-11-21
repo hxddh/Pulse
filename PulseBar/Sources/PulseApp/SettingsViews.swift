@@ -78,6 +78,7 @@ extension StatusStore {
             on: settings.directJumpShortcut, registered: directJumpRegistered, lang: lang
         )
         model.groupByProject = settings.groupByProject
+        model.menuBarStyle = settings.menuBarStyle
         model.automation = SettingsModel.automationLines(automation, lang: lang)
         model.muteCandidates = SettingsModel.muteCandidates(present: presentAgents)
         model.mutedAgents = Set(settings.mutedAgents)
@@ -113,6 +114,7 @@ extension StatusStore {
         case .testConnection: testHookConnection()
         case .setShortcut(let choice): setShortcut(choice)
         case .setGroupByProject(let on): set(\.groupByProject, on)
+        case .setMenuBarStyle(let style): setMenuBarStyle(style)
         case .openAutomationSettings:
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
                 NSWorkspace.shared.open(url)
@@ -237,6 +239,14 @@ struct SettingsFace: View {
                     .foregroundStyle(PulseTheme.warning)
             }
             Toggle(t(.settingsGroupByProject), isOn: binding(model.groupByProject) { .setGroupByProject($0) })
+            Picker(t(.settingsMenuBarStyleTitle), selection: Binding(
+                get: { model.menuBarStyle },
+                set: { [send] style in send(.setMenuBarStyle(style)) }
+            )) {
+                ForEach(MenuBarStyle.allCases, id: \.self) { style in
+                    Text(SettingsModel.menuBarStyleLabel(style, lang: model.lang)).tag(style)
+                }
+            }
         case .notifications:
             switch model.notifications {
             case .notAsked:

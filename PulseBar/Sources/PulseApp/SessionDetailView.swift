@@ -72,7 +72,7 @@ struct SessionDetailFace: View {
                             }
                         )
                 }
-                .frame(height: measuredHeight > 0 ? min(max(measuredHeight, 120), maxHeight) : nil)
+                .frame(height: measuredHeight > 0 ? min(max(measuredHeight, 120), maxHeight) : min(340, maxHeight))
                 .frame(maxHeight: maxHeight)
                 .onPreferenceChange(DetailContentHeightKey.self) { height in
                     if height > 0, abs(measuredHeight - height) > 0.5 { measuredHeight = height }

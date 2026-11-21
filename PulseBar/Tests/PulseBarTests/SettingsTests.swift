@@ -40,12 +40,18 @@ struct PulseSettingsTests {
         original.directJumpShortcut = true
         original.shortcut = .optionCommandP
         original.groupByProject = true
+        original.menuBarStyle = .counts
         original.notifyLongTurnSeconds = 300
         original.notificationSound = .silent
+        original.quietUntilMs = 1_700_000_000_000
         original = original.muting(.codex, true).muting(.claude, true)
         original = original.notifyingDone(.cursor, true).notifyingDone(.codex, true)
         #expect(original.mutedAgents == [.claude, .codex], "roster order")
         #expect(original.notifyDoneAgents == [.codex, .cursor], "roster order")
+        #expect(original.isQuiet(at: 1_699_999_000_000))
+        #expect(!original.isQuiet(at: 1_700_000_000_000))
+        #expect(original.quietRemaining(at: 1_699_999_000_000, lang: .en) != nil)
+        #expect(original.quietRemaining(at: 1_700_000_000_000, lang: .en) == nil)
         let reparsed = try roundTrip(original)
         #expect(reparsed == original)
     }
@@ -60,6 +66,8 @@ struct PulseSettingsTests {
         #expect(d.notifyDoneAgents.isEmpty)
         #expect(d.notifyLongTurnSeconds == 0)
         #expect(d.notificationSound == .default)
+        #expect(d.quietUntilMs == 0)
+        #expect(d.menuBarStyle == .minimal)
         let reparsed = try roundTrip(d)
         #expect(reparsed == d)
     }
@@ -72,7 +80,7 @@ struct PulseSettingsTests {
         #expect(keys == [
             "launchAtLogin", "hooksNudgeOff", "globalShortcut", "directJumpShortcut",
             "mutedAgents", "notifyDoneAgents", "notifyLongTurnSeconds", "notificationSound",
-            "shortcut", "groupByProject",
+            "quietUntilMs", "shortcut", "groupByProject", "menuBarStyle",
         ])
     }
 
@@ -359,5 +367,7 @@ struct AutomationLineTests {
         #expect(SettingsModel.longTurnLabel(0, lang: .en) == "Off")
         #expect(SettingsModel.longTurnLabel(300, lang: .zh) == "超过 5 分钟")
         #expect(SettingsModel.notifyDoneCandidates(present: [.codex, .cursor]) == [.codex, .cursor])
+        #expect(SettingsModel.menuBarStyleLabel(.compact, lang: .en) == "Icon only")
+        #expect(SettingsModel.menuBarStyleLabel(.counts, lang: .zh) == "显示运行与完成计数")
     }
 }

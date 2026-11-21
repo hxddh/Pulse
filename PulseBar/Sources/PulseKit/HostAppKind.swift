@@ -19,6 +19,11 @@ package enum HostAppKind: String, Equatable, Hashable, CaseIterable, Sendable {
     case trae
     case antigravity
     case zcode
+    case jetbrains
+    case xcode
+    case sublimeText
+    case neovide
+    case t3Code
     /// OpenAI's desktop app: Codex.app, since renamed ChatGPT.app (the same
     /// `com.openai.codex`), which runs `codex app-server`.
     case codexApp
@@ -38,6 +43,11 @@ package enum HostAppKind: String, Equatable, Hashable, CaseIterable, Sendable {
         case .trae: return "Trae"
         case .antigravity: return "Antigravity"
         case .zcode: return "ZCode"
+        case .jetbrains: return "JetBrains"
+        case .xcode: return "Xcode"
+        case .sublimeText: return "Sublime Text"
+        case .neovide: return "Neovide"
+        case .t3Code: return "T3 Code"
         case .codexApp: return "Codex"
         case .claudeApp: return "Claude"
         case .openCodeApp: return "OpenCode"
@@ -49,8 +59,11 @@ package enum HostAppKind: String, Equatable, Hashable, CaseIterable, Sendable {
     /// agent's own app is only brought forward — it has no folder to open.
     package var opensFolders: Bool {
         switch self {
-        case .cursor, .vsCode, .windsurf, .zed, .trae, .antigravity, .zcode: return true
-        case .codexApp, .claudeApp, .openCodeApp, .copilotApp: return false
+        case .cursor, .vsCode, .windsurf, .zed, .trae, .antigravity, .zcode,
+             .jetbrains, .xcode, .sublimeText, .neovide:
+            return true
+        case .t3Code, .codexApp, .claudeApp, .openCodeApp, .copilotApp:
+            return false
         }
     }
 
@@ -69,6 +82,15 @@ package enum HostAppKind: String, Equatable, Hashable, CaseIterable, Sendable {
         // The agent manager and the IDE are two apps.
         case .antigravity: return ["Antigravity.app/", "Antigravity IDE.app/"]
         case .zcode: return ["ZCode.app/"]
+        case .jetbrains: return [
+            "IntelliJ IDEA", "WebStorm.app/", "PyCharm", "GoLand.app/",
+            "RustRover.app/", "CLion.app/", "PhpStorm.app/", "Rider.app/",
+            "RubyMine.app/", "DataGrip.app/", "Android Studio.app/", "Fleet.app/",
+        ]
+        case .xcode: return ["Xcode.app/"]
+        case .sublimeText: return ["Sublime Text.app/"]
+        case .neovide: return ["Neovide.app/"]
+        case .t3Code: return ["T3 Code.app/"]
         case .codexApp: return ["Codex.app/", "ChatGPT.app/"]
         case .claudeApp: return ["Claude.app/"]
         case .openCodeApp: return ["OpenCode.app/"]
@@ -86,6 +108,18 @@ package enum HostAppKind: String, Equatable, Hashable, CaseIterable, Sendable {
         case .antigravity: return ["com.google.antigravity", "com.google.antigravity-ide"]
         // Electron ADE — path/open -a is primary; bundle id is best-effort.
         case .zcode: return ["ai.z.zcode", "com.zhipuai.zcode"]
+        case .jetbrains: return [
+            "com.jetbrains.intellij", "com.jetbrains.intellij.ce",
+            "com.jetbrains.WebStorm", "com.jetbrains.pycharm", "com.jetbrains.pycharm.ce",
+            "com.jetbrains.goland", "com.jetbrains.rustrover",
+            "com.jetbrains.CLion", "com.jetbrains.PhpStorm", "com.jetbrains.rider",
+            "com.jetbrains.rubymine", "com.jetbrains.datagrip",
+            "com.google.android.studio", "Fleet.app",
+        ]
+        case .xcode: return ["com.apple.dt.Xcode"]
+        case .sublimeText: return ["com.sublimetext.4"]
+        case .neovide: return ["com.neovide.neovide"]
+        case .t3Code: return ["com.t3tools.t3code"]
         // ChatGPT.app kept Codex.app's id; the older ChatGPT app is
         // `com.openai.chat`.
         case .codexApp: return ["com.openai.codex", "com.openai.chat"]
