@@ -87,6 +87,9 @@ package struct TrayRowModel: Equatable {
         }
         package var kind: Kind
         package var text: String
+        /// True when an `.ask` line looks like a tool/command descriptor (`Bash: ...`)
+        /// and reads more clearly in monospaced type.
+        package var isCode: Bool = false
     }
 
     package var lang: ResolvedLanguage
@@ -110,6 +113,8 @@ package struct TrayRowModel: Equatable {
     /// The plan's progress, "3/7", quietly, on a live row whose agent
     /// reported a plan this turn (`planBadge`); never red.
     package var planProgress: String?
+    /// Compact badge when another active session is editing the same file (`Auth.swift`).
+    package var conflictBadge: String? = nil
     /// One-shot "tell me when this turn is done" is armed on this row.
     package var watchingTurn = false
     package var secondLine: SecondLine?
@@ -211,6 +216,7 @@ package struct TrayRowModel: Equatable {
             age: age,
             turnLabel: turnLabel,
             planProgress: plan,
+            conflictBadge: SessionConflicts.badgeText(row.conflictingFiles),
             watchingTurn: watching,
             secondLine: second,
             why: why,
@@ -240,7 +246,8 @@ package struct TrayRowModel: Equatable {
         switch row.status {
         case .needsYou(let block):
             let text = ask(row) ?? L10n.waitKind(block.kind, lang)
-            return SecondLine(kind: .ask, text: truncate(text, 140))
+            let isCode = text.contains(":") || text.contains("/") || text.contains("`")
+            return SecondLine(kind: .ask, text: truncate(text, 140), isCode: isCode)
         case .running(stalled: true):
             return SecondLine(kind: .warning, text: why)
         case .running(stalled: false):
@@ -584,6 +591,8 @@ package struct DetailModel: Equatable {
     /// `TrayRowModel.why` — nil when it is the row's own second line (a
     /// stalled row's why), which would say the same sentence twice.
     package var why: String?
+    /// Warning when another active session is modifying the same file(s).
+    package var conflictWarning: String? = nil
     /// Now: what the agent said started and has not finished, newest
     /// first, and its live subagents — only while the turn is live.
     package var now: [String] = []
@@ -682,6 +691,7 @@ package struct DetailModel: Equatable {
             headlineQuiet: row.isProcessOnly,
             ask: Words.ask(row),
             why: second?.text == why ? nil : why,
+            conflictWarning: SessionConflicts.detailWarning(row.conflictingFiles, lang: lang),
             now: live ? Words.nowItems(said, nowMs: nowMs, lang: lang) : [],
             turnHeading: t(live ? .stepThisTurn : .detailLastTurn),
             turn: turn,

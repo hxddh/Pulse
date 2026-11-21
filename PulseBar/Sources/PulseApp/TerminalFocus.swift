@@ -185,12 +185,15 @@ enum TerminalFocus {
     /// that editor. The call still needs a deadline: a host app slow to launch, or stuck behind its own
     /// dialog, would otherwise freeze the menu bar.
     private static func openFolder(_ path: String, bundleIDs: [String]) -> Bool {
+        let resolved = GitBranch.worktreeRoot(cwd: path)
         var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return false }
+        let target = (FileManager.default.fileExists(atPath: resolved, isDirectory: &isDir) && isDir.boolValue) ? resolved : path
+        isDir = false
+        guard FileManager.default.fileExists(atPath: target, isDirectory: &isDir), isDir.boolValue else { return false }
         for bid in bundleIDs {
             guard let result = ProcessIO.run(
                 executable: "/usr/bin/open",
-                arguments: ["-b", bid, path],
+                arguments: ["-b", bid, target],
                 timeout: 5
             ) else { continue }
             if !result.timedOut, result.status == 0 { return true }

@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`38.0.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v38.0.0) · macOS 14+（Apple Silicon + Intel 通用）
+**版本：`39.0.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v39.0.0) · macOS 14+（Apple Silicon + Intel 通用）
 
 开着 Claude Code 写代码，切去开会，回来发现它二十分钟前就停在一个授权提示上。Pulse 把这件事变成余光可见：
 

@@ -26,6 +26,19 @@ package enum PulseBarMain {
         if ProcessInfo.processInfo.arguments.contains("--selftest") {
             exit(PulseSelfTest.run() ? 0 : 1)
         }
+        if ProcessInfo.processInfo.arguments.contains("--status") {
+            let arguments = ProcessInfo.processInfo.arguments
+            let format: StatusCLI.Format = arguments.contains("--json")
+                ? .json
+                : arguments.contains("--tmux") ? .tmux : .plain
+            let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+            let state = StatusCLI.loadState(nowMs: nowMs)
+            let output = StatusCLI.render(state, format: format, nowMs: nowMs)
+            if !output.isEmpty {
+                FileHandle.standardOutput.write(Data((output + "\n").utf8))
+            }
+            exit(0)
+        }
         if ProcessInfo.processInfo.arguments.contains("--hook") {
             // Every supported agent's hook lands here. Always exit 0 so a
             // vendor hook never blocks the agent process.
@@ -75,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `PulseQA`'s driver, when it launched the app; nil in the product.
     var launchHook: PulseLaunchHook?
     private var statusItem: StatusItemController?
+    private var floatingBeacon: FloatingBeaconController?
     private var activationObserver: NSObjectProtocol?
     /// A second copy's "open the tray" (`SingleInstanceGuard`).
     private var reopenObserver: NSObjectProtocol?
@@ -108,6 +122,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let launchHook, launchHook() {
             // QA took the launch over: a fixture, not this Mac's sessions.
         } else {
+            let beacon = FloatingBeaconController(store: AppServices.store)
+            floatingBeacon = beacon
+            FloatingBeaconController.shared = beacon
+            beacon.start()
             AppServices.store.start()
         }
     }
@@ -136,6 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DistributedNotificationCenter.default().removeObserver(reopenObserver)
             self.reopenObserver = nil
         }
+        floatingBeacon?.stop()
         statusItem?.uninstall()
     }
 }

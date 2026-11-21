@@ -2,6 +2,22 @@
 
 All notable changes to Pulse are documented here.
 
+## 39.0.0 — Beacon（烽）
+
+面向全屏 IDE、外接大屏与多 Agent 并行协作的一次体验质变：**事件日志仍是 v10**，快照格式与 v37/v38 完全兼容。
+
+### 全屏灯塔、并发冲突雷达与终端生态
+
+- **悬浮等待灯塔（Floating Beacon HUD）**：平时 **0 像素完全隐身**；一旦有 Agent 阻塞在授权或提问上，角落浮现一枚不抢键盘焦点、全屏应用上方也可见的极简毛玻璃胶囊（`NSPanel`，`.nonactivatingPanel` + `.canJoinAllSpaces` + `.fullScreenAuxiliary`），展示等待数量、项目、请求与等待时长。支持自由拖拽定位（记忆位置）、单击直接循环跳到最早等待终端、右键忽略/静音/隐藏；托盘打开时自动避让；可在「设置 → 通用」随时开关。
+- **并行文件冲突雷达（File Conflict Radar）**：纯内存零开销分析所有活跃会话的 `TurnDigest` 修改文件集合（自动归一化相对与绝对路径）；当 ≥2 个活跃会话同时修改同一文件时，托盘行右侧立刻亮起琥珀色 `⚠ 文件名` 警示，详情页列出全部重叠文件，提前拦下多 Agent 静默互相覆盖代码。
+- **自有 Hook 模块内容级检测 + 启动静默自愈**：`HooksSupport.inspect` 新增 `.outdatedModule` 内容级比对（覆盖 Pi `pulse.js`、OpenCode `pulse.js`、Copilot `pulse.json`），彻底解决“升级 Pulse 后仍在跑旧扩展却显示已安装”的隐性断层；App 启动时凡是磁盘内容与账本 `ledger.written` 逐字节一致（未被用户手改）的自有模块，自动静默升级到最新版并保留 `original` 保障卸载 100% 字节还原。
+- **精准着陆再升级 + 听声辨位**：编辑器（Cursor / VS Code / Zed / JetBrains）打开目录前自动向上解析 Git 仓库/worktree 根目录（零子进程），不再因单仓子目录多弹重复窗口；托盘阻塞行的命令类请求（如 `Bash: ...`）改用等宽代码字体便于一眼扫读；通知声音新增「区分音（等待与完成不同音效）」——等待用清脆 `Glass`、回合完成用轻柔 `Tink`，不看屏幕也能听声辨位。
+- **只读终端状态 CLI（`pulse-hook --status`）**：复用轻量二进制直读本地快照与事件日志尾部（<5ms、零网络、零常驻），支持 `--status` / `--json` / `--tmux`，可直接嵌入 tmux 状态栏、SketchyBar、Raycast 或 Starship 提示符；同步更新 `EXPERIENCE.md` 体验规格。
+
+### 已知限制
+
+- **仍没有在真机上跑过 `scripts/smoke.sh`**，且仓库未配置 Apple Developer ID 凭据，因此分发包仍是 ad-hoc 签名、未公证的 `preview` 构建（全部源码门禁、Node 适配器测试、Swift 单元测试、Universal Binary 打包、端到端 hook 链路与 QA 截图均已在 GitHub Actions `macos-26` 上通过）。
+
 ## 38.0.0 — Clarity（澄）
 
 彻底治理 **Pi 多重无效幽灵行**与进程识别准确性，并补齐 v37 筛选、勿扰与近期会话清理细节：**事件日志仍是 v10**，快照格式与 v37 完全兼容。

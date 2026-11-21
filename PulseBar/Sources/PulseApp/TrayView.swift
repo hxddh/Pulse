@@ -512,8 +512,11 @@ struct TrayRowFace: View {
         VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
             line
             if let second = model.secondLine {
+                let font = second.kind.isQuiet
+                    ? PulseTheme.Font.caption
+                    : (second.isCode ? PulseTheme.Font.code : PulseTheme.Font.body)
                 Text(second.text)
-                    .font(second.kind.isQuiet ? PulseTheme.Font.caption : PulseTheme.Font.body)
+                    .font(font)
                     .foregroundStyle(Self.secondLineStyle(second.kind))
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -608,6 +611,19 @@ struct TrayRowFace: View {
                     .monospacedDigit()
                     .lineLimit(1)
                     .fixedSize()
+            }
+            if let conflict = model.conflictBadge {
+                HStack(spacing: 2) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 9))
+                    Text(conflict)
+                        .font(PulseTheme.Font.caption)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .foregroundStyle(PulseTheme.warning)
+                .frame(maxWidth: 96, alignment: .trailing)
+                .fixedSize()
             }
             if model.watchingTurn {
                 Image(systemName: "bell.fill")

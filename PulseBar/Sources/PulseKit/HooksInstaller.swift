@@ -311,6 +311,57 @@ package enum HooksInstaller {
         }
     }
 
+    /// True for hook files Pulse owns whole (`.module` and `.ownedJSON`).
+    package static func isOwnedFormat(_ format: HookFormat) -> Bool {
+        switch format {
+        case .module, .ownedJSON: return true
+        case .nested, .versioned: return false
+        }
+    }
+
+    /// The exact bytes Pulse expects on disk for an owned module/JSON file,
+    /// or `nil` for shared vendor configs (`.nested`, `.versioned`).
+    package static func expectedOwnedContent(for agent: AgentID) -> String? {
+        let contract = agent.spec.hooks
+        guard isOwnedFormat(contract.format) else { return nil }
+        return ownedFile(agent, contract)
+    }
+
+    /// Quietly upgrade Pulse-owned module files (`pi.js`, `opencode.js`,
+    /// `copilot/hooks/pulse.json`) on app launch **only** when the file on disk
+    /// still matches `ledger.written` byte-for-byte (proving the user did not
+    /// customize it). Preserves `ledger.original` for exact uninstall.
+    @discardableResult
+    package static func syncOwnedModulesIfUntouched() -> [AgentID] {
+        var ledger = loadLedger()
+        guard !ledger.isEmpty else { return [] }
+        var updated: [AgentID] = []
+        var ledgerChanged = false
+        for agent in AgentID.priority {
+            guard let expected = expectedOwnedContent(for: agent) else { continue }
+            let target = configURL(for: agent).resolvingSymlinksInPath()
+            guard var entry = ledger[target.path],
+                  let current = try? String(contentsOf: target, encoding: .utf8),
+                  current == entry.written,
+                  current != expected
+            else { continue }
+            do {
+                try writeConfig(expected, to: target)
+                entry.written = expected
+                ledger[target.path] = entry
+                ledgerChanged = true
+                updated.append(agent)
+                DebugLog.write("hooks auto-synced \(agent.rawValue)")
+            } catch {
+                DebugLog.write("hooks auto-sync failed \(agent.rawValue): \(error.localizedDescription)")
+            }
+        }
+        if ledgerChanged {
+            try? saveLedger(ledger)
+        }
+        return updated
+    }
+
     /// The user's file without Pulse's entries; a `hooks` left empty goes.
     package static func stripNested(_ text: String, path: String) throws -> String? {
         try splice(text, path: path, pulse: [], version: false, dropEmptyHooks: true)

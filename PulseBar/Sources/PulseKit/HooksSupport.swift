@@ -58,16 +58,20 @@ package enum HooksSupport {
             .appendingPathComponent("Library/Application Support/Pulse")
     }
 
-    /// Ensure the native `pulse-hook` launcher exists and points at this app.
+    /// Ensure the native `pulse-hook` launcher exists, points at this app,
+    /// and quietly upgrades any untouched Pulse-owned module files (`pi.js`,
+    /// `opencode.js`, `copilot/hooks/pulse.json`) to the version shipped here.
     package static func seedAssets() {
         try? FileManager.default.createDirectory(at: supportDir(), withIntermediateDirectories: true)
         try? HooksInstaller.ensureLauncher()
         HooksInstaller.refreshRunnerPath()
+        _ = HooksInstaller.syncOwnedModulesIfUntouched()
     }
 
     /// How one agent's config carries Pulse's hook, read now: whole, partly
     /// (not every event of its contract, or one it no longer has), through
-    /// a launcher that is not this Pulse's or cannot run, or not at all.
+    /// a launcher that is not this Pulse's or cannot run, an outdated module
+    /// version, or not at all.
     /// Six small reads; Settings opening, an install and the launch call it
     /// — never the scan path.
     package static func inspect(_ agent: AgentID) -> Connection.Install {
@@ -75,13 +79,20 @@ package enum HooksSupport {
             return .notInstalled
         }
         let launcher = HooksInstaller.launcherURL.path
+        let moduleMatches: Bool
+        if let expected = HooksInstaller.expectedOwnedContent(for: agent) {
+            moduleMatches = (text == expected)
+        } else {
+            moduleMatches = true
+        }
         return Connection.Install.classify(
             contract: Set(agent.spec.hooks.events.map(\.name)),
             installed: HooksInstaller.installedEvents(agent, text: text),
             launchers: HooksInstaller.launcherPaths(in: text),
             expected: launcher,
             launcherRuns: FileManager.default.isExecutableFile(atPath: launcher),
-            runnerRuns: runnerRuns()
+            runnerRuns: runnerRuns(),
+            moduleMatches: moduleMatches
         )
     }
 

@@ -2316,4 +2316,79 @@ struct GroupByProjectTests {
         )
         #expect(hidden.rows.map(\.key) == [SessionKey(.pi, "pi-live")])
     }
+
+    @Test func floatingBeaconConflictRadarStatusCliAndWorktreeRoot() throws {
+        let now: Int64 = 1_800_000_000_000
+        var book = SessionBook()
+        // Two active sessions editing the exact same file concurrently (one relative, one absolute).
+        book.apply(AttentionRecord(
+            agent: .claude, kind: .working, ms: now - 180_000, message: "Refactor auth",
+            session: "c1", cwd: "/Users/me/code/Pulse", event: "UserPromptSubmit"
+        ), nowMs: now)
+        book.apply(AttentionRecord(
+            agent: .claude, kind: .tool, ms: now - 120_000, message: "Sources/Auth.swift",
+            session: "c1", cwd: "/Users/me/code/Pulse", tool: "Edit", event: "PostToolUse", category: .edit
+        ), nowMs: now)
+        book.apply(AttentionRecord(
+            agent: .claude, kind: .permission, ms: now - 90_000, message: "Bash: swift test",
+            session: "c1", cwd: "/Users/me/code/Pulse", tool: "Bash", event: "PermissionRequest"
+        ), nowMs: now)
+
+        book.apply(AttentionRecord(
+            agent: .codex, kind: .working, ms: now - 150_000, message: "Add OAuth",
+            session: "x1", cwd: "/Users/me/code/Pulse", event: "UserPromptSubmit"
+        ), nowMs: now)
+        book.apply(AttentionRecord(
+            agent: .codex, kind: .tool, ms: now - 60_000, message: "/Users/me/code/Pulse/Sources/Auth.swift",
+            session: "x1", cwd: "/Users/me/code/Pulse", tool: "apply_patch", event: "PostToolUse",
+            category: .edit, meta: LineMeta(files: ["Sources/Auth.swift"])
+        ), nowMs: now)
+
+        let state = TrayState.project(book: book, processes: [], context: TrayState.Context(nowMs: now))
+        // File Conflict Radar detects the concurrent edit on both live sessions.
+        #expect(state.conflicts[SessionKey(.claude, "c1")]?.map(\.displayName) == ["Auth.swift"])
+        #expect(state.conflicts[SessionKey(.codex, "x1")]?.map(\.displayName) == ["Auth.swift"])
+        let claudeRow = try #require(state.rows.first { $0.key == SessionKey(.claude, "c1") })
+        #expect(claudeRow.conflictingFiles == ["Auth.swift"])
+
+        // TrayRowModel shows conflict badge + code-style command ask; DetailModel shows conflict warning.
+        let rowModel = TrayRowModel.make(TrayRowModel.Input(row: claudeRow, lang: .en, nowMs: now))
+        #expect(rowModel.conflictBadge == "Auth.swift")
+        #expect(rowModel.secondLine?.isCode == true)
+        let detail = DetailModel.make(row: claudeRow, lang: .en, nowMs: now)
+        #expect(detail.conflictWarning?.contains("Auth.swift") == true)
+
+        // Floating Waiting Beacon appears only when blocked and carries conflict/quiet state.
+        let beacon = try #require(BeaconModel.make(rows: state.rows, lang: .en, nowMs: now, quiet: true))
+        #expect(beacon.blockedCount == 1)
+        #expect(beacon.primaryKey == SessionKey(.claude, "c1"))
+        #expect(beacon.headline == "Bash: swift test")
+        #expect(beacon.waitAge == "1m")
+        #expect(beacon.hasConflict)
+        #expect(beacon.quiet)
+        let runningOnly = state.rows.filter { !$0.isBlocked }
+        #expect(BeaconModel.make(rows: runningOnly, lang: .en, nowMs: now) == nil)
+
+        // StatusCLI renders plain, tmux, and valid JSON cleanly.
+        let plain = StatusCLI.render(state, format: .plain, nowMs: now)
+        #expect(plain.contains("waiting=1"))
+        #expect(plain.contains("running=1"))
+        #expect(plain.contains("conflicts=1"))
+        let tmux = StatusCLI.render(state, format: .tmux, nowMs: now)
+        #expect(tmux.contains("#[fg=red]● 1#[default]"))
+        #expect(tmux.contains("⚠ 1"))
+        let jsonText = StatusCLI.render(state, format: .json, nowMs: now)
+        let json = try #require(JSONSerialization.jsonObject(with: Data(jsonText.utf8)) as? [String: Any])
+        #expect(json["lamp"] as? String == "waiting")
+        #expect(json["conflicts"] as? Int == 1)
+
+        // GitBranch.worktreeRoot resolves nested subdirectories to the repo root.
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("pulse-root-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let repo = tmp.appendingPathComponent("repo", isDirectory: true)
+        let nested = repo.appendingPathComponent("packages/web/src", isDirectory: true)
+        try FileManager.default.createDirectory(at: repo.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        #expect(GitBranch.worktreeRoot(cwd: nested.path) == repo.standardizedFileURL.path)
+    }
 }
