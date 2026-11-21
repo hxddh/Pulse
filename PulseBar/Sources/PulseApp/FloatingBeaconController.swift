@@ -32,7 +32,7 @@ struct FloatingBeaconFace: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(PulseTheme.waiting, in: Capsule())
+                        .background(Lamp.waiting.color, in: Capsule())
                         .fixedSize()
                 }
                 if !model.project.isEmpty {
@@ -62,7 +62,7 @@ struct FloatingBeaconFace: View {
                 if !model.waitAge.isEmpty {
                     Text(model.waitAge)
                         .font(PulseTheme.Font.caption)
-                        .foregroundStyle(PulseTheme.waiting)
+                        .foregroundStyle(Lamp.waiting.color)
                         .monospacedDigit()
                         .fixedSize()
                 }
@@ -72,7 +72,7 @@ struct FloatingBeaconFace: View {
             .background(.regularMaterial, in: Capsule())
             .overlay(
                 Capsule()
-                    .strokeBorder(PulseTheme.waiting.opacity(0.45), lineWidth: 1)
+                    .strokeBorder(Lamp.waiting.color.opacity(0.45), lineWidth: 1)
             )
             .contentShape(Capsule())
         }
