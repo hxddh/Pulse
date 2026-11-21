@@ -940,7 +940,7 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertTrue(module.contains(#"if (name === "session_shutdown") shutdown(name, payload)"#))
         XCTAssertTrue(module.contains("QUEUE.length = 0"), "nothing queued is sent after the shutdown")
         XCTAssertFalse(module.contains("flush()"), "the queue is never flushed beside the shutdown")
-        XCTAssertTrue(module.contains(#"return !!ctx && (ctx.mode === "json" || ctx.mode === "print")"#))
+        XCTAssertTrue(module.contains(#"return !!ctx && (ctx.mode === "json" || ctx.mode === "print" || ctx.mode === "rpc")"#))
         XCTAssertTrue(module.contains("if (quiet(ctx)) return"))
         XCTAssertTrue(module.contains("pid: process.pid"))
         XCTAssertTrue(module.contains("child.unref()"))

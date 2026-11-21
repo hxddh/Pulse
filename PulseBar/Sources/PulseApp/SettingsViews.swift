@@ -86,6 +86,7 @@ extension StatusStore {
         model.notifyDoneAgents = Set(settings.notifyDoneAgents)
         model.notifyLongTurnSeconds = settings.notifyLongTurnSeconds
         model.notificationSound = settings.notificationSound
+        model.quietRemaining = settings.quietRemaining(at: nowMs, lang: lang)
         let ping = SettingsModel.pingLine(hookPing, nowMs: nowMs, lang: lang)
         model.pingLine = ping?.text
         model.pingWarning = ping?.warning ?? false
@@ -115,6 +116,7 @@ extension StatusStore {
         case .setShortcut(let choice): setShortcut(choice)
         case .setGroupByProject(let on): set(\.groupByProject, on)
         case .setMenuBarStyle(let style): setMenuBarStyle(style)
+        case .resumeQuiet: resumeQuiet()
         case .openAutomationSettings:
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
                 NSWorkspace.shared.open(url)
@@ -268,6 +270,14 @@ struct SettingsFace: View {
                 } label: {
                     Text(t(.notifyAllowed))
                     Text(t(.notifyFocusNote))
+                }
+            }
+            if let quietRemaining = model.quietRemaining {
+                LabeledContent {
+                    Button(t(.quietResume)) { send(.resumeQuiet) }
+                } label: {
+                    Label(String(format: t(.quietActiveBadge), quietRemaining), systemImage: "bell.slash.fill")
+                        .foregroundStyle(.secondary)
                 }
             }
             Picker(t(.settingsSoundTitle), selection: Binding(

@@ -59,6 +59,7 @@ extension AgentSpec {
         ),
         // A subagent's events carry its `agentId`; the main agent's none.
         subagentKeys: ["agentId"],
+        singleSessionPerProcess: true,
         // The runtime's tool names (hooks-reference, "Claude-format
         // matchers").
         toolCategories: Copilot.toolCategories,

@@ -445,6 +445,13 @@ package struct AgentProcessRule: Sendable {
     /// keeps a row listed and it gets no process-only row
     /// (`AgentProcesses.isService`).
     package var serviceArguments: [String]
+    /// Executable or retitled basenames that always represent a background
+    /// service rather than an interactive session (`pi-rpc`).
+    package var serviceBasenames: [String]
+    /// When true, an unclaimed process-only hit must have a controlling TTY
+    /// or a known host app to appear in the tray (prevents headless runs
+    /// whose argv was overwritten by `process.title` from becoming ghost rows).
+    package var requireTTYForProcessOnly: Bool
 
     package init(
         basenames: [String],
@@ -454,7 +461,9 @@ package struct AgentProcessRule: Sendable {
         allowBareBasename: Bool = false,
         promptlessFlags: [String] = [],
         promptHostFlags: [String] = [],
-        serviceArguments: [String] = []
+        serviceArguments: [String] = [],
+        serviceBasenames: [String] = [],
+        requireTTYForProcessOnly: Bool = false
     ) {
         self.basenames = basenames
         self.pathNeedles = pathNeedles
@@ -464,6 +473,8 @@ package struct AgentProcessRule: Sendable {
         self.promptlessFlags = promptlessFlags
         self.promptHostFlags = promptHostFlags
         self.serviceArguments = serviceArguments
+        self.serviceBasenames = serviceBasenames
+        self.requireTTYForProcessOnly = requireTTYForProcessOnly
     }
 
     /// The agent process with this argv can show nobody a prompt: it
@@ -508,6 +519,14 @@ package struct AgentSpec: Sendable {
     /// the hook directly: the receiver takes it only when it is the hook's
     /// own parent (`PulseHookReceiver.claimedPID`).
     package let reportsOwnPID: Bool
+    /// One interactive process owns at most one active session at a time
+    /// (terminal CLIs like Claude, Codex, Pi, Copilot — not multi-tab IDEs).
+    /// Starting a new session id on the same live PID cleanly supersedes the
+    /// prior session on that PID.
+    package let singleSessionPerProcess: Bool
+    /// Events without a session id (e.g. Pi `--no-session`) are ignored
+    /// instead of creating a folder-keyed row.
+    package let requiresSessionID: Bool
     /// Payload keys that name the session, most trusted first
     /// (`HookContext.sessionKeys` unless the vendor spells it otherwise:
     /// Cursor's `conversation_id` is the one every event carries, its
@@ -535,6 +554,8 @@ package struct AgentSpec: Sendable {
         foreignCallers: [String] = [],
         subagentKeys: [String] = [],
         reportsOwnPID: Bool = false,
+        singleSessionPerProcess: Bool = false,
+        requiresSessionID: Bool = false,
         sessionKeys: [String] = HookContext.sessionKeys,
         toolCategories: [String: StepCategory] = [:],
         mcpToolPrefixes: [String] = [],
@@ -550,6 +571,8 @@ package struct AgentSpec: Sendable {
         self.foreignCallers = foreignCallers
         self.subagentKeys = subagentKeys
         self.reportsOwnPID = reportsOwnPID
+        self.singleSessionPerProcess = singleSessionPerProcess
+        self.requiresSessionID = requiresSessionID
         self.sessionKeys = sessionKeys
         self.toolCategories = toolCategories
         self.mcpToolPrefixes = mcpToolPrefixes

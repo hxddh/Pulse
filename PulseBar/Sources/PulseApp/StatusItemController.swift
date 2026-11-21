@@ -312,13 +312,16 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
                   )
             else { return event }
             // While the inline filter box is active, let text editing keys
-            // (Space, Left/Right, `/`) reach the TextField normally.
-            if self.ui.filterActive, self.ui.keys.detail == nil, !command {
-                switch key {
-                case .space, .left, .right, .search:
-                    return event
-                default:
-                    break
+            // (Space, Left/Right, `/`, and ⌘⌫ to delete the line) reach the TextField.
+            if self.ui.filterActive, self.ui.keys.detail == nil {
+                if command, event.keyCode == 51 { return event }
+                if !command {
+                    switch key {
+                    case .space, .left, .right, .search:
+                        return event
+                    default:
+                        break
+                    }
                 }
             }
             return self.ui.handle(key) ? nil : event

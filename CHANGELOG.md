@@ -2,6 +2,28 @@
 
 All notable changes to Pulse are documented here.
 
+## 38.0.0 — Clarity（澄）
+
+彻底治理 **Pi 多重无效幽灵行**与进程识别准确性，并补齐 v37 筛选、勿扰与近期会话清理细节：**事件日志仍是 v10**，快照格式与 v37 完全兼容。
+
+### Pi 与进程识别准确性彻底治理
+
+- **过滤 Pi 后台服务、子代理与单次运行**：`pi-rpc`、`pi --mode json` / `--mode print` / `--mode rpc`、`-p` / `--print` / `--no-session` 纳入服务/非交互过滤规则；`pi.js` 同步静默 `rpc` 模式并跳过空 `session_id` 事件；`PulseHookReceiver` 对强会话 Agent（Pi）拦截空 `session_id`，不再生成孤立的目录键幽灵行。
+- **消除 `process.title` 覆写 argv 导致的无终端幽灵行**：macOS 上 Pi 改写进程标题后会抹去 `--mode json -p` 等参数，现在无控制终端（TTY）且无已知宿主 App 的未认领 Pi 进程不会再作为无效「已发现」行占屏。
+- **同进程切换会话自动结束旧会话**：在同一个终端里执行 `/new`、`/resume`、`/fork` 或 `/clear` 时，`pi.js` 先为旧会话补发 `session_shutdown (reason: "switch")`，`SessionBook` 也为单会话 CLI（Claude / Codex / Pi / Copilot）在同 PID 切入新会话时自动结束被替代的旧会话，并在托盘立即隐藏被替代行，不再叠加多个假存活项。
+- **同 TTY 归属防重行 & 修复解释器带值参数误判**：`TrayState` 归属判断新增同 TTY 兜底（即使工作目录在 `$HOME` 且 PID 未知也不重复出现 `processOnly` 行）；`AgentProcesses` 正确跳过 `node`/`bun`/`deno`/`tsx` 的 `-e`/`-r`/`--require`/`--import`/`--loader` 等带值参数与 `bun run` 子命令，避免误匹配无关进程。
+
+### v37 体验打磨与修复
+
+- **托盘清理近期会话 & 单行隐藏**：`⋯` 菜单新增「清理近期会话（N）」，近期行与未连接进程行右键菜单新增「隐藏」——若该会话后续产生新事件会自动重新浮现。
+- **修复筛选栏内 `⌘⌫` 误忽略等待**：搜索栏激活时按 `⌘⌫` 正常删除整行筛选词，不再误触发忽略当前选中的等待行；筛选切换时同步估算弹窗高度，消除残留空白。
+- **修复 Warp Preview 进程过滤**：`AgentProcesses` 同步识别与过滤 `WarpPreview.app` 辅助进程并标记 `viaWarp`。
+- **Git 分支与勿扰模式同步增强**：回合结束（`.turn`/`.failed`）与进程扫描（`processOnly`）同步刷新 `.git/HEAD`，中途 `git checkout` 即刻更新；托盘顶部勿扰胶囊按 5 秒时钟实时倒计时，菜单栏悬停提示与「设置 → 通知」同步展示勿扰状态并可一键恢复。
+
+### 已知限制
+
+- **仍没有在真机上跑过 `scripts/smoke.sh`**，且仓库未配置 Apple Developer ID 凭据，因此分发包仍是 ad-hoc 签名、未公证的 `preview` 构建（全部源码门禁、Node 适配器测试、Swift 单元测试、Universal Binary 打包、端到端 hook 链路与 QA 截图均已在 GitHub Actions `macos-26` 上通过）。
+
 ## 37.0.0 — Focus（专）
 
 面向 10+ 并行 Agent 与多 Git worktree 工作流的零摩擦指挥台升级：**事件日志仍是 v10（`meta` 新增向后兼容的 `branch` 字段）**，快照版本号升级到 v3（首次启动自动从事件日志无损重放）。

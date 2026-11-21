@@ -225,12 +225,63 @@ scenario("pi · a subagent (json mode) and a reload send nothing", async () => {
     ],
     piContext({ mode: "json" }),
   )
+  await piRun(
+    [
+      ["session_start", { reason: "startup" }],
+      ["agent_start", {}],
+    ],
+    piContext({ mode: "rpc" }),
+  )
+  await piRun(
+    [
+      ["session_start", { reason: "startup" }],
+      ["agent_start", {}],
+    ],
+    piContext({ sessionManager: { getSessionId: () => "", getSessionName: () => "" } }),
+  )
   await piRun([
     ["session_start", { reason: "reload" }],
     ["session_shutdown", { reason: "reload" }],
     ["agent_start", {}],
   ])
   return [pi("agent_start")]
+})
+
+scenario("pi · switching session on the same process shuts down the previous session", async () => {
+  let currentId = "pi-s1"
+  let currentCwd = "/w/a"
+  const ctx = {
+    mode: "interactive",
+    get cwd() {
+      return currentCwd
+    },
+    sessionManager: {
+      getSessionId: () => currentId,
+      getSessionName: () => "",
+    },
+  }
+  const extension = await load("pi.js")
+  const handlers = new Map()
+  extension({
+    on(name, handler) {
+      if (!handlers.has(name)) handlers.set(name, [])
+      handlers.get(name).push(handler)
+    },
+  })
+  const fire = (name, event) => {
+    for (const h of handlers.get(name) || []) h(event, ctx)
+  }
+  fire("session_start", { reason: "startup" })
+  fire("agent_start", {})
+  currentId = "pi-s2"
+  currentCwd = "/w/b"
+  fire("session_start", { reason: "new" })
+  return [
+    ["pi", "session_start", { session_id: "pi-s1", cwd: "/w/a", pid: PID, session_name: "", source: "startup" }],
+    ["pi", "agent_start", { session_id: "pi-s1", cwd: "/w/a", pid: PID }],
+    ["pi", "session_shutdown", { session_id: "pi-s1", cwd: "/w/a", pid: PID, reason: "switch" }],
+    ["pi", "session_start", { session_id: "pi-s2", cwd: "/w/b", pid: PID, session_name: "", source: "new" }],
+  ]
 })
 
 // When Pi goes away the child already running finishes and the queue

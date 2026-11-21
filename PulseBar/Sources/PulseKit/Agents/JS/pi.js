@@ -76,11 +76,11 @@ function shutdown(event, payload) {
   } catch {}
 }
 
-// A subagent (`pi --mode json -p`) or a one-shot print run is nobody's
-// session: it sends nothing.
+// A subagent (`pi --mode json -p`), a one-shot print run, or a headless RPC
+// backend (`pi --mode rpc`) is nobody's interactive terminal session.
 function quiet(ctx) {
   try {
-    return !!ctx && (ctx.mode === "json" || ctx.mode === "print")
+    return !!ctx && (ctx.mode === "json" || ctx.mode === "print" || ctx.mode === "rpc")
   } catch {
     return false
   }
@@ -147,6 +147,11 @@ function context(ctx) {
 }
 
 export default function (pi) {
+  // Track the active session id on this Pi process so `/new`, `/resume`, or
+  // `/fork` cleanly ends the superseded session before starting the next one.
+  let activeSessionId = ""
+  let activeCwd = ""
+
   pi.on("agent_end", (event, ctx) => {
     try {
       if (quiet(ctx)) return
@@ -176,6 +181,28 @@ export default function (pi) {
         // A call another tool made is folded into its caller.
         if ((name === "tool_execution_start" || name === "tool_execution_end") && event && event.parentToolCallId) return
         const payload = context(ctx)
+        // Skip ephemeral runs without a session id (e.g. `--no-session`).
+        if (!payload.session_id) return
+        if (name === "session_start") {
+          if (activeSessionId && activeSessionId !== payload.session_id) {
+            send("session_shutdown", {
+              session_id: activeSessionId,
+              cwd: activeCwd || payload.cwd,
+              pid: process.pid,
+              reason: "switch",
+            })
+          }
+          activeSessionId = payload.session_id
+          activeCwd = payload.cwd
+        } else if (name === "session_shutdown") {
+          if (activeSessionId === payload.session_id) {
+            activeSessionId = ""
+            activeCwd = ""
+          }
+        } else if (!activeSessionId) {
+          activeSessionId = payload.session_id
+          activeCwd = payload.cwd
+        }
         if (name === "ui_prompt_start" || name === "ui_prompt_end") {
           if (event && typeof event.kind === "string") payload.kind = event.kind
           if (event && typeof event.title === "string") payload.title = event.title

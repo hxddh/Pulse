@@ -155,7 +155,8 @@ package enum HookLanding {
         start: Int32,
         parentOf: (Int32) -> Int32?,
         argumentsOf: (Int32) -> String?,
-        serviceArguments: [String] = []
+        serviceArguments: [String] = [],
+        serviceBasenames: [String] = []
     ) -> Int32 {
         var current = start
         var seen: Set<Int32> = []
@@ -163,7 +164,7 @@ package enum HookLanding {
             guard current > 1, !seen.contains(current) else { break }
             seen.insert(current)
             if let args = argumentsOf(current), AgentProcesses.match(args: args) == agent {
-                return AgentProcesses.isService(args: args, arguments: serviceArguments) ? 0 : current
+                return AgentProcesses.isService(args: args, arguments: serviceArguments, basenames: serviceBasenames) ? 0 : current
             }
             guard let parent = parentOf(current) else { break }
             current = parent
@@ -196,7 +197,8 @@ package enum HookLanding {
                 )
                 return line.isEmpty ? nil : line
             },
-            serviceArguments: AgentProcesses.serviceArguments(of: agent)
+            serviceArguments: AgentProcesses.serviceArguments(of: agent),
+            serviceBasenames: AgentProcesses.serviceBasenames(of: agent)
         )
         // The controlling terminal is inherited by every child, piped or
         // not: none on the hook, the agent or the hook's parent means none

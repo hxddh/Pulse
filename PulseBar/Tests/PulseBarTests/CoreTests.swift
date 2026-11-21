@@ -442,6 +442,36 @@ final class AgentProcessesTests: XCTestCase {
             proc(22, 21, "/opt/homebrew/bin/copilot"),
         ]
         XCTAssertEqual(try XCTUnwrap(AgentProcesses.hits(in: ide, cwd: { _ in "" }).first).hostApp, .vsCode)
+        let warpPreview = [
+            proc(30, 1, "/Applications/WarpPreview.app/Contents/MacOS/stable"),
+            proc(31, 30, "/bin/zsh"),
+            proc(32, 31, "/Users/me/.local/bin/claude"),
+        ]
+        XCTAssertTrue(try XCTUnwrap(AgentProcesses.hits(in: warpPreview, cwd: { _ in "" }).first).viaWarp)
+    }
+
+    func testPiServicesSubagentsAndInterpreterFlagsAreFiltered() {
+        // Interpreter value flags and subcommands never falsely match Pi.
+        XCTAssertNil(AgentProcesses.match(args: "/opt/homebrew/bin/node -e pi"))
+        XCTAssertNil(AgentProcesses.match(args: "/opt/homebrew/bin/node --require pi /tmp/server.js"))
+        XCTAssertNil(AgentProcesses.match(args: "/Users/me/.bun/bin/bun run pi"))
+        XCTAssertEqual(
+            AgentProcesses.match(args: "/opt/homebrew/bin/node --require ./preload.js /opt/homebrew/bin/pi"),
+            .pi
+        )
+
+        // Pi RPC, subagents (`--mode json`), print runs (`-p`), and `--no-session`
+        // are excluded from process-only discovery while interactive Pi with a TTY stays.
+        let table = [
+            proc(100, 1, "/opt/homebrew/bin/node pi-rpc"),
+            proc(101, 1, "/opt/homebrew/bin/pi --mode json -p --no-session"),
+            proc(102, 1, "/opt/homebrew/bin/pi --mode=rpc"),
+            proc(103, 1, "/opt/homebrew/bin/pi -p summarize"),
+            proc(104, 1, "/opt/homebrew/bin/node pi", tty: "ttys007"),
+        ]
+        let hits = AgentProcesses.hits(in: table, cwd: { _ in "/Users/me/code/app" }, branch: { _ in "feat/pi" })
+        XCTAssertEqual(hits.map(\.pid), [104])
+        XCTAssertEqual(hits.first?.branch, "feat/pi")
     }
 
     func testWorkingDirectoryFilterRejectsInfrastructurePaths() {

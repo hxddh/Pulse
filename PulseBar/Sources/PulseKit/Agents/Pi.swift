@@ -23,7 +23,15 @@ extension AgentSpec {
             basenames: ["pi", "pi-rpc"],
             pathNeedles: ["pi-coding-agent", "/opt/homebrew/bin/pi", "/usr/local/bin/pi", "/.local/bin/pi"],
             denyNeedles: ["pip", "pip3", "pihole", "pickle", "pypi", "pixel", "piano"],
-            allowBareBasename: true
+            allowBareBasename: true,
+            promptlessFlags: ["-p", "--print"],
+            serviceArguments: [
+                "-p", "--print", "--no-session",
+                "--mode=json", "--mode=print", "--mode=rpc",
+                "--mode json", "--mode print", "--mode rpc",
+            ],
+            serviceBasenames: ["pi-rpc"],
+            requireTTYForProcessOnly: true
         ),
         hooks: HookContract(
             format: .module(render: { Pi.module(launcher: $0, events: $1) }),
@@ -62,6 +70,8 @@ extension AgentSpec {
         subagentKeys: [],
         // The extension spawns pulse-hook itself, with `process.pid`.
         reportsOwnPID: true,
+        singleSessionPerProcess: true,
+        requiresSessionID: true,
         // Pi's built-in tools (`src/core/tools`).
         toolCategories: [
             "bash": .shell, "powershell": .shell,
