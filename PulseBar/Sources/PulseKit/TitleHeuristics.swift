@@ -144,8 +144,16 @@ package enum TitleHeuristics {
     /// caveat).
     package static func promptTitle(_ raw: String, limit: Int = TitleHeuristics.titleLimit) -> String {
         var text = raw
-        if let query = taggedInner(text, name: "user_query") { text = query }
-        for tag in ["environment_context", "system-reminder", "user_instructions", "recommended_plugins", "app-context", "git_status"] {
+        if let query = taggedInner(text, name: "user_query") ?? taggedInner(text, name: "user_request") {
+            text = query
+        }
+        for tag in [
+            "environment_context", "system-reminder", "user_instructions",
+            "recommended_plugins", "app-context", "git_status",
+            "t3_code_instructions", "runtime_info", "ide_opened_file",
+            "ide_selection", "command-message", "local-command-stdout",
+            "local-command-caveat",
+        ] {
             text = removingTagged(text, name: tag)
         }
         // Codex desktop: "…## My request for Codex: <the request>".

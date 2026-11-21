@@ -100,9 +100,29 @@ package struct TrayState: Equatable {
         let conflicts = SessionConflicts.detect(in: book, nowMs: context.nowMs)
         var rows = sessionRows(book: book, processes: processes, context: context)
         if !conflicts.isEmpty {
+            let rowByKey = Dictionary(rows.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
             for index in rows.indices {
-                if let list = conflicts[rows[index].key] {
-                    rows[index].conflictingFiles = list.map(\.displayName)
+                let rowKey = rows[index].key
+                guard let list = conflicts[rowKey] else { continue }
+                rows[index].conflictingFiles = list.map(\.displayName)
+                var filesByPeer: [SessionKey: [String]] = [:]
+                for item in list {
+                    for peerKey in item.otherKeys {
+                        if !(filesByPeer[peerKey]?.contains(item.displayName) ?? false) {
+                            filesByPeer[peerKey, default: []].append(item.displayName)
+                        }
+                    }
+                }
+                rows[index].conflictPeers = filesByPeer.keys.sorted().compactMap { peerKey in
+                    guard let peerRow = rowByKey[peerKey] else { return nil }
+                    let label = peerRow.usefulTask ?? (peerRow.project.isEmpty ? peerRow.agent.displayName : peerRow.project)
+                    return ConflictPeer(
+                        key: peerKey,
+                        agent: peerRow.agent,
+                        label: TrayRowModel.truncate(label, 36),
+                        files: filesByPeer[peerKey] ?? [],
+                        canFocus: peerRow.canFocusTerminal
+                    )
                 }
             }
         }

@@ -117,6 +117,8 @@ package struct TrayRowModel: Equatable {
     package var planProgress: String?
     /// Compact badge when another active session is editing the same file (`Auth.swift`).
     package var conflictBadge: String? = nil
+    /// Hover tooltip describing concurrent file edits across active sessions.
+    package var conflictTooltip: String? = nil
     /// One-shot "tell me when this turn is done" is armed on this row.
     package var watchingTurn = false
     package var secondLine: SecondLine?
@@ -219,6 +221,7 @@ package struct TrayRowModel: Equatable {
             turnLabel: turnLabel,
             planProgress: plan,
             conflictBadge: SessionConflicts.badgeText(row.conflictingFiles),
+            conflictTooltip: SessionConflicts.detailWarning(row.conflictingFiles, lang: lang),
             watchingTurn: watching,
             secondLine: second,
             why: why,
@@ -262,11 +265,21 @@ package struct TrayRowModel: Equatable {
                 if others > 0 { text += " +\(others)" }
                 return SecondLine(kind: .now, text: text)
             }
-            guard let step = facts.lastStep else { return nil }
-            return SecondLine(kind: .step, text: truncate(stepLine(step, nowMs: nowMs, lang: lang), 140))
+            if let step = facts.lastStep {
+                return SecondLine(kind: .step, text: truncate(stepLine(step, nowMs: nowMs, lang: lang), 140))
+            }
+            if let badge = SessionConflicts.badgeText(row.conflictingFiles) {
+                return SecondLine(kind: .warning, text: truncate(String(format: L10n.t(.conflictRowLine, lang), badge), 140))
+            }
+            return nil
         case .yourTurn:
-            guard facts.failedTurn, !facts.lastError.isEmpty else { return nil }
-            return SecondLine(kind: .failure, text: truncate(String(format: L10n.t(.failedTurnLine, lang), facts.lastError), 140))
+            if facts.failedTurn, !facts.lastError.isEmpty {
+                return SecondLine(kind: .failure, text: truncate(String(format: L10n.t(.failedTurnLine, lang), facts.lastError), 140))
+            }
+            if let badge = SessionConflicts.badgeText(row.conflictingFiles) {
+                return SecondLine(kind: .warning, text: truncate(String(format: L10n.t(.conflictRowLine, lang), badge), 140))
+            }
+            return nil
         case .recent, .processOnly:
             return nil
         }
@@ -578,6 +591,8 @@ package struct DetailModel: Equatable {
         case copyAsk
         /// "Tell me when this turn is done" (`TurnWatch`), on or off.
         case watchTurn
+        /// Jump to (or open detail for) another active session editing the same file.
+        case focusPeer(SessionKey)
     }
 
     package var lang: ResolvedLanguage
@@ -594,6 +609,8 @@ package struct DetailModel: Equatable {
     package var why: String?
     /// Warning when another active session is modifying the same file(s).
     package var conflictWarning: String? = nil
+    /// Peer active sessions concurrently editing overlapping files.
+    package var conflictPeers: [ConflictPeer] = []
     /// Now: what the agent said started and has not finished, newest
     /// first, and its live subagents — only while the turn is live.
     package var now: [String] = []
@@ -693,6 +710,7 @@ package struct DetailModel: Equatable {
             ask: Words.ask(row),
             why: second?.text == why ? nil : why,
             conflictWarning: SessionConflicts.detailWarning(row.conflictingFiles, lang: lang),
+            conflictPeers: row.conflictPeers,
             now: live ? Words.nowItems(said, nowMs: nowMs, lang: lang) : [],
             turnHeading: t(live ? .stepThisTurn : .detailLastTurn),
             turn: turn,

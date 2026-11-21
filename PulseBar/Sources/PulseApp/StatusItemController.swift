@@ -304,13 +304,26 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
                 return event
             }
             let command = event.modifierFlags.contains(.command)
-            guard event.window === self.hosting.view.window,
-                  let key = TrayKeys.key(
-                      keyCode: event.keyCode,
-                      characters: event.charactersIgnoringModifiers ?? "",
-                      command: command
-                  )
-            else { return event }
+            let shift = event.modifierFlags.contains(.shift)
+            guard event.window === self.hosting.view.window else { return event }
+            let chars = event.charactersIgnoringModifiers ?? ""
+            // In detail view, ⌘C copies a blocked row's ask when no text is selected.
+            if command, chars.lowercased() == "c",
+               self.ui.keys.detail != nil,
+               let detailRow = self.ui.detailRow,
+               detailRow.isBlocked {
+                let hasSelection = (event.window?.firstResponder as? NSTextView)?.selectedRange().length ?? 0 > 0
+                if !hasSelection {
+                    self.store.copyAsk(detailRow)
+                    return nil
+                }
+            }
+            guard let key = TrayKeys.key(
+                keyCode: event.keyCode,
+                characters: chars,
+                command: command,
+                shift: shift
+            ) else { return event }
             // While the inline filter box is active, let text editing keys
             // (Space, Left/Right, `/`, and ⌘⌫ to delete the line) reach the TextField.
             if self.ui.filterActive, self.ui.keys.detail == nil {

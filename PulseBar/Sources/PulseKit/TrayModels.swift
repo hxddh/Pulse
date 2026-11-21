@@ -258,8 +258,10 @@ package enum TrayOrder {
 package enum TrayKeys {
     package enum Key: Equatable {
         case up, down, left, right, space, enter, escape
-        /// Tab: cycle through blocked ("needs you") rows.
+        /// Tab: cycle forward through blocked ("needs you") rows.
         case tab
+        /// ⇧Tab: cycle backward through blocked ("needs you") rows.
+        case shiftTab
         /// ⌘1–⌘9: jump straight to the Nth row (1-based).
         case jump(Int)
         /// ⌘B: toggle "tell me when this turn is done" on the selected row.
@@ -405,6 +407,9 @@ package enum TrayKeys {
         case .tab:
             next.selected = nextBlocked(after: selected?.key, in: rows)
             return done()
+        case .shiftTab:
+            next.selected = prevBlocked(before: selected?.key, in: rows)
+            return done()
         case .jump(let number):
             let index = number - 1
             guard rows.indices.contains(index) else { return done() }
@@ -468,10 +473,19 @@ package enum TrayKeys {
         return blocked[(index + 1) % blocked.count].key
     }
 
+    private static func prevBlocked(before key: SessionKey?, in rows: [Row]) -> SessionKey? {
+        let blocked = rows.filter(\.blocked)
+        guard !blocked.isEmpty else { return key ?? rows.first?.key }
+        guard let key, let index = blocked.firstIndex(where: { $0.key == key }) else {
+            return blocked.last?.key
+        }
+        return blocked[(index - 1 + blocked.count) % blocked.count].key
+    }
+
     // MARK: - Events
 
     /// An event as a `Key`, or nil when it is not the tray's.
-    package static func key(keyCode: UInt16, characters: String, command: Bool) -> Key? {
+    package static func key(keyCode: UInt16, characters: String, command: Bool, shift: Bool = false) -> Key? {
         if command {
             if keyCode == 51 { return .dismiss }
             switch characters.lowercased() {
@@ -481,7 +495,7 @@ package enum TrayKeys {
             case "w": return .close
             case "d": return .dismiss
             case "b": return .watchTurn
-            case "f": return .search
+            case "f", "k": return .search
             case "1": return .jump(1)
             case "2": return .jump(2)
             case "3": return .jump(3)
@@ -497,7 +511,7 @@ package enum TrayKeys {
         switch keyCode {
         case 53: return .escape
         case 36, 76: return .enter
-        case 48: return .tab
+        case 48: return shift ? .shiftTab : .tab
         case 44: return characters == "/" ? .search : nil
         case 123: return .left
         case 124: return .right

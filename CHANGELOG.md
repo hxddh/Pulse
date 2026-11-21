@@ -2,6 +2,30 @@
 
 All notable changes to Pulse are documented here.
 
+## 40.0.0 — Apex（巅）
+
+把 Pulse 的每一层体验——悬浮灯塔交互、勿扰补发闭环、冲突雷达直跳、凭据脱敏、CLI 启动器与键盘流——全部打磨到旗舰水准：**事件日志仍是 v10**，快照格式与 v37–v39 完全兼容。
+
+### 核心打磨与关键修复
+
+- **修复已安装 `pulse-hook --status` 输出被吞**：`HooksInstaller.ensureLauncher()` 在检测到 `--status` 时直通 `exec "$RUNNER" "$@"` 保留标准输出，其余 hook 路径保持静默无阻塞；`scripts/e2e.sh` 同步新增 `--status --json` 与 `--status --tmux` 端到端断言。
+- **勿扰模式结束自动补发未解等待（Quiet-Mode Catch-Up）**：勿扰期间产生的新等待不再被静默丢弃，而是安全登记进内存 `WaitLedger` 队列；若在勿扰期间已被回答或忽略则自动清除；一旦勿扰到期或手动点击「恢复通知」，仍处于阻塞状态的等待立刻自动补发横幅。
+- **悬浮等待灯塔 2.0（Floating Beacon HUD）**：
+  - 原生 AppKit 屏幕坐标拖拽分离（位移 > 4 pt 才视为拖动，松手不误触跳转；≤ 4 pt 正常单击直跳）。
+  - 记住左/右边缘锚定方向，内容宽度随文本或悬停按钮变化时从靠边一侧向内平滑伸缩，不再越界抖动；监听显示器热插拔自动重新贴边夹紧。
+  - 淡入淡出 0.16s 动画自动尊重系统「减少动态效果」；悬停胶囊右侧展开快捷「打开托盘」「忽略」图标；多等待队列徽章升级为清晰序号（如 `1/3`）。
+  - 「设置 → 通用」新增 **「预览 5 秒」** 按钮：即使当前没有阻塞 Agent 也能呼出灯塔查看效果并直接拖拽定位。
+- **冲突雷达交互升级 + 托盘零挤压**：托盘第一行冲突标记精简为 10 pt 琥珀色 `⚠` 图标（悬停显示完整重叠文件提示），不再挤压会话标题宽度；行第二行在无其他状态副行时自动展示「并发修改 Auth.swift」；详情页升级为交互式琥珀警示卡片，逐个列出并发修改同一文件的对端会话与图标，并支持一键「前往」直跳对端终端（或打开其详情）。
+- **脱敏器、标题清洗与终端着陆增强**：
+  - `ContentSanitizer` 扩展脱敏数据库/消息队列连接串密码（`postgres`/`mysql`/`redis`/`mongodb`/`amqp`）、Google/Gemini（`AIza...`）、npm（`npm_...`）、PyPI（`pypi-...`）、Supabase（`sbp_...`）、Stripe（`sk_live_`/`rk_live_`）、AWS 临时凭证（`ASIA...`）与紧凑 JWT。
+  - `TitleHeuristics` 支持提取 `<user_request>` 并自动剥离 `<t3_code_instructions>`、`<runtime_info>`、`<ide_opened_file>`、`<ide_selection>` 等现代 IDE/编排包装标签。
+  - Zellij 嵌套在 iTerm2 内时，聚焦完 Zellij 窗格后同步精准切回外层 iTerm2 标签页。
+- **键盘流与视觉回归补齐**：托盘新增 `⇧Tab` 反向循环等待行、`⌘K` 同效 `⌘F` 展开搜索、详情页无选中文本时 `⌘C` 一键复制当前阻塞命令/问题；`SurfaceFixtures` 与 macOS QA 截图新增 `beacon-waiting`、`row-conflict`、`detail-conflict` 三个视觉回归场景。
+
+### 已知限制
+
+- **仍没有在真机上跑过 `scripts/smoke.sh`**，且仓库未配置 Apple Developer ID 凭据，因此分发包仍是 ad-hoc 签名、未公证的 `preview` 构建（全部源码门禁、Node 适配器测试、Swift 单元测试、Universal Binary 打包、端到端 hook 链路与 QA 截图均已在 GitHub Actions `macos-26` 上通过）。
+
 ## 39.0.0 — Beacon（烽）
 
 面向全屏 IDE、外接大屏与多 Agent 并行协作的一次体验质变：**事件日志仍是 v10**，快照格式与 v37/v38 完全兼容。

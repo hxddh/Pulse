@@ -22,6 +22,8 @@ package struct BeaconModel: Equatable, Sendable {
 
     package var lang: ResolvedLanguage
     package var blockedCount: Int
+    /// 1-based position in the waiting queue when multiple waits exist.
+    package var queueIndex: Int = 1
     package var primaryKey: SessionKey
     package var agent: AgentID
     package var project: String
@@ -31,7 +33,28 @@ package struct BeaconModel: Equatable, Sendable {
     package var hasConflict: Bool
     /// True while notification banners are snoozed (quiet mode).
     package var quiet: Bool
+    /// True when shown temporarily via Settings' "Preview" button.
+    package var isPreview: Bool = false
     package var accessibilityLabel: String
+
+    /// Sample beacon shown for 5 seconds when the user clicks "Preview" in Settings
+    /// (and used by `SurfaceFixtures` for QA visual regression).
+    package static func preview(lang: ResolvedLanguage, blockedCount: Int = 2, hasConflict: Bool = true) -> BeaconModel {
+        BeaconModel(
+            lang: lang,
+            blockedCount: blockedCount,
+            queueIndex: 1,
+            primaryKey: SessionKey(.claude, "preview-beacon"),
+            agent: .claude,
+            project: "Pulse",
+            headline: "Bash: swift test --parallel",
+            waitAge: L10n.duration(180, lang),
+            hasConflict: hasConflict,
+            quiet: false,
+            isPreview: true,
+            accessibilityLabel: "\(blockedCount) \(L10n.t(.waitingN, lang)), Claude, Pulse"
+        )
+    }
 
     package static func make(
         rows: [AgentRow],

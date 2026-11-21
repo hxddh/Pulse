@@ -774,4 +774,37 @@ struct TurnWatchTests {
         store.notifier.withdrawTurnDone(done2.key)
         #expect(store.notifier.doneQueue.isEmpty)
     }
+
+    @MainActor
+    @Test func quietModeQueuesOpenWaitsAndCatchesUpWhenResumed() {
+        let store = StatusStore()
+        store.notifyAuthorized = true
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        store.settings.quietUntilMs = now + 600_000
+
+        let w1 = row("claude|qw1", .needsYou(Block(kind: .permission, ask: "Bash: swift test", sinceMs: now - 10_000)))
+        let w2 = row("claude|qw2", .needsYou(Block(kind: .question, ask: "Keep old migration?", sinceMs: now - 5_000)))
+        var state1 = TrayState()
+        state1.rows = [w1, w2]
+        state1.newlyBlocked = [w1, w2]
+
+        store.rows = state1.rows
+        store.notifier.scanLanded(state1, nowMs: now, baseline: false)
+        #expect(store.notifier.inFlight.isEmpty, "quiet mode must not post banners immediately")
+        #expect(store.notifier.ledger.queuedKeys == [w1.key, w2.key], "new waits during quiet mode are queued for catch-up")
+
+        // w2 resolves while still in quiet mode -> must drop out of the catch-up queue.
+        let r2 = row("claude|qw2", .running(stalled: false))
+        var state2 = TrayState()
+        state2.rows = [w1, r2]
+        state2.newlyBlocked = []
+        store.rows = state2.rows
+        store.notifier.scanLanded(state2, nowMs: now + 5_000, baseline: false)
+        #expect(store.notifier.ledger.queuedKeys == [w1.key], "resolved wait is dropped before quiet ends")
+
+        // Resume quiet mode -> still-open w1 catches up automatically; resolved w2 never fires.
+        store.resumeQuiet()
+        #expect(store.notifier.inFlight.contains(w1.key), "still-open wait catches up when quiet mode ends")
+        #expect(!store.notifier.inFlight.contains(w2.key), "resolved wait never ghost-notifies after quiet ends")
+    }
 }

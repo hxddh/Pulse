@@ -13,7 +13,7 @@ enum PulseVersion {
     /// is derived from it.
     static let bundleID = "io.github.hxddh.pulse"
 
-    static let semver = "39.0.0"
+    static let semver = "40.0.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.

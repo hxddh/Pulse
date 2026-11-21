@@ -21,6 +21,8 @@ enum SurfaceFixtures {
         case detail(DetailModel)
         /// The Settings page (its Hooks section is the diagnostics).
         case settings(SettingsModel)
+        /// The Floating Waiting Beacon HUD pill.
+        case beacon(BeaconModel)
     }
 
     struct Fixture {
@@ -38,6 +40,7 @@ enum SurfaceFixtures {
         "header", "notice-setup", "notice-setup-done", "notice-setup-failed", "row-app-only",
         "detail-blocked", "detail-your-turn", "detail-timeline", "detail-stalled", "detail-app-only",
         "detail-subagent", "detail-failed-turn", "detail-turn", "detail-timeline-open",
+        "row-conflict", "detail-conflict", "beacon-waiting",
         "settings", "settings-caveats", "settings-login-approval",
     ]
 
@@ -103,6 +106,11 @@ enum SurfaceFixtures {
             // The timeline with each run's steps disclosed (→, or a click
             // on a run): each step's target and how long it ran.
             Fixture(name: "detail-timeline-open", width: 448, value: .detail(detail(rowTimeline(), lang: lang, disclosed: true))),
+            // Concurrent file edit conflict on a tray row and interactive peer jump card in detail.
+            Fixture(name: "row-conflict", width: 448, value: .row(rowModel(rowConflict(), lang: lang))),
+            Fixture(name: "detail-conflict", width: 448, value: .detail(detail(rowConflict(), lang: lang))),
+            // Floating Waiting Beacon HUD with queue badge and conflict indicator.
+            Fixture(name: "beacon-waiting", width: 380, value: .beacon(BeaconModel.preview(lang: lang))),
             // Install all / Remove all, and one connection line per agent in
             // every state: installed, needs update (events, launcher),
             // failed, not installed — and the agent not on this Mac.
@@ -438,6 +446,22 @@ enum SurfaceFixtures {
         row.liveProcess = true
         row.pid = 4242
         return Sample(row: row)
+    }
+
+    static func rowConflict() -> Sample {
+        var sample = base(.claude, id: "fx-conflict", task: "Harden OAuth token refresh")
+        sample.row.conflictingFiles = ["Auth.swift", "SessionStore.swift"]
+        sample.row.conflictPeers = [
+            ConflictPeer(
+                key: SessionKey(.codex, "fx-conflict-peer"),
+                agent: .codex,
+                label: "Refactor login retry queue",
+                files: ["Auth.swift", "SessionStore.swift"],
+                canFocus: true
+            ),
+        ]
+        sample.facts.lastEvent = event(.claude, .activity)
+        return sample
     }
 
     // MARK: - The tray's header and notice

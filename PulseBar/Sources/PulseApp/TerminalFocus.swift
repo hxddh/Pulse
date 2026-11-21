@@ -17,8 +17,8 @@ enum TerminalFocus {
         switch step {
         case .tmuxPane(let pane, let socket, let hostBundleIDs):
             return focusTmuxPane(pane, socket: socket, hostBundleIDs: hostBundleIDs)
-        case .zellijPane(let session, let pane, let hostBundleIDs):
-            return focusZellijPane(session: session, pane: pane, hostBundleIDs: hostBundleIDs)
+        case .zellijPane(let session, let pane, let hostBundleIDs, let itermUniqueID):
+            return focusZellijPane(session: session, pane: pane, hostBundleIDs: hostBundleIDs, itermUniqueID: itermUniqueID)
         case .weztermPane(let pane, let socket):
             return runInApp(LandingPlan.weztermBundleID) { bundle in
                 LandingPlan.weztermCommand(bundlePath: bundle, pane: pane, socket: socket).map { [$0] } ?? []
@@ -108,8 +108,8 @@ enum TerminalFocus {
         ]
     }
 
-    /// Focus the pane in its session, then bring its terminal forward.
-    private static func focusZellijPane(session: String, pane: String, hostBundleIDs: [String]) -> Bool {
+    /// Focus the pane in its session, then bring its outer terminal tab or app forward.
+    private static func focusZellijPane(session: String, pane: String, hostBundleIDs: [String], itermUniqueID: String) -> Bool {
         guard let zellij = zellijPaths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }),
               let result = ProcessIO.run(
                   executable: zellij,
@@ -119,6 +119,11 @@ enum TerminalFocus {
               ),
               !result.timedOut, result.status == 0
         else { return false }
+        if !itermUniqueID.isEmpty,
+           isRunning(LandingPlan.iTermBundleID),
+           osascriptBool(iTermSessionScript(uniqueID: itermUniqueID), timeout: focusScriptTimeout) {
+            return true
+        }
         return activateRunning(hostBundleIDs)
     }
 

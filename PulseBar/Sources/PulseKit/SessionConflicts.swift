@@ -22,6 +22,25 @@ package struct FileConflict: Equatable, Hashable, Sendable {
     }
 }
 
+/// Another active session concurrently editing one or more of the same files.
+package struct ConflictPeer: Equatable, Hashable, Sendable, Identifiable {
+    package var key: SessionKey
+    package var agent: AgentID
+    package var label: String
+    package var files: [String]
+    package var canFocus: Bool
+
+    package var id: SessionKey { key }
+
+    package init(key: SessionKey, agent: AgentID, label: String, files: [String], canFocus: Bool) {
+        self.key = key
+        self.agent = agent
+        self.label = label
+        self.files = files
+        self.canFocus = canFocus
+    }
+}
+
 package enum SessionConflicts {
     /// Normalize a turn-digest file entry against its session's working
     /// directory. Returns `""` when the path cannot be anchored to an absolute

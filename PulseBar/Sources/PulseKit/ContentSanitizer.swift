@@ -24,10 +24,15 @@ package enum ContentSanitizer {
     private static let rules: [Rule] = [
         // Common provider and service tokens.
         Rule(#"\bsk-(?:proj-)?[A-Za-z0-9_-]{12,}\b"#),
+        Rule(#"\b(?:sk|rk)_live_[A-Za-z0-9]{16,}\b"#),
         Rule(#"\bgithub_pat_[A-Za-z0-9_]{12,}\b"#),
         Rule(#"\bgh[pousr]_[A-Za-z0-9_]{12,}\b"#),
         Rule(#"\bxox[a-z]-[A-Za-z0-9-]{12,}\b"#),
-        Rule(#"\bAKIA[0-9A-Z]{16}\b"#),
+        Rule(#"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"#),
+        Rule(#"\bAIza[0-9A-Za-z_-]{30,}\b"#),
+        Rule(#"\b(?:npm_[A-Za-z0-9]{20,}|pypi-[A-Za-z0-9_-]{20,}|sbp_[A-Za-z0-9]{20,})\b"#),
+        // Compact JWTs (header.payload.signature).
+        Rule(#"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"#),
         // Authorization headers and credential assignments retain the label so
         // the surrounding sentence remains understandable.
         Rule(#"\b(Bearer\s+)[A-Za-z0-9._~+/\-=]{8,}"#, replacement: "$1••••"),
@@ -35,9 +40,8 @@ package enum ContentSanitizer {
             #"\b((?:api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|passwd|token)\s*[:=]\s*['"]?)[^\s'";,]{8,}"#,
             replacement: "$1••••"
         ),
-        // URL user info and SSH identity paths can disclose credentials even
-        // when they do not look like API tokens.
-        Rule(#"(https?://[^/\s:@]+:)[^@\s/]+@"#, replacement: "$1••••@"),
+        // URL user info (HTTP, database, and broker URIs) and SSH identity paths.
+        Rule(#"((?:https?|postgres(?:ql)?|mysql|mariadb|redis|rediss|mongodb(?:\+srv)?|amqps?)://[^/\s:@]*:)[^@\s/]+@"#, replacement: "$1••••@"),
         Rule(#"(\b(?:ssh\s+)?-i\s+)(?:~|/)[^\s'"]+"#, replacement: "$1••••"),
         // Collapse an entire PEM private-key block, not just its header.
         Rule(

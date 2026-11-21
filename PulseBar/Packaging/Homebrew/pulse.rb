@@ -1,5 +1,5 @@
 cask "pulse" do
-  version "39.0.0"
+  version "40.0.0"
   sha256 :no_check # Each GitHub Release also ships a rendered pulse.rb with the exact DMG SHA-256
 
   url "https://github.com/hxddh/Pulse/releases/download/v#{version}/pulse-#{version}-macos-PulseBar.dmg"

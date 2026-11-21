@@ -118,6 +118,7 @@ extension StatusStore {
         case .setGroupByProject(let on): set(\.groupByProject, on)
         case .setMenuBarStyle(let style): setMenuBarStyle(style)
         case .setFloatingBeacon(let on): set(\.floatingBeacon, on)
+        case .previewBeacon: FloatingBeaconController.shared?.showPreview()
         case .resumeQuiet: resumeQuiet()
         case .openAutomationSettings:
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
@@ -252,9 +253,14 @@ struct SettingsFace: View {
                 }
             }
             Toggle(t(.settingsFloatingBeacon), isOn: binding(model.floatingBeacon) { .setFloatingBeacon($0) })
-            Text(t(.settingsFloatingBeaconHint))
-                .font(PulseTheme.Font.caption)
-                .foregroundStyle(.secondary)
+            LabeledContent {
+                Button(t(.settingsBeaconPreview)) { send(.previewBeacon) }
+                    .controlSize(.small)
+            } label: {
+                Text(t(.settingsFloatingBeaconHint))
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
+            }
         case .notifications:
             switch model.notifications {
             case .notAsked:

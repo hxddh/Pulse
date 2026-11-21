@@ -81,8 +81,6 @@ final class WaitNotifier {
             }
         }
         guard !baseline, let model else { return }
-        // Quiet mode snoozes all banners while keeping the menu-bar lamp red.
-        if model.settings.isQuiet(at: nowMs) { return }
         // Two-tier hold for waits raised while their terminal app was in front:
         // 1. After 30s (`deferAfterMs`), fire as soon as the app leaves the front.
         // 2. After 90s (`frontEscalationMs`), fire unconditionally — an unanswered
@@ -98,6 +96,13 @@ final class WaitNotifier {
         // A muted agent's wait is in the lamp and the tray, never a banner.
         let edges = (state.newlyBlocked.filter { $0.wait?.inFront != true } + due)
             .filter { !model.settings.isMuted($0.agent) }
+        // Quiet mode snoozes banners while keeping the menu-bar lamp red —
+        // queue any new edge so waits still open when quiet mode ends catch up
+        // automatically instead of being silently lost.
+        if model.settings.isQuiet(at: nowMs) {
+            for waiting in edges { ledger.markQueued(waiting.key) }
+            return
+        }
         // Owed banners are rebuilt from this projection's rows: a wait that
         // resolved has no open record, so it can neither linger in a queue
         // nor bring back a banner for a prompt that is gone.

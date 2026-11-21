@@ -333,6 +333,10 @@ package enum L10n {
         case beaconHide
         case settingsHookOutdated
         case settingsSoundDistinct
+        case conflictRowLine
+        case conflictJumpPeer
+        case settingsBeaconPreview
+        case beaconOpenTray
     }
 }
 
@@ -606,6 +610,10 @@ extension L10n.Key {
         case .beaconHide: return ("Hide floating beacon", "关闭悬浮灯塔")
         case .settingsHookOutdated: return ("Needs update — newer module available", "需要更新——有新版扩展")
         case .settingsSoundDistinct: return ("Distinct (different tone for waits vs done)", "区分音（等待与完成不同音效）")
+        case .conflictRowLine: return ("Also edited by another session: %@", "另一会话也在修改：%@")
+        case .conflictJumpPeer: return ("Go", "前往")
+        case .settingsBeaconPreview: return ("Preview for 5s", "预览 5 秒")
+        case .beaconOpenTray: return ("Open tray", "展开托盘")
         }
     }
 }

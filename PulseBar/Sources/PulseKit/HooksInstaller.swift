@@ -597,6 +597,9 @@ package enum HooksInstaller {
         if [ -z "$RUNNER" ] || [ ! -x "$RUNNER" ]; then
           exit 0
         fi
+        case "$1" in
+          --status) exec "$RUNNER" "$@" ;;
+        esac
         exec "$RUNNER" --hook "$@" >/dev/null 2>&1
         """
         let data = Data(script.utf8)
