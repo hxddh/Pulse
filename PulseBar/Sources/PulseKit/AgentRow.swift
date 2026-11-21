@@ -251,6 +251,9 @@ package struct AgentRow: Identifiable, Hashable {
     package var cwd: String = ""
     /// Git branch of the session's working tree ("" when unknown or detached).
     package var branch: String = ""
+    /// Short names of files this active session is editing concurrently with
+    /// another active session (`SessionConflicts`); empty when none.
+    package var conflictingFiles: [String] = []
 
     // MARK: The process and how to reach it
 

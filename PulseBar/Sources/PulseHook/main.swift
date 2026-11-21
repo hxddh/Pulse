@@ -15,6 +15,18 @@ import PulseKit
 enum PulseHookEntry {
     static func main() -> Int32 {
         var arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--status") {
+            let format: StatusCLI.Format = arguments.contains("--json")
+                ? .json
+                : arguments.contains("--tmux") ? .tmux : .plain
+            let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+            let state = StatusCLI.loadState(nowMs: nowMs)
+            let output = StatusCLI.render(state, format: format, nowMs: nowMs)
+            if !output.isEmpty {
+                FileHandle.standardOutput.write(Data((output + "\n").utf8))
+            }
+            return 0
+        }
         if !arguments.contains("--hook") {
             let program = arguments.first ?? "pulse-hook"
             arguments = [program, "--hook"] + arguments.dropFirst()

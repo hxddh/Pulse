@@ -466,11 +466,13 @@ final class StatusStore {
 
     /// The tray came on screen — tick faster while the person reads it.
     func trayDidAppear() {
+        FloatingBeaconController.shared?.setTrayOpen(true)
         engine.setTrayOpen(true)
         if !previewFixtureActive { engine.refresh(reason: "trayOpen") }
     }
 
     func trayDidDisappear() {
+        FloatingBeaconController.shared?.setTrayOpen(false)
         engine.setTrayOpen(false)
     }
 

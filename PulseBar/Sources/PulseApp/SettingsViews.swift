@@ -79,6 +79,7 @@ extension StatusStore {
         )
         model.groupByProject = settings.groupByProject
         model.menuBarStyle = settings.menuBarStyle
+        model.floatingBeacon = settings.floatingBeacon
         model.automation = SettingsModel.automationLines(automation, lang: lang)
         model.muteCandidates = SettingsModel.muteCandidates(present: presentAgents)
         model.mutedAgents = Set(settings.mutedAgents)
@@ -116,6 +117,7 @@ extension StatusStore {
         case .setShortcut(let choice): setShortcut(choice)
         case .setGroupByProject(let on): set(\.groupByProject, on)
         case .setMenuBarStyle(let style): setMenuBarStyle(style)
+        case .setFloatingBeacon(let on): set(\.floatingBeacon, on)
         case .resumeQuiet: resumeQuiet()
         case .openAutomationSettings:
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
@@ -249,6 +251,10 @@ struct SettingsFace: View {
                     Text(SettingsModel.menuBarStyleLabel(style, lang: model.lang)).tag(style)
                 }
             }
+            Toggle(t(.settingsFloatingBeacon), isOn: binding(model.floatingBeacon) { .setFloatingBeacon($0) })
+            Text(t(.settingsFloatingBeaconHint))
+                .font(PulseTheme.Font.caption)
+                .foregroundStyle(.secondary)
         case .notifications:
             switch model.notifications {
             case .notAsked:
@@ -285,6 +291,7 @@ struct SettingsFace: View {
                 set: { [send] sound in send(.setNotificationSound(sound)) }
             )) {
                 Text(t(.settingsSoundDefault)).tag(NotificationSound.default)
+                Text(t(.settingsSoundDistinct)).tag(NotificationSound.distinct)
                 Text(t(.settingsSoundSilent)).tag(NotificationSound.silent)
             }
             if !model.muteCandidates.isEmpty {

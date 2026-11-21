@@ -37,6 +37,8 @@ VIEWS = [
     ("SessionDetailView.swift", "FactGrid"),
     ("SessionDetailView.swift", "TimelineGrid"),
     ("PulseTheme.swift", "LampShapeView"),
+    # Floating Waiting Beacon HUD.
+    ("FloatingBeaconController.swift", "FloatingBeaconFace"),
     # Settings (its Hooks section is the diagnostics).
     ("SettingsViews.swift", "SettingsFace"),
 ]
@@ -47,6 +49,7 @@ PURE_FILES = [
     "AgentRow.swift", "TrayRowModel.swift", "TrayModels.swift", "SettingsModel.swift",
     "TrayState.swift", "WaitLedger.swift", "WaitingDelivery.swift", "SessionBook.swift",
     "L10n.swift", "Connection.swift", "TurnDigest.swift",
+    "BeaconModel.swift", "SessionConflicts.swift", "StatusCLI.swift",
 ]
 QA_PURE_FILES = ["SurfaceFixtures.swift"]
 STORE = re.compile(r"\b(StatusStore|store|AppServices)\b")

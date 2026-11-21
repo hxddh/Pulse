@@ -23,13 +23,16 @@ package struct Connection: Equatable, Sendable {
         /// The hook runs a launcher that is not this Pulse's (another path)
         /// or cannot run (the launcher, or the app it starts, is gone).
         case staleLauncher
+        /// An owned hook module (`pi.js`, `opencode.js`, `copilot/hooks/pulse.json`)
+        /// differs from the newer version shipped by this Pulse.
+        case outdatedModule
         /// The last install or removal could not be done.
         case failed(HooksInstaller.Failure)
 
         /// Pulse's hook is in the agent's config, whole or not.
         package var carriesHook: Bool {
             switch self {
-            case .complete, .partial, .staleLauncher: return true
+            case .complete, .partial, .staleLauncher, .outdatedModule: return true
             case .notInstalled, .failed: return false
             }
         }
@@ -38,7 +41,7 @@ package struct Connection: Equatable, Sendable {
         /// this Pulse's.
         package var needsUpdate: Bool {
             switch self {
-            case .partial, .staleLauncher: return true
+            case .partial, .staleLauncher, .outdatedModule: return true
             case .complete, .notInstalled, .failed: return false
             }
         }
@@ -48,14 +51,16 @@ package struct Connection: Equatable, Sendable {
         /// launcher paths its commands name; `expected`: this Pulse's
         /// launcher; `launcherRuns` / `runnerRuns`: the launcher is
         /// executable, and the app `hook-runner.path` names (when it names
-        /// one) is. Pure.
+        /// one) is; `moduleMatches`: for owned module files, whether the
+        /// bytes on disk match the current version shipped by Pulse. Pure.
         package static func classify(
             contract: Set<String>,
             installed: Set<String>?,
             launchers: Set<String>,
             expected: String,
             launcherRuns: Bool,
-            runnerRuns: Bool
+            runnerRuns: Bool,
+            moduleMatches: Bool = true
         ) -> Install {
             guard let installed, !installed.isEmpty else { return .notInstalled }
             if !launcherRuns || !runnerRuns || launchers.contains(where: { $0 != expected }) {
@@ -63,6 +68,9 @@ package struct Connection: Equatable, Sendable {
             }
             if installed != contract {
                 return .partial(found: installed.intersection(contract).count, of: contract.count)
+            }
+            if !moduleMatches {
+                return .outdatedModule
             }
             return .complete
         }
@@ -252,6 +260,7 @@ package struct Connection: Equatable, Sendable {
         case .complete: return t(.settingsHookInstalled)
         case .partial(let found, let of): return String(format: t(.settingsHookPartial), found, of)
         case .staleLauncher: return t(.settingsHookStale)
+        case .outdatedModule: return t(.settingsHookOutdated)
         case .failed(let failure): return t(.hooksFailed) + " · " + failure.text(lang)
         case .notInstalled: return t(.hooksMissing)
         }
@@ -338,6 +347,7 @@ package struct Connection: Equatable, Sendable {
         case .complete: parts.append("installed")
         case .partial(let found, let of): parts.append("needs update (\(found) of \(of) events)")
         case .staleLauncher: parts.append("needs update (stale launcher)")
+        case .outdatedModule: parts.append("needs update (outdated module)")
         case .failed(let failure): parts.append("install failed (\(failure.rawValue))")
         case .notInstalled: parts.append(present ? "not installed" : "not on this Mac")
         }

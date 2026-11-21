@@ -191,7 +191,15 @@ enum PulseNotify {
         content.title = ContentSanitizer.redact(banner.title)
         if !banner.subtitle.isEmpty { content.subtitle = ContentSanitizer.redact(banner.subtitle) }
         content.body = ContentSanitizer.redact(banner.body)
-        content.sound = sound == .default ? .default : nil
+        switch sound {
+        case .default:
+            content.sound = .default
+        case .distinct:
+            let soundName = kind == .waiting ? "Glass" : "Tink"
+            content.sound = UNNotificationSound(named: UNNotificationSoundName(soundName))
+        case .silent:
+            content.sound = nil
+        }
         // One thread per session: a second ask from the same session stacks
         // with its first, never with another agent's — a burst of
         // approvals still shows who needs an answer.

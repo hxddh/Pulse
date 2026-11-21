@@ -41,8 +41,9 @@ struct PulseSettingsTests {
         original.shortcut = .optionCommandP
         original.groupByProject = true
         original.menuBarStyle = .counts
+        original.floatingBeacon = false
         original.notifyLongTurnSeconds = 300
-        original.notificationSound = .silent
+        original.notificationSound = .distinct
         original.quietUntilMs = 1_700_000_000_000
         original = original.muting(.codex, true).muting(.claude, true)
         original = original.notifyingDone(.cursor, true).notifyingDone(.codex, true)
@@ -68,6 +69,7 @@ struct PulseSettingsTests {
         #expect(d.notificationSound == .default)
         #expect(d.quietUntilMs == 0)
         #expect(d.menuBarStyle == .minimal)
+        #expect(d.floatingBeacon)
         let reparsed = try roundTrip(d)
         #expect(reparsed == d)
     }
@@ -80,7 +82,7 @@ struct PulseSettingsTests {
         #expect(keys == [
             "launchAtLogin", "hooksNudgeOff", "globalShortcut", "directJumpShortcut",
             "mutedAgents", "notifyDoneAgents", "notifyLongTurnSeconds", "notificationSound",
-            "quietUntilMs", "shortcut", "groupByProject", "menuBarStyle",
+            "quietUntilMs", "shortcut", "groupByProject", "menuBarStyle", "floatingBeacon",
         ])
     }
 

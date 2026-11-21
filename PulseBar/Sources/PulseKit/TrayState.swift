@@ -88,6 +88,8 @@ package struct TrayState: Equatable {
     /// Rows that became blocked since the previous projection — reported,
     /// not acted on: `WaitNotifier` owns notification policy.
     package var newlyBlocked: [AgentRow] = []
+    /// Active sessions editing the same resolved file concurrently (`SessionConflicts`).
+    package var conflicts: [SessionKey: [FileConflict]] = [:]
 
     /// The book and the processes, as the tray.
     package static func project(
@@ -95,11 +97,22 @@ package struct TrayState: Equatable {
         processes: [AgentProcesses.Hit],
         context: Context
     ) -> TrayState {
-        assemble(
-            rows: sessionRows(book: book, processes: processes, context: context),
+        let conflicts = SessionConflicts.detect(in: book, nowMs: context.nowMs)
+        var rows = sessionRows(book: book, processes: processes, context: context)
+        if !conflicts.isEmpty {
+            for index in rows.indices {
+                if let list = conflicts[rows[index].key] {
+                    rows[index].conflictingFiles = list.map(\.displayName)
+                }
+            }
+        }
+        var state = assemble(
+            rows: rows,
             context: context,
             activityMs: book.sessions.mapValues(\.activityMs)
         )
+        state.conflicts = conflicts
+        return state
     }
 
     // MARK: - Rows

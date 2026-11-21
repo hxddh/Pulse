@@ -65,6 +65,8 @@ package struct SettingsModel: Equatable {
         case setGroupByProject(Bool)
         /// Menu bar display density beside the lamp.
         case setMenuBarStyle(MenuBarStyle)
+        /// Show or hide the floating waiting beacon HUD.
+        case setFloatingBeacon(Bool)
         /// Resume notifications immediately when quiet mode is active.
         case resumeQuiet
         /// System Settings → Privacy & Security → Automation.
@@ -125,6 +127,7 @@ package struct SettingsModel: Equatable {
     package var directJumpNote: String?
     package var groupByProject = false
     package var menuBarStyle: MenuBarStyle = .minimal
+    package var floatingBeacon = true
     /// Agents whose finished turns can be opted into "Done" banners (present on this Mac).
     package var notifyDoneCandidates: [AgentID] = []
     package var notifyDoneAgents: Set<AgentID> = []
@@ -282,7 +285,7 @@ package struct SettingsModel: Equatable {
             // Nothing heard yet is said, not warned about: the agent may
             // simply not have run since the install.
             case .complete: tone = connection.caveat == nil || connection.caveat == .neverHeard ? .ok : .warning
-            case .partial, .staleLauncher, .failed: tone = .warning
+            case .partial, .staleLauncher, .outdatedModule, .failed: tone = .warning
             case .notInstalled: tone = .quiet
             }
             // The state line already says nothing was heard.

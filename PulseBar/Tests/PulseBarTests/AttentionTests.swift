@@ -1969,6 +1969,39 @@ final class HooksInstallerTests: XCTestCase {
         HooksInstaller.uninstall()
         XCTAssertEqual(HooksSupport.inspect(.claude), .notInstalled)
     }
+
+    func testOwnedModuleDriftIsDetectedAndAutoSyncedOnlyWhenUntouched() throws {
+        try seedVendors()
+        try HooksInstaller.install(agents: [.pi])
+        XCTAssertEqual(HooksSupport.inspect(.pi), .complete)
+
+        // Simulate an older version of pi.js that Pulse itself wrote (ledger.written matches disk).
+        let piURL = HooksInstaller.configURL(for: .pi)
+        let fresh = try String(contentsOf: piURL, encoding: .utf8)
+        let older = fresh + "// older version marker\n"
+        try older.write(to: piURL, atomically: true, encoding: .utf8)
+        var ledger = HooksInstaller.loadLedger()
+        var entry = try XCTUnwrap(ledger[piURL.resolvingSymlinksInPath().path])
+        entry.written = older
+        ledger[piURL.resolvingSymlinksInPath().path] = entry
+        try HooksInstaller.saveLedger(ledger)
+
+        XCTAssertEqual(HooksSupport.inspect(.pi), .outdatedModule)
+        XCTAssertTrue(HooksSupport.inspect(.pi).needsUpdate)
+
+        // Auto-sync silently upgrades untouched owned modules back to .complete.
+        let synced = HooksInstaller.syncOwnedModulesIfUntouched()
+        XCTAssertEqual(synced, [.pi])
+        XCTAssertEqual(HooksSupport.inspect(.pi), .complete)
+
+        // If the user hand-edits pi.js (no longer equals ledger.written), auto-sync leaves it alone
+        // and inspect honestly reports .outdatedModule.
+        let custom = fresh + "// user custom edit\n"
+        try custom.write(to: piURL, atomically: true, encoding: .utf8)
+        XCTAssertEqual(HooksInstaller.syncOwnedModulesIfUntouched(), [])
+        XCTAssertEqual(HooksSupport.inspect(.pi), .outdatedModule)
+        XCTAssertEqual(try String(contentsOf: piURL, encoding: .utf8), custom)
+    }
 }
 
 final class AttentionWatcherReArmTests: XCTestCase {

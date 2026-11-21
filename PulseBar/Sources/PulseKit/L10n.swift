@@ -327,6 +327,12 @@ package enum L10n {
         case settingsMenuBarCounts
         case hideRow
         case clearRecent
+        case conflictDetailWarning
+        case settingsFloatingBeacon
+        case settingsFloatingBeaconHint
+        case beaconHide
+        case settingsHookOutdated
+        case settingsSoundDistinct
     }
 }
 
@@ -594,6 +600,12 @@ extension L10n.Key {
         case .settingsMenuBarCounts: return ("Show active & done counts", "显示运行与完成计数")
         case .hideRow: return ("Hide", "隐藏")
         case .clearRecent: return ("Clear recent (%d)", "清理近期会话（%d）")
+        case .conflictDetailWarning: return ("Also edited by another active session: %@", "正与另一个活跃会话同时修改：%@")
+        case .settingsFloatingBeacon: return ("Show floating beacon while waiting", "等待时显示悬浮灯塔")
+        case .settingsFloatingBeaconHint: return ("Appears only when an agent needs you, even over Full Screen apps. Never steals keyboard focus.", "仅在有 Agent 等待时浮现，全屏应用上方也可见，绝不抢占键盘焦点。")
+        case .beaconHide: return ("Hide floating beacon", "关闭悬浮灯塔")
+        case .settingsHookOutdated: return ("Needs update — newer module available", "需要更新——有新版扩展")
+        case .settingsSoundDistinct: return ("Distinct (different tone for waits vs done)", "区分音（等待与完成不同音效）")
         }
     }
 }

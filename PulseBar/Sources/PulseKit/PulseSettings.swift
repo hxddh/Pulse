@@ -3,6 +3,7 @@ import Foundation
 /// Notification banner sound preference.
 package enum NotificationSound: String, CaseIterable, Sendable, Codable {
     case `default`
+    case distinct
     case silent
 }
 
@@ -52,13 +53,16 @@ package struct PulseSettings: Equatable, Codable, Sendable {
     package var groupByProject = false
     /// Menu bar label density beside the lamp.
     package var menuBarStyle: MenuBarStyle = .minimal
+    /// Show a minimal non-activating floating beacon pill while any agent is waiting
+    /// (visible even over Full Screen spaces; hidden when nothing is blocked).
+    package var floatingBeacon = true
 
     package init() {}
 
     private enum CodingKeys: String, CodingKey {
         case launchAtLogin, hooksNudgeOff, globalShortcut, directJumpShortcut
         case mutedAgents, notifyDoneAgents, notifyLongTurnSeconds, notificationSound
-        case quietUntilMs, shortcut, groupByProject, menuBarStyle
+        case quietUntilMs, shortcut, groupByProject, menuBarStyle, floatingBeacon
     }
 
     package init(from decoder: any Decoder) throws {
@@ -82,6 +86,7 @@ package struct PulseSettings: Equatable, Codable, Sendable {
         groupByProject = (try? c.decodeIfPresent(Bool.self, forKey: .groupByProject)) ?? false
         let barRaw = (try? c.decodeIfPresent(String.self, forKey: .menuBarStyle)) ?? nil
         menuBarStyle = barRaw.flatMap(MenuBarStyle.init(rawValue:)) ?? .minimal
+        floatingBeacon = (try? c.decodeIfPresent(Bool.self, forKey: .floatingBeacon)) ?? true
     }
 
     package func encode(to encoder: any Encoder) throws {
@@ -98,6 +103,7 @@ package struct PulseSettings: Equatable, Codable, Sendable {
         try c.encode(shortcut.rawValue, forKey: .shortcut)
         try c.encode(groupByProject, forKey: .groupByProject)
         try c.encode(menuBarStyle.rawValue, forKey: .menuBarStyle)
+        try c.encode(floatingBeacon, forKey: .floatingBeacon)
     }
 
     /// Whether banners are temporarily snoozed at `nowMs`.
@@ -141,7 +147,7 @@ package struct PulseSettings: Equatable, Codable, Sendable {
 
     /// One-line summary for the debug log.
     package var debugDescription: String {
-        "login=\(launchAtLogin) hooksNudgeOff=\(hooksNudgeOff) shortcut=\(globalShortcut ? shortcut.display : "off") directJump=\(directJumpShortcut) group=\(groupByProject) bar=\(menuBarStyle.rawValue) sound=\(notificationSound.rawValue) quiet=\(quietUntilMs) longTurn=\(notifyLongTurnSeconds)s muted=\(mutedAgents.map(\.rawValue)) done=\(notifyDoneAgents.map(\.rawValue))"
+        "login=\(launchAtLogin) hooksNudgeOff=\(hooksNudgeOff) shortcut=\(globalShortcut ? shortcut.display : "off") directJump=\(directJumpShortcut) group=\(groupByProject) bar=\(menuBarStyle.rawValue) beacon=\(floatingBeacon) sound=\(notificationSound.rawValue) quiet=\(quietUntilMs) longTurn=\(notifyLongTurnSeconds)s muted=\(mutedAgents.map(\.rawValue)) done=\(notifyDoneAgents.map(\.rawValue))"
     }
 
     // MARK: - On disk

@@ -159,6 +159,12 @@ struct SessionDetailFace: View {
                     .foregroundStyle(model.lamp == .stalled ? AnyShapeStyle(PulseTheme.warning) : AnyShapeStyle(.secondary))
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if let conflict = model.conflictWarning {
+                Label(conflict, systemImage: "exclamationmark.triangle.fill")
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(PulseTheme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if !model.now.isEmpty {
                 section(t(.detailNowHeading)) {
                     VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {

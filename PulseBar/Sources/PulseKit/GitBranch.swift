@@ -42,6 +42,26 @@ package enum GitBranch {
         return ""
     }
 
+    /// Resolve the enclosing Git repository or linked worktree root folder for
+    /// `cwd` (walks up at most `maxDepth` parents for `.git`), or return `cwd`
+    /// unchanged when not inside a Git checkout. Zero subprocesses.
+    package static func worktreeRoot(cwd: String) -> String {
+        let trimmed = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("/") else { return cwd }
+        let fm = FileManager.default
+        var current = URL(fileURLWithPath: trimmed, isDirectory: true).standardizedFileURL
+        for _ in 0..<maxDepth {
+            let dotGit = current.appendingPathComponent(".git")
+            if fm.fileExists(atPath: dotGit.path) {
+                return current.path
+            }
+            let parent = current.deletingLastPathComponent()
+            if parent.path == current.path { break }
+            current = parent
+        }
+        return trimmed
+    }
+
     /// Parse a `.git` file's `gitdir: <path>` line (used by `git worktree` and
     /// submodules), resolving relative paths against the folder containing `.git`.
     package static func parseGitDir(_ content: String, relativeTo baseDir: URL) -> URL? {
