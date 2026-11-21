@@ -2132,7 +2132,7 @@ struct TrayStateTests {
         #expect(row.landing.tmuxPane == "%3")
         #expect(row.landing.tty == "ttys009")
         #expect(row.landing.term == "WarpTerminal")
-        #expect(row.landingPlan.steps.first == LandingStep.tmuxPane(pane: "%3", socket: "", hostBundleIDs: ["dev.warp.Warp-Stable", "dev.warp.Warp"]))
+        #expect(row.landingPlan.steps.first == LandingStep.tmuxPane(pane: "%3", socket: "", hostBundleIDs: ["dev.warp.Warp-Stable", "dev.warp.Warp", "dev.warp.Warp-Preview"]))
         #expect(row.landingPlan.precision == .exact)
     }
 
