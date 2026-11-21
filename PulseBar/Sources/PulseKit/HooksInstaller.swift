@@ -522,12 +522,16 @@ package enum HooksInstaller {
         let script = """
         #!/bin/sh
         # Pulse native attention hook.
-        # Prints nothing and soft-fails (exit 0) when the PulseBar runner is
+        # Prints nothing and soft-fails (exit 0) when the Pulse runner is
         # missing, so no vendor agent is ever blocked or steered by it.
-        DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+        # Pure POSIX parameter expansion + builtin read: zero extra forks before exec.
+        case "$0" in
+          */*) DIR="${0%/*}" ;;
+          *) DIR="." ;;
+        esac
         RUNNER=""
-        if [ -f "$DIR/\(runnerPathName)" ]; then
-          RUNNER=$(cat "$DIR/\(runnerPathName)" 2>/dev/null)
+        if [ -r "$DIR/\(runnerPathName)" ]; then
+          IFS= read -r RUNNER < "$DIR/\(runnerPathName)" 2>/dev/null || RUNNER=""
         fi
         if [ -z "$RUNNER" ] || [ ! -x "$RUNNER" ]; then
           for c in \\

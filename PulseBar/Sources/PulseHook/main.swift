@@ -1,14 +1,17 @@
-import CoreGraphics
+import AppKit
 import Darwin
 import Foundation
 import PulseKit
 
 /// Lightweight native hook receiver (`Pulse.app/Contents/MacOS/pulse-hook`).
 ///
-/// Links only `PulseKit`, Foundation, and CoreGraphics — zero AppKit, SwiftUI,
-/// Carbon, or UserNotifications — so every vendor hook event executes in a few
-/// milliseconds with minimal memory footprint. Always exits 0 (except `--ping`
-/// failure) so a vendor hook never blocks its agent.
+/// Links only `PulseKit`, Foundation, and AppKit (for LaunchServices' exact
+/// `NSWorkspace.shared.frontmostApplication` without starting `NSApplication`
+/// or touching SwiftUI/Carbon/UserNotifications) so every vendor hook event
+/// runs in milliseconds with exact frontmost-app accuracy — immune to floating
+/// overlays, Picture-in-Picture windows, or secondary-display layer-0 windows.
+/// Always exits 0 (except `--ping` failure) so a vendor hook never blocks its
+/// agent.
 enum PulseHookEntry {
     static func main() -> Int32 {
         var arguments = ProcessInfo.processInfo.arguments
@@ -27,44 +30,19 @@ enum PulseHookEntry {
         )
     }
 
-    /// Frontmost GUI application PID via CoreGraphics on-screen normal windows
-    /// (`kCGWindowLayer == 0`), requiring neither AppKit initialization nor
-    /// Screen Recording permission (`kCGWindowOwnerPID` is always public).
+    /// Exact keyboard-focused application check via `NSWorkspace` (never
+    /// starts `NSApplication`, never fooled by floating overlays).
     private static func promptIsFrontmost() -> Bool? {
-        guard let list = CGWindowListCopyWindowInfo(
-            [.optionOnScreenOnly, .excludeDesktopElements],
-            kCGNullWindowID
-        ) as? [[String: Any]] else {
+        guard let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+              frontmost > 0 else {
             return nil
         }
-        var frontPID: Int32?
-        var windowOwners = Set<Int32>()
-        for window in list {
-            let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue ?? -1
-            guard layer == 0 else { continue }
-            let alpha = (window[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0
-            guard alpha > 0 else { continue }
-            guard let pid = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value, pid > 1 else {
-                continue
-            }
-            windowOwners.insert(pid)
-            if frontPID == nil { frontPID = pid }
-        }
-        guard let frontmost = frontPID else { return nil }
         return PromptVisibility.isAncestor(
             frontmost,
             of: getpid(),
             parentOf: PromptVisibility.parentPID(of:),
-            isApp: { pid in windowOwners.contains(pid) || isAppBundleProcess(pid) }
+            isApp: { pid in NSRunningApplication(processIdentifier: pid) != nil }
         )
-    }
-
-    private static func isAppBundleProcess(_ pid: Int32) -> Bool {
-        var buffer = [CChar](repeating: 0, count: 4096)
-        let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
-        guard length > 0 else { return false }
-        let path = String(decoding: buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) }, as: UTF8.self)
-        return path.contains(".app/Contents/MacOS/")
     }
 }
 

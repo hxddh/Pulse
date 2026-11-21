@@ -49,17 +49,21 @@ package struct TrayState: Equatable {
         /// The previous projection's open waits (`waitingSince`): a row not
         /// in it, or one whose wait is a new raise, is a Waiting edge.
         package var previousWaits: [SessionKey: Int64] = [:]
+        /// Menu bar display density beside the lamp.
+        package var menuBarStyle: MenuBarStyle = .minimal
 
         package init(
             nowMs: Int64,
             lang: ResolvedLanguage = .en,
             stalledSeconds: Double = AgentRow.stalledSeconds,
-            previousWaits: [SessionKey: Int64] = [:]
+            previousWaits: [SessionKey: Int64] = [:],
+            menuBarStyle: MenuBarStyle = .minimal
         ) {
             self.nowMs = nowMs
             self.lang = lang
             self.stalledSeconds = stalledSeconds
             self.previousWaits = previousWaits
+            self.menuBarStyle = menuBarStyle
         }
     }
 
@@ -121,6 +125,7 @@ package struct TrayState: Equatable {
             var row = AgentRow(key: session.key, status: status)
             row.session = session.session
             row.cwd = session.cwd
+            row.branch = session.branch
             row.pid = session.pid
             row.liveProcess = live
             row.task = session.shownTitle
@@ -285,16 +290,31 @@ package struct TrayState: Equatable {
 
         var snap = PulseSnapshot(counts: counts, projected: true)
 
-        // The menu bar carries a title only when something is blocked: how
-        // many, and how long the oldest has waited ("2 · 4m"; "2·4分钟" when
-        // the spaced form does not fit). A wait younger than a minute says
-        // nothing the lamp has not.
-        if counts.blocked > 0 {
-            let count = "\(counts.blocked)"
-            let oldest = all.compactMap { $0.wait?.sinceMs }.filter { $0 > 0 }.min()
-            let seconds = oldest.map { Double(context.nowMs - $0) / 1000 } ?? 0
-            let age = L10n.duration(seconds, lang)
-            snap.title = seconds < 60 ? count : GlanceTitle.fit("\(count) · \(age)", "\(count)·\(age)", count)
+        // Menu bar title follows the user's density preference:
+        // - `.compact`: pure lamp, zero text (ideal for MacBook notches).
+        // - `.minimal` (default): text only when blocked ("2 · 4m").
+        // - `.counts`: blocked shows "2 · 4m"; otherwise compact active/done counts.
+        switch context.menuBarStyle {
+        case .compact:
+            snap.title = ""
+        case .minimal:
+            if counts.blocked > 0 {
+                snap.title = blockedTitle(all: all, count: counts.blocked, nowMs: context.nowMs, lang: lang)
+            }
+        case .counts:
+            if counts.blocked > 0 {
+                snap.title = blockedTitle(all: all, count: counts.blocked, nowMs: context.nowMs, lang: lang)
+            } else {
+                let active = counts.running + counts.stalled
+                let done = counts.yourTurn
+                if active > 0 && done > 0 {
+                    snap.title = GlanceTitle.fit("\(active) · ✓\(done)", "\(active)·✓\(done)", "\(active)")
+                } else if active > 0 {
+                    snap.title = "\(active)"
+                } else if done > 0 {
+                    snap.title = "✓\(done)"
+                }
+            }
         }
 
         // The lamp, and one sentence for the tooltip: the rule that set it
@@ -306,6 +326,14 @@ package struct TrayState: Equatable {
         snap.tooltip = lampSentence(rule, lang: lang)
         snap.accessibilityLabel = snap.lamp.isGrey ? L10n.t(rule.accessibilityKey, lang) : snap.tooltip
         return snap
+    }
+
+    private static func blockedTitle(all: [AgentRow], count blockedCount: Int, nowMs: Int64, lang: ResolvedLanguage) -> String {
+        let count = "\(blockedCount)"
+        let oldest = all.compactMap { $0.wait?.sinceMs }.filter { $0 > 0 }.min()
+        let seconds = oldest.map { Double(nowMs - $0) / 1000 } ?? 0
+        let age = L10n.duration(seconds, lang)
+        return seconds < 60 ? count : GlanceTitle.fit("\(count) · \(age)", "\(count)·\(age)", count)
     }
 
     // MARK: - The lamp's rule

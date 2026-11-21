@@ -239,6 +239,8 @@ jobs:
           # The checksum file names the DMG relative to itself, so
           # `shasum -a 256 -c pulse-….dmg.sha256` works in the download folder.
           (cd zig-out/package && shasum -a 256 "$DMG_NAME" > "$DMG_NAME.sha256")
+          DMG_SHA256="$(awk '{print $1}' "zig-out/package/$DMG_NAME.sha256")"
+          python3 scripts/render_cask.py "$VERSION" "$DMG_SHA256" "zig-out/package/pulse.rb"
           python3 scripts/changelog_section.py "$VERSION" > /tmp/notes.md
           if [[ "${{ needs.decide.outputs.prerelease }}" == "true" ]]; then
             {
@@ -301,6 +303,7 @@ jobs:
           files: |
             zig-out/package/pulse-${{ needs.decide.outputs.version }}-macos-PulseBar.dmg
             zig-out/package/pulse-${{ needs.decide.outputs.version }}-macos-PulseBar.dmg.sha256
+            zig-out/package/pulse.rb
           fail_on_unmatched_files: true
 
   promote:

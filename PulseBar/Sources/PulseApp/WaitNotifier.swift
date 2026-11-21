@@ -31,6 +31,10 @@ final class WaitNotifier {
     /// Sessions that currently have a delivered "Done" banner in Notification
     /// Center — withdrawn as soon as the session moves on, is seen, or leaves.
     private(set) var doneBannerKeys: Set<SessionKey> = []
+    /// Turn-done banners waiting behind the rate limit (deduplicated by key,
+    /// FIFO) so parallel completions never blast Notification Center at once.
+    private(set) var doneQueue: [(row: AgentRow, facts: SessionFacts)] = []
+    private var doneDeliveryTask: Task<Void, Never>?
     /// Is this blocked row's app in front now? nil: cannot tell (no pid, a
     /// detached tmux chain). Asked only of a wait raised in front, once it
     /// is `WaitingDelivery.deferAfterMs` old. Tests replace it.
@@ -67,8 +71,9 @@ final class WaitNotifier {
         ))
         // Withdraw any "Done" banner whose session started working again,
         // became blocked, was marked seen, or left the list.
-        if !doneBannerKeys.isEmpty {
+        if !doneBannerKeys.isEmpty || !doneQueue.isEmpty {
             let activeTurnKeys = Set(state.rows.filter(\.isYourTurn).map(\.key))
+            doneQueue.removeAll { !activeTurnKeys.contains($0.row.key) }
             let staleDone = doneBannerKeys.subtracting(activeTurnKeys)
             if !staleDone.isEmpty {
                 doneBannerKeys.subtract(staleDone)
@@ -76,6 +81,8 @@ final class WaitNotifier {
             }
         }
         guard !baseline, let model else { return }
+        // Quiet mode snoozes all banners while keeping the menu-bar lamp red.
+        if model.settings.isQuiet(at: nowMs) { return }
         // Two-tier hold for waits raised while their terminal app was in front:
         // 1. After 30s (`deferAfterMs`), fire as soon as the app leaves the front.
         // 2. After 90s (`frontEscalationMs`), fire unconditionally — an unanswered
@@ -136,6 +143,7 @@ final class WaitNotifier {
     func post(_ rows: [AgentRow]) {
         guard let model, model.notifyAuthorized == true else { return }
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        guard !model.settings.isQuiet(at: nowMs) else { return }
         // The decision is `WaitingDelivery`; this method carries it out.
         let delivery = WaitingDelivery(
             acknowledged: ledger.dismissedKeys,
@@ -183,10 +191,61 @@ final class WaitNotifier {
     }
 
     /// The one banner a watched or opt-in session's finished turn was asked for
-    /// (`TurnWatch`). Uses its own category (Go only, no Ignore) and is
-    /// withdrawn once the session moves on or is marked seen.
+    /// (`TurnWatch`). Uses its own category (Go only, no Ignore), respects
+    /// quiet mode and the rate limit, and is withdrawn once the session moves
+    /// on or is marked seen.
     func postTurnDone(_ row: AgentRow, facts: SessionFacts = .empty) {
         guard let model, model.notifyAuthorized == true else { return }
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        guard !model.settings.isQuiet(at: nowMs) else { return }
+        if lastPostMs > 0, nowMs - lastPostMs < Self.minimumIntervalMs {
+            enqueueDone(row, facts: facts, retryAfterMs: Self.minimumIntervalMs - (nowMs - lastPostMs))
+            return
+        }
+        deliverTurnDone(row, facts: facts, nowMs: nowMs)
+    }
+
+    private func enqueueDone(_ row: AgentRow, facts: SessionFacts, retryAfterMs: Int64) {
+        if let idx = doneQueue.firstIndex(where: { $0.row.key == row.key }) {
+            doneQueue[idx] = (row, facts)
+        } else {
+            doneQueue.append((row, facts))
+        }
+        scheduleDoneDelivery(afterMs: retryAfterMs)
+    }
+
+    private func scheduleDoneDelivery(afterMs: Int64) {
+        doneDeliveryTask?.cancel()
+        doneDeliveryTask = Task { @MainActor [weak self] in
+            let nanos = UInt64(max(250, afterMs)) * 1_000_000
+            try? await Task.sleep(nanoseconds: nanos)
+            guard !Task.isCancelled, let self else { return }
+            self.doneDeliveryTask = nil
+            self.flushDoneQueue()
+        }
+    }
+
+    private func flushDoneQueue() {
+        guard let model, model.notifyAuthorized == true, !doneQueue.isEmpty else { return }
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        if model.settings.isQuiet(at: nowMs) {
+            doneQueue.removeAll()
+            return
+        }
+        if lastPostMs > 0, nowMs - lastPostMs < Self.minimumIntervalMs {
+            scheduleDoneDelivery(afterMs: Self.minimumIntervalMs - (nowMs - lastPostMs))
+            return
+        }
+        let next = doneQueue.removeFirst()
+        deliverTurnDone(next.row, facts: next.facts, nowMs: nowMs)
+        if !doneQueue.isEmpty {
+            scheduleDoneDelivery(afterMs: Self.minimumIntervalMs)
+        }
+    }
+
+    private func deliverTurnDone(_ row: AgentRow, facts: SessionFacts, nowMs: Int64) {
+        guard let model else { return }
+        lastPostMs = nowMs
         doneBannerKeys.insert(row.key)
         PulseNotify.postWaiting(
             id: TurnWatch.bannerID(row.key),
@@ -202,6 +261,7 @@ final class WaitNotifier {
 
     /// Withdraw a delivered turn-done banner when the person looks at it.
     func withdrawTurnDone(_ key: SessionKey) {
+        doneQueue.removeAll { $0.row.key == key }
         guard doneBannerKeys.remove(key) != nil else { return }
         withdraw([TurnWatch.bannerID(key)])
     }

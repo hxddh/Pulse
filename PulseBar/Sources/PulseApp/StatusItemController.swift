@@ -108,8 +108,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         }
     }
 
-    /// Open Pulse · Settings… · Quit Pulse — shown the system way: the
-    /// menu is the status item's for exactly one click.
+    /// Open Pulse · Jump · Mark seen · Quiet · Settings… · Quit Pulse — shown
+    /// the system way: the menu is the status item's for exactly one click.
     private func showMenu() {
         showingMenu = true
         defer { showingMenu = false }
@@ -117,10 +117,48 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         let lang = store.lang
         let menu = NSMenu()
         let open = NSMenuItem(title: L10n.t(.menuOpenPulse, lang), action: #selector(menuOpenPulse), keyEquivalent: "")
+        open.target = self
+        menu.addItem(open)
+
+        if store.snapshot.counts.blocked > 0 {
+            let jump = NSMenuItem(title: L10n.t(.menuJumpOldestWait, lang), action: #selector(menuJumpOldestWait), keyEquivalent: "")
+            jump.target = self
+            menu.addItem(jump)
+        }
+        let doneCount = store.rows.filter(\.isYourTurn).count
+        if doneCount > 0 {
+            let mark = NSMenuItem(title: String(format: L10n.t(.markAllSeen, lang), doneCount), action: #selector(menuMarkAllSeen), keyEquivalent: "")
+            mark.target = self
+            menu.addItem(mark)
+        }
+
+        menu.addItem(.separator())
+        if let remaining = store.quietRemaining() {
+            let resume = NSMenuItem(
+                title: "\(L10n.t(.quietResume, lang)) (\(remaining))",
+                action: #selector(menuResumeQuiet),
+                keyEquivalent: ""
+            )
+            resume.target = self
+            menu.addItem(resume)
+        } else {
+            let quietItem = NSMenuItem(title: L10n.t(.quietNotifications, lang), action: nil, keyEquivalent: "")
+            let submenu = NSMenu()
+            let q30 = NSMenuItem(title: L10n.t(.quietFor30m, lang), action: #selector(menuQuiet30m), keyEquivalent: "")
+            let q60 = NSMenuItem(title: L10n.t(.quietFor1h, lang), action: #selector(menuQuiet1h), keyEquivalent: "")
+            q30.target = self
+            q60.target = self
+            submenu.addItem(q30)
+            submenu.addItem(q60)
+            quietItem.submenu = submenu
+            menu.addItem(quietItem)
+        }
+
+        menu.addItem(.separator())
         let settings = NSMenuItem(title: L10n.t(.settings, lang), action: #selector(menuSettings), keyEquivalent: ",")
         let quit = NSMenuItem(title: L10n.t(.quit, lang), action: #selector(menuQuit), keyEquivalent: "q")
-        for item in [open, settings, quit] { item.target = self }
-        menu.addItem(open)
+        settings.target = self
+        quit.target = self
         menu.addItem(settings)
         menu.addItem(.separator())
         menu.addItem(quit)
@@ -130,6 +168,16 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     @objc private func menuOpenPulse() { show() }
+
+    @objc private func menuJumpOldestWait() { store.jumpToOldestWait() }
+
+    @objc private func menuMarkAllSeen() { store.markAllSeen() }
+
+    @objc private func menuQuiet30m() { store.setQuiet(minutes: 30) }
+
+    @objc private func menuQuiet1h() { store.setQuiet(minutes: 60) }
+
+    @objc private func menuResumeQuiet() { store.resumeQuiet() }
 
     @objc private func menuSettings() { store.openSettings() }
 
@@ -230,6 +278,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             self.keyMonitor = nil
         }
         ui.optionHeld = false
+        ui.commandHeld = false
         store.trayDidDisappear()
         // Hand the keyboard back to the app that had it — unless another app
         // already took it, or Pulse has a window of its own up (Settings).
@@ -245,19 +294,33 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             guard let self else { return event }
-            // ⌥ held shows the vendor's event names on the detail page.
+            // ⌥ held shows vendor event names on the detail page;
+            // ⌘ held reveals 1–9 direct-jump keycaps on the list.
             if event.type == .flagsChanged {
-                let held = event.modifierFlags.contains(.option)
-                if self.ui.optionHeld != held { self.ui.optionHeld = held }
+                let option = event.modifierFlags.contains(.option)
+                if self.ui.optionHeld != option { self.ui.optionHeld = option }
+                let command = event.modifierFlags.contains(.command)
+                if self.ui.commandHeld != command { self.ui.commandHeld = command }
                 return event
             }
+            let command = event.modifierFlags.contains(.command)
             guard event.window === self.hosting.view.window,
                   let key = TrayKeys.key(
                       keyCode: event.keyCode,
                       characters: event.charactersIgnoringModifiers ?? "",
-                      command: event.modifierFlags.contains(.command)
+                      command: command
                   )
             else { return event }
+            // While the inline filter box is active, let text editing keys
+            // (Space, Left/Right, `/`) reach the TextField normally.
+            if self.ui.filterActive, self.ui.keys.detail == nil, !command {
+                switch key {
+                case .space, .left, .right, .search:
+                    return event
+                default:
+                    break
+                }
+            }
             return self.ui.handle(key) ? nil : event
         }
     }

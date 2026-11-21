@@ -162,9 +162,14 @@ package struct LandingPlan: Hashable, Sendable {
         "ghostty": ["com.mitchellh.ghostty"],
         "wezterm": [weztermBundleID],
         "kitty": [kittyBundleID],
-        "warpterminal": ["dev.warp.Warp-Stable", "dev.warp.Warp"],
+        "alacritty": ["org.alacritty"],
+        "hyper": ["co.zeit.hyper"],
+        "tabby": ["org.tabby"],
+        "rio": ["com.raphaelamorim.rio"],
+        "warpterminal": ["dev.warp.Warp-Stable", "dev.warp.Warp", "dev.warp.Warp-Preview"],
         "vscode": HostAppKind.vsCode.bundleIDs,
         "zed": HostAppKind.zed.bundleIDs,
+        "jetbrains-jediterm": HostAppKind.jetbrains.bundleIDs,
     ]
 
     /// - Parameters:
@@ -272,6 +277,7 @@ package struct LandingPlan: Hashable, Sendable {
         switch term {
         case "vscode": return fromApp ?? fromHook ?? fromScan ?? .vsCode
         case "zed": return .zed
+        case "jetbrains-jediterm": return .jetbrains
         case "", "tmux": return fromApp ?? fromHook ?? fromScan
         default: return nil
         }

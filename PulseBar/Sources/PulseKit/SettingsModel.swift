@@ -63,6 +63,8 @@ package struct SettingsModel: Equatable {
         case setShortcut(ShortcutChoice)
         /// Group the tray by project, or not.
         case setGroupByProject(Bool)
+        /// Menu bar display density beside the lamp.
+        case setMenuBarStyle(MenuBarStyle)
         /// System Settings → Privacy & Security → Automation.
         case openAutomationSettings
     }
@@ -120,6 +122,7 @@ package struct SettingsModel: Equatable {
     /// Said under it when macOS refused ⌃⌥⌘↩.
     package var directJumpNote: String?
     package var groupByProject = false
+    package var menuBarStyle: MenuBarStyle = .minimal
     /// Agents whose finished turns can be opted into "Done" banners (present on this Mac).
     package var notifyDoneCandidates: [AgentID] = []
     package var notifyDoneAgents: Set<AgentID> = []
@@ -210,6 +213,15 @@ package struct SettingsModel: Equatable {
     package static func longTurnLabel(_ seconds: Int, lang: ResolvedLanguage) -> String {
         guard seconds > 0 else { return L10n.t(.settingsLongTurnOff, lang) }
         return String(format: L10n.t(.settingsLongTurnMinutes, lang), max(1, seconds / 60))
+    }
+
+    /// Label for one menu bar display style.
+    package static func menuBarStyleLabel(_ style: MenuBarStyle, lang: ResolvedLanguage) -> String {
+        switch style {
+        case .minimal: return L10n.t(.settingsMenuBarMinimal, lang)
+        case .compact: return L10n.t(.settingsMenuBarCompact, lang)
+        case .counts: return L10n.t(.settingsMenuBarCounts, lang)
+        }
     }
 
     /// What the connection test found, in words, and whether it is a

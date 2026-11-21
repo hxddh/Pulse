@@ -95,6 +95,9 @@ package struct TrayRowModel: Equatable {
     package var lamp: Lamp
     /// The short project name — "" when the headline already is the project.
     package var project: String
+    /// Git branch label shown beside (or in place of) the project to distinguish
+    /// parallel worktrees; "" when hidden or unknown.
+    package var branch: String = ""
     /// `headline(_:lang:nowMs:)`: the tray hero.
     package var headline: String
     /// A process-only row's headline is quiet: it says what little is true.
@@ -135,12 +138,16 @@ package struct TrayRowModel: Equatable {
         /// True when the tray is grouped by project so the row does not repeat
         /// its group heading's project name.
         package var hideProject: Bool
+        /// True when the row should show its Git branch (multiple worktrees of
+        /// the same project, or grouped under its project heading).
+        package var showBranch: Bool
         /// True when the person armed one-shot "tell me when done" on this row.
         package var watching: Bool
 
         package init(
             row: AgentRow, facts: SessionFacts = SessionFacts(), lang: ResolvedLanguage, nowMs: Int64,
-            notice: RowNotice? = nil, connected: Bool = true, hideProject: Bool = false, watching: Bool = false
+            notice: RowNotice? = nil, connected: Bool = true, hideProject: Bool = false,
+            showBranch: Bool = false, watching: Bool = false
         ) {
             self.row = row
             self.facts = facts
@@ -149,6 +156,7 @@ package struct TrayRowModel: Equatable {
             self.notice = notice
             self.connected = connected
             self.hideProject = hideProject
+            self.showBranch = showBranch
             self.watching = watching
         }
     }
@@ -164,6 +172,7 @@ package struct TrayRowModel: Equatable {
         let age = Self.rowTime(row, facts: facts, nowMs: input.nowMs, lang: lang)
         let place = row.project
         let project = (input.hideProject || place == headline) ? "" : place
+        let branch = (input.showBranch && !row.branch.isEmpty) ? row.branch : ""
         let second = secondLine(row, facts: facts, why: why, lang: lang, nowMs: input.nowMs)
         let turnLabel = row.isYourTurn ? t(.yourTurn) : nil
         let plan = Self.planBadge(row, facts: facts)
@@ -182,6 +191,7 @@ package struct TrayRowModel: Equatable {
         // VoiceOver hears whole words: "4 minutes", never the drawn "4m".
         var spoken = [row.agent.displayName, Self.stateText(row, lang: lang), headline]
         if !project.isEmpty { spoken.append(project) }
+        if !branch.isEmpty { spoken.append(branch) }
         let spokenAge = Self.rowTime(row, facts: facts, nowMs: input.nowMs, lang: lang, spoken: true)
         if !spokenAge.isEmpty { spoken.append(spokenAge) }
         if let second, !second.kind.isQuiet { spoken.append(second.text) } else { spoken.append(why) }
@@ -194,6 +204,7 @@ package struct TrayRowModel: Equatable {
             agent: row.agent,
             lamp: lamp,
             project: project,
+            branch: branch,
             headline: headline,
             headlineQuiet: row.isProcessOnly,
             age: age,
@@ -639,6 +650,7 @@ package struct DetailModel: Equatable {
 
         var facts: [Fact] = []
         if !row.displayPath.isEmpty { facts.append(Fact(label: t(.detailFolder), value: row.displayPath)) }
+        if !row.branch.isEmpty { facts.append(Fact(label: t(.detailBranch), value: row.branch)) }
 
         let timeline: [Entry] = said.timeline.reversed().map { heard in
             var entry = Entry(
@@ -697,6 +709,16 @@ extension TrayRowModel {
     package static let toolsShown = 4
     /// Files listed in "This turn" before the rest is "+N".
     package static let filesShown = 5
+
+    /// Projects that currently have rows on at least two distinct Git branches
+    /// (e.g. parallel `git worktree` checkouts of the same repo). Pure.
+    package static func multiBranchProjects(in rows: [AgentRow]) -> Set<String> {
+        var byProject: [String: Set<String>] = [:]
+        for row in rows where !row.project.isEmpty && !row.branch.isEmpty {
+            byProject[row.project, default: []].insert(row.branch)
+        }
+        return Set(byProject.compactMap { $0.value.count > 1 ? $0.key : nil })
+    }
 
     /// The row's quiet plan suffix, "3/7": only on a live row (running,
     /// stalled or blocked), only when the main agent reported a plan this

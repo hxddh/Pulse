@@ -2581,4 +2581,44 @@ struct ReducerInvariantTests {
             #expect(after == before)
         }
     }
+
+    @Test func gitBranchResolvesStandardReposAndWorktreesAndRoundTripsInMeta() throws {
+        #expect(GitBranch.parseHead("ref: refs/heads/feat/v37\n") == "feat/v37")
+        #expect(GitBranch.parseHead("0123456789abcdef0123456789abcdef01234567\n") == "")
+
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("pulse-git-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        // 1. Standard repo
+        let repo = tmp.appendingPathComponent("repo", isDirectory: true)
+        let sub = repo.appendingPathComponent("Sources/App", isDirectory: true)
+        try FileManager.default.createDirectory(at: repo.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+        try "ref: refs/heads/main\n".write(to: repo.appendingPathComponent(".git/HEAD"), atomically: true, encoding: .utf8)
+        #expect(GitBranch.resolve(cwd: sub.path) == "main")
+
+        // 2. Linked git worktree (.git file pointing via relative gitdir)
+        let wt = tmp.appendingPathComponent("wt-auth", isDirectory: true)
+        let wtGit = repo.appendingPathComponent(".git/worktrees/wt-auth", isDirectory: true)
+        try FileManager.default.createDirectory(at: wt, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: wtGit, withIntermediateDirectories: true)
+        try "gitdir: ../repo/.git/worktrees/wt-auth\n".write(to: wt.appendingPathComponent(".git"), atomically: true, encoding: .utf8)
+        try "ref: refs/heads/feat/auth\n".write(to: wtGit.appendingPathComponent("HEAD"), atomically: true, encoding: .utf8)
+        #expect(GitBranch.resolve(cwd: wt.path) == "feat/auth")
+
+        // LineMeta round-trip + SessionBook propagation.
+        let meta = LineMeta(branch: "feat/auth")
+        #expect(LineMeta(field: meta.field).branch == "feat/auth")
+        var book = SessionBook()
+        book.apply(AttentionRecord(
+            agent: .claude, kind: .start, ms: t0, session: "s1", cwd: wt.path, event: "SessionStart", meta: meta
+        ), nowMs: t0 + 1)
+        let projected = TrayState.project(book: book, processes: [], context: TrayState.Context(nowMs: t0 + 100))
+        #expect(projected.rows.first?.branch == "feat/auth")
+
+        // New host & terminal recognition.
+        #expect(HostAppKind(path: "/Applications/WebStorm.app/Contents/MacOS/webstorm") == .jetbrains)
+        #expect(HostAppKind(path: "/Applications/Xcode.app/Contents/MacOS/Xcode") == .xcode)
+        #expect(LandingPlan.termPrograms["alacritty"] == ["org.alacritty"])
+        #expect(LandingPlan.editor(handle: LandingHandle("term:JetBrains-JediTerm"), hostApp: nil) == .jetbrains)
+    }
 }

@@ -256,6 +256,8 @@ extension SessionBook {
         /// folder-keyed one) — what a `dismiss` must carry.
         package var session: String
         package var cwd = ""
+        /// The Git branch of the session's working tree ("" unknown or detached).
+        package var branch = ""
         /// The agent process the hook ran under; 0 unknown.
         package var pid: Int32 = 0
         /// The first event that named the current `pid` — a process that

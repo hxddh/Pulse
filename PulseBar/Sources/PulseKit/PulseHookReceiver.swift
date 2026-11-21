@@ -66,7 +66,8 @@ package enum PulseHookReceiver {
         locate: (AgentID, [String: String]) -> (pid: Int32, landing: String) = HookLanding.current,
         front: () -> Bool? = { nil },
         parent: Int32 = getppid(),
-        argumentsOf: (AgentID, Int32) -> [String]? = HookLanding.agentArguments
+        argumentsOf: (AgentID, Int32) -> [String]? = HookLanding.agentArguments,
+        branchOf: (String) -> String = GitBranch.resolve
     ) -> Int32 {
         let args = Array(arguments.drop(while: { $0 != "--hook" }).dropFirst())
         // Settings' "Test connection": the launcher found this Pulse and it
@@ -112,6 +113,16 @@ package enum PulseHookReceiver {
         // the user watched finish is not owed to them, and a blocked prompt
         // already on screen needs no banner.
         if written.kind.isOpen { written.front = front() }
+        // Read the Git branch on session start, user prompt, or block (zero
+        // subprocesses: `.git/HEAD` only) so parallel worktrees stay distinct.
+        if written.meta.branch.isEmpty,
+           !written.cwd.isEmpty,
+           written.kind == .start || written.kind == .working || written.kind.isBlocking {
+            let branch = branchOf(written.cwd)
+            if !branch.isEmpty {
+                written.meta.branch = LineMeta.clean(ContentSanitizer.redact(branch), limit: LineMeta.branchLimit)
+            }
+        }
         written.pid = pid > 1 ? pid : 0
         written.landing = cleanField(located.landing, limit: 240)
         EventLog.append(written, at: logURL, nowMs: nowMs)
@@ -280,6 +291,7 @@ package enum PulseHookReceiver {
             .map { cleanField($0, limit: LineMeta.fileLimit) }
             .filter { !$0.isEmpty }
         clean.name = LineMeta.firstLine(meta.name, limit: LineMeta.nameLimit)
+        clean.branch = cleanField(meta.branch, limit: LineMeta.branchLimit)
         return clean
     }
 

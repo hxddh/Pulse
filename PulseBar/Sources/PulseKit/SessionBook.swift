@@ -489,6 +489,9 @@ package struct SessionBook: Equatable, Codable {
     private func note(_ record: AttentionRecord, ms: Int64, into session: inout Session) {
         let cwd = ContentSanitizer.redact(record.cwd)
         if !cwd.isEmpty { session.cwd = cwd }
+        if !record.meta.branch.isEmpty {
+            session.branch = LineMeta.clean(ContentSanitizer.redact(record.meta.branch), limit: LineMeta.branchLimit)
+        }
         if record.pid > 1, record.pid != session.pid {
             session.pid = record.pid
             session.pidSinceMs = ms

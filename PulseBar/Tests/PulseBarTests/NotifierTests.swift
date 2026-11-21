@@ -751,4 +751,27 @@ struct TurnWatchTests {
         #expect(store.pendingReveal?.key == "codex|s1")
         #expect(store.pendingReveal?.detail == true)
     }
+
+    @MainActor
+    @Test func quietModeSuppressesBannersAndBurstDoneBannersQueueCalmly() {
+        let store = StatusStore()
+        store.notifyAuthorized = true
+        let future = Int64(Date().timeIntervalSince1970 * 1000) + 600_000
+        store.settings.quietUntilMs = future
+        let done1 = row("codex|q1", .yourTurn(sinceMs: 100))
+        let done2 = row("codex|q2", .yourTurn(sinceMs: 100))
+        store.notifier.postTurnDone(done1)
+        #expect(store.notifier.doneBannerKeys.isEmpty, "quiet mode posts no turn-done banners")
+
+        // Resume quiet mode: burst of two done banners delivers first and queues second.
+        store.resumeQuiet()
+        store.notifier.postTurnDone(done1)
+        store.notifier.postTurnDone(done2)
+        #expect(store.notifier.doneBannerKeys.contains(done1.key))
+        #expect(!store.notifier.doneBannerKeys.contains(done2.key), "second burst banner waits behind rate limit")
+        #expect(store.notifier.doneQueue.map(\.row.key) == [done2.key])
+        // Withdrawing clears queued item too.
+        store.notifier.withdrawTurnDone(done2.key)
+        #expect(store.notifier.doneQueue.isEmpty)
+    }
 }

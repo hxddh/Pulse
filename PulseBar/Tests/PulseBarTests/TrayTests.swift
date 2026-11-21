@@ -894,7 +894,7 @@ struct LandingPlanTests {
         }
         #expect(HostAppKind(path: "/Applications/iTerm.app/Contents/MacOS/iTerm2") == nil)
         let folders = HostAppKind.allCases.filter { $0.opensFolders }
-        #expect(folders == [.cursor, .vsCode, .windsurf, .zed, .trae, .antigravity, .zcode])
+        #expect(folders == [.cursor, .vsCode, .windsurf, .zed, .trae, .antigravity, .zcode, .jetbrains, .xcode, .sublimeText, .neovide])
     }
 
     @Test func theLabelFollowsThePrecision() {
@@ -2215,5 +2215,58 @@ struct GroupByProjectTests {
         dismissed.status = .recent(.dismissedWait)
         #expect(TrayRowModel.why(dismissed, facts: sample.facts, lang: .en, nowMs: SurfaceFixtures.nowMs).hasPrefix("Ignored wait"))
         #expect(TrayRowModel.why(dismissed, facts: sample.facts, lang: .zh, nowMs: SurfaceFixtures.nowMs).hasPrefix("已忽略等待"))
+    }
+
+    @Test func trayFilterDirectJumpAndMenuBarDensityWorkPurely() {
+        var r1 = AgentRow(key: "claude|a", status: .needsYou(Block(kind: .permission, ask: "Bash: swift test", sinceMs: 100)))
+        r1.cwd = "/Users/me/code/Pulse"
+        r1.branch = "feat/auth"
+        r1.task = "Add OAuth"
+        var r2 = AgentRow(key: "codex|b", status: .needsYou(Block(kind: .question, ask: "Pick DB", sinceMs: 200)))
+        r2.cwd = "/Users/me/code/Pulse"
+        r2.branch = "main"
+        var r3 = AgentRow(key: "cursor|c", status: .yourTurn(sinceMs: 300))
+        r3.cwd = "/Users/me/code/Api"
+        r3.branch = "fix/cors"
+
+        // Multi-branch detection & DetailModel branch fact.
+        #expect(TrayRowModel.multiBranchProjects(in: [r1, r2, r3]) == ["Pulse"])
+        let rowFace = TrayRowModel.make(TrayRowModel.Input(
+            row: r1, lang: .en, nowMs: 500, showBranch: true
+        ))
+        #expect(rowFace.branch == "feat/auth")
+        let detail = DetailModel.make(row: r1, lang: .en, nowMs: 500)
+        #expect(detail.facts.contains { $0.label == "Branch" && $0.value == "feat/auth" })
+
+        // Filter matches branch, project, agent, ask, status, and multi-token AND.
+        #expect(TrayFilter.matches(r1, query: "feat/auth"))
+        #expect(TrayFilter.matches(r1, query: "pulse claude swift"))
+        #expect(!TrayFilter.matches(r1, query: "codex"))
+        #expect(TrayFilter.matches(r3, query: "done api"))
+
+        // Search keybindings (`/` and `⌘F`).
+        #expect(TrayKeys.key(keyCode: 44, characters: "/", command: false) == .search)
+        #expect(TrayKeys.key(keyCode: 3, characters: "f", command: true) == .search)
+        let searchOutcome = TrayKeys.reduce(TrayKeys.State(selected: r1.key), .search, rows: [TrayKeys.Row(r1)])
+        #expect(searchOutcome.effect == .toggleFilter)
+
+        // Cycling direct jump: oldest first, then cycles within 15s or when frontmost.
+        let first = DirectJump.pick(rows: [r1, r2, r3], nowMs: 1_000)
+        #expect(first?.key == r1.key)
+        let second = DirectJump.pick(rows: [r1, r2, r3], lastJumped: r1.key, lastJumpedAtMs: 1_000, nowMs: 5_000)
+        #expect(second?.key == r2.key)
+        let wrapped = DirectJump.pick(rows: [r1, r2, r3], lastJumped: r2.key, lastJumpedAtMs: 5_000, nowMs: 8_000)
+        #expect(wrapped?.key == r1.key)
+        let skipFront = DirectJump.pick(rows: [r1, r2, r3], frontmost: { $0.key == r1.key }, nowMs: 50_000)
+        #expect(skipFront?.key == r2.key)
+
+        // Menu bar density modes.
+        let compact = TrayState.assemble(rows: [r1], context: TrayState.Context(nowMs: 120_000, menuBarStyle: .compact))
+        #expect(compact.snapshot.title == "")
+        let running = AgentRow(key: "claude|run", status: .running(stalled: false))
+        let countsOnly = TrayState.assemble(rows: [running, r3], context: TrayState.Context(nowMs: 120_000, menuBarStyle: .counts))
+        #expect(countsOnly.snapshot.title == "1 · ✓1")
+        let minimal = TrayState.assemble(rows: [running, r3], context: TrayState.Context(nowMs: 120_000, menuBarStyle: .minimal))
+        #expect(minimal.snapshot.title == "")
     }
 }

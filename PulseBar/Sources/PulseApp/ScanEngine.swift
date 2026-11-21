@@ -526,6 +526,10 @@ final class ScanEngine {
     /// Held while the launch replay is being read.
     func project(nowMs: Int64 = ScanEngine.nowMs()) {
         guard let model, !holdProjection else { return }
+        // Clear expired quiet-mode snooze automatically on tick.
+        if model.settings.quietUntilMs > 0, !model.settings.isQuiet(at: nowMs) {
+            model.resumeQuiet()
+        }
         // A turn held for a block lands once its grace has passed, even when
         // no event follows (a denied prompt, then Stop within 20 s).
         book.settleHeldTurns(nowMs: nowMs)
@@ -536,7 +540,8 @@ final class ScanEngine {
             context: TrayState.Context(
                 nowMs: nowMs,
                 lang: model.lang,
-                previousWaits: lastWaits
+                previousWaits: lastWaits,
+                menuBarStyle: model.settings.menuBarStyle
             )
         )
         exitWatch.follow(book.livePids)

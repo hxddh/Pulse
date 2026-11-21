@@ -1,6 +1,6 @@
 cask "pulse" do
-  version "36.0.0"
-  sha256 :no_check # Replace with the release DMG SHA-256 when publishing to a tap
+  version "37.0.0"
+  sha256 :no_check # Each GitHub Release also ships a rendered pulse.rb with the exact DMG SHA-256
 
   url "https://github.com/hxddh/Pulse/releases/download/v#{version}/pulse-#{version}-macos-PulseBar.dmg"
   name "Pulse"

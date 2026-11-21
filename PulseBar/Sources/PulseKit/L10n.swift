@@ -312,6 +312,19 @@ package enum L10n {
         case installOne
         case updateOne
         case removeOne
+        case detailBranch
+        case filterPlaceholder
+        case filterNoMatches
+        case quietNotifications
+        case quietFor30m
+        case quietFor1h
+        case quietActiveBadge
+        case quietResume
+        case menuJumpOldestWait
+        case settingsMenuBarStyleTitle
+        case settingsMenuBarMinimal
+        case settingsMenuBarCompact
+        case settingsMenuBarCounts
     }
 }
 
@@ -564,6 +577,19 @@ extension L10n.Key {
         case .installOne: return ("Install", "安装")
         case .updateOne: return ("Update", "更新")
         case .removeOne: return ("Remove", "移除")
+        case .detailBranch: return ("Branch", "分支")
+        case .filterPlaceholder: return ("Filter by project, branch, agent…", "按项目、分支或 Agent 筛选…")
+        case .filterNoMatches: return ("No matching sessions", "没有匹配的会话")
+        case .quietNotifications: return ("Quiet notifications", "静音通知")
+        case .quietFor30m: return ("For 30 minutes", "30 分钟")
+        case .quietFor1h: return ("For 1 hour", "1 小时")
+        case .quietActiveBadge: return ("Quiet · %@", "已静音 · %@")
+        case .quietResume: return ("Resume notifications", "恢复通知")
+        case .menuJumpOldestWait: return ("Jump to oldest wait", "跳到最早等待")
+        case .settingsMenuBarStyleTitle: return ("Menu bar display", "菜单栏显示")
+        case .settingsMenuBarMinimal: return ("Default (count only when waiting)", "默认（仅等待时显示计数）")
+        case .settingsMenuBarCompact: return ("Icon only", "仅显示灯标")
+        case .settingsMenuBarCounts: return ("Show active & done counts", "显示运行与完成计数")
         }
     }
 }

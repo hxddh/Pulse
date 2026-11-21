@@ -249,6 +249,8 @@ package struct AgentRow: Identifiable, Hashable {
     /// carry ("" for a folder's or a process's row).
     package var session: String = ""
     package var cwd: String = ""
+    /// Git branch of the session's working tree ("" when unknown or detached).
+    package var branch: String = ""
 
     // MARK: The process and how to reach it
 

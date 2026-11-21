@@ -216,19 +216,56 @@ final class StatusStore {
         }
     }
 
+    @ObservationIgnored private var lastDirectJumpKey: SessionKey?
+    @ObservationIgnored private var lastDirectJumpMs: Int64 = 0
+
     /// Direct jump (⌃⌥⌘↩): jump straight to the oldest blocked terminal
-    /// without popping up the tray (falls back to its detail or the tray).
+    /// without popping up the tray; pressing again (or when already viewing
+    /// that terminal) cycles cleanly to the next blocked terminal.
     func jumpToOldestWait() {
-        guard let oldest = rows.first(where: \.isBlocked) else {
+        let nowMs = Self.ms(Date())
+        guard let target = DirectJump.pick(
+            rows: rows,
+            frontmost: { row in
+                row.pid > 1 && PromptVisibility.promptIsFrontmost(selfPID: row.pid) == true
+            },
+            lastJumped: lastDirectJumpKey,
+            lastJumpedAtMs: lastDirectJumpMs,
+            nowMs: nowMs
+        ) else {
             requestTrayReveal()
             return
         }
-        focusAgent(idRaw: oldest.agent.rawValue, session: oldest.session, rowKey: oldest.key.description)
+        lastDirectJumpKey = target.key
+        lastDirectJumpMs = nowMs
+        focusAgent(idRaw: target.agent.rawValue, session: target.session, rowKey: target.key.description)
     }
 
     func setShortcut(_ choice: ShortcutChoice) {
         set(\.shortcut, choice)
         applyShortcut()
+    }
+
+    func setMenuBarStyle(_ style: MenuBarStyle) {
+        set(\.menuBarStyle, style)
+        engine.project()
+    }
+
+    /// Temporarily snooze all notification banners for `minutes` (lamp stays red).
+    func setQuiet(minutes: Int, nowMs: Int64 = ScanEngine.nowMs()) {
+        let until = nowMs + Int64(max(1, minutes)) * 60 * 1000
+        set(\.quietUntilMs, until)
+    }
+
+    /// Resume notification banners immediately.
+    func resumeQuiet() {
+        guard settings.quietUntilMs != 0 else { return }
+        set(\.quietUntilMs, 0)
+    }
+
+    /// Remaining quiet duration label at `date`, or nil when not snoozed.
+    func quietRemaining(at date: Date = Date()) -> String? {
+        settings.quietRemaining(at: Self.ms(date), lang: lang)
     }
 
     func setNotifyDone(_ agent: AgentID, _ enabled: Bool) {
@@ -438,12 +475,18 @@ final class StatusStore {
 
     /// The tray row's face, as a value, at `date` — the store contributes
     /// the session's facts and the row's notice.
-    func trayRowModel(_ row: AgentRow, at date: Date = Date(), hideProject: Bool = false) -> TrayRowModel {
+    func trayRowModel(
+        _ row: AgentRow,
+        at date: Date = Date(),
+        hideProject: Bool = false,
+        showBranch: Bool = false
+    ) -> TrayRowModel {
         TrayRowModel.make(TrayRowModel.Input(
             row: row, facts: facts(for: row.key), lang: lang,
             nowMs: Self.ms(date), notice: rowActionNotices[row.key],
             connected: connected(row.agent),
             hideProject: hideProject,
+            showBranch: showBranch,
             watching: turnWatches.contains(row.key)
         ))
     }
