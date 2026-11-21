@@ -1675,7 +1675,7 @@ struct RowWordsTests {
         #expect(model.lamp == .processOnly)
         #expect(model.secondLine == nil, "grey is not a warning")
         let actions = model.menu.map { $0.action }
-        #expect(actions == [.details], "details only; nothing to ignore, nowhere to go")
+        #expect(actions == [.details, .hide], "details and hide only; nothing to ignore, nowhere to go")
         #expect(!model.canFocus)
     }
 
@@ -2270,13 +2270,17 @@ struct GroupByProjectTests {
         #expect(minimal.snapshot.title == "")
     }
 
-    @Test func piHeadlessGhostSuppressionTtyOwnershipHiddenRowsAndQuietTooltip() {
+    @Test func piHeadlessGhostSuppressionTtyOwnershipHiddenRowsAndQuietTooltip() throws {
         let now: Int64 = 1_800_000_000_000
         var book = SessionBook()
         // Hooked Pi session in $HOME (so process hit has cwd == "") with pid 0 but same TTY.
         book.apply(AttentionRecord(
             agent: .pi, kind: .working, ms: now - 5_000, message: "Refactor parser",
             session: "pi-live", cwd: "/Users/me", pid: 0, landing: "tty:/dev/ttys004", event: "message_start"
+        ), nowMs: now)
+        book.apply(AttentionRecord(
+            agent: .claude, kind: .start, ms: now - 120_000, session: "old-claude",
+            cwd: "/Users/me/code/app", event: "SessionStart"
         ), nowMs: now)
         book.apply(AttentionRecord(
             agent: .claude, kind: .end, ms: now - 60_000, session: "old-claude",
@@ -2298,7 +2302,7 @@ struct GroupByProjectTests {
         #expect(state.snapshot.tooltip.contains("Quiet · 25m"))
 
         // Hiding a recent or process-only row removes it cleanly; recent row menu offers Hide.
-        let recentRow = state.rows.first { $0.key == SessionKey(.claude, "old-claude") }!
+        let recentRow = try #require(state.rows.first { $0.key == SessionKey(.claude, "old-claude") })
         let rowModel = TrayRowModel.make(TrayRowModel.Input(row: recentRow, lang: .en, nowMs: now))
         #expect(rowModel.menu.contains { $0.action == .hide })
 
